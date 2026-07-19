@@ -17,4 +17,18 @@ plugins {
 }
 
 rootProject.name = 'smart-surveillance-platform'
-include('app', 'list', 'utilities')
+//include('app', 'list', 'utilities')
+include(
+        'common:common-events',
+        'common:common-kafka',
+        'common:common-logging',
+
+        //'gateway:camera-gateway',
+        'gateway',
+
+        'services:camera-service',
+        'services:recording-service',
+        'services:notification-service',
+        'services:analytics-service',
+        'services:search-service'
+)
