@@ -1,3 +1,7 @@
 spring:
   application:
     name: camera-service
+
+server:
+  port: 8081
+
