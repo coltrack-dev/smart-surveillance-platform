@@ -30,6 +30,8 @@ dependencies {
     implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
 
     runtimeOnly 'org.postgresql:postgresql'
+    testRuntimeOnly 'com.h2database:h2'
+
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 
