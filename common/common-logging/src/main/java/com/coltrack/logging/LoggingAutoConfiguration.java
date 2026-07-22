@@ -21,4 +21,11 @@ public class LoggingAutoConfiguration {
 
         return registration;
     }
+
+/*
+    @PostConstruct
+    public void init() {
+        System.out.println("=== LoggingAutoConfiguration loaded ===");
+    }
+*/
 }
