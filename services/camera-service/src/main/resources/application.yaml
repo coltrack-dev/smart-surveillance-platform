@@ -2,6 +2,19 @@ spring:
   application:
     name: camera-service
 
+  datasource:
+    url: jdbc:postgresql://192.168.13.128:5432/surveillance_db
+    username: surveillance_user
+    password: surveillance_password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
 server:
-  port: 8081
+  port: 8091
 

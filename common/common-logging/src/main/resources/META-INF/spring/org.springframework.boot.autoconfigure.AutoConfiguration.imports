@@ -1,1 +1,2 @@
 com.coltrack.logging.LoggingAutoConfiguration
+com.coltrack.kafka.KafkaProducerConfig
