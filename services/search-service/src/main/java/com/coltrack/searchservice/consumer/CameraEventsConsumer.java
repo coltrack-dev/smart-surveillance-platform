@@ -1,6 +1,7 @@
 package com.coltrack.searchservice.consumer;
 
 import com.coltrack.events.CameraRegisteredEvent;
+import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.searchservice.service.CameraIndexService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,7 @@ public class CameraEventsConsumer {
     private final CameraIndexService cameraIndexService;
 
     @KafkaListener(
-            topics = "camera.events",
+            topics = KafkaTopics.CAMERA_EVENTS,
             groupId = "search-service"
     )
     public void consume(CameraRegisteredEvent event) {
@@ -23,6 +24,11 @@ public class CameraEventsConsumer {
         log.info("Received event {}", event);
 
         cameraIndexService.index(event);
+
+        // проверка DLT
+        //throw new RuntimeException(
+        //        "TEST DLT"
+        //);
     }
 
 }
