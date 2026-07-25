@@ -1,4 +1,9 @@
 package com.coltrack.searchservice.service;
 
-public class CameraIndexService {
+import com.coltrack.events.CameraRegisteredEvent;
+
+public interface CameraIndexService {
+
+    void index(CameraRegisteredEvent event);
+
 }
