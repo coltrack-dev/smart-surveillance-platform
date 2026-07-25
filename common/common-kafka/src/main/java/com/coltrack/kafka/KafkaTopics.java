@@ -12,6 +12,10 @@ public final class KafkaTopics {
             "camera.events";
 
 
+    public static final String CAMERA_EVENTS_DLT =
+            "camera.events.DLT";
+
+
     public static final String MOTION_EVENTS =
             "motion.events";
 
@@ -26,9 +30,5 @@ public final class KafkaTopics {
 
     public static final String ANALYTICS_EVENTS =
             "analytics.events";
-
-
-    public static final String DEAD_LETTER =
-            "dead-letter";
 
 }

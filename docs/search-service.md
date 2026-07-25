@@ -48,4 +48,23 @@ log.info(...)
                          v
               CameraIndexService
 ```
+---
 
+```txt
+camera-service
+      |
+      |  CameraRegisteredEvent
+      v
+ Kafka topic
+ camera.events
+      |
+      v
+search-service
+      |
+      | ошибка обработки
+      v
+ retry 3 раза
+      |
+      v
+ camera.events.DLT
+```

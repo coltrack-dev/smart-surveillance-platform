@@ -1,9 +1,6 @@
 package com.coltrack.kafka;
 
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 
@@ -13,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 
+import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 
 
@@ -25,9 +23,7 @@ public class KafkaConsumerConfig {
 
 
     @Bean
-    public ConsumerFactory<String, Object> consumerFactory(
-            ObjectMapper objectMapper
-    ) {
+    public ConsumerFactory<String,Object> consumerFactory() {
 
 
         Map<String,Object> config = new HashMap<>();
@@ -41,7 +37,7 @@ public class KafkaConsumerConfig {
 
         config.put(
                 ConsumerConfig.GROUP_ID_CONFIG,
-                "surveillance-service"
+                "search-service"
         );
 
 
@@ -51,33 +47,25 @@ public class KafkaConsumerConfig {
         );
 
 
-        JsonDeserializer<Object> deserializer =
-                new JsonDeserializer<>(objectMapper);
+        config.put(
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                ErrorHandlingDeserializer.class
+        );
 
 
-        deserializer.addTrustedPackages(
+        config.put(
+                ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS,
+                JsonDeserializer.class
+        );
+
+
+        config.put(
+                JsonDeserializer.TRUSTED_PACKAGES,
                 "com.coltrack.events"
         );
 
 
-        return new DefaultKafkaConsumerFactory<>(
-                config,
-                new StringDeserializer(),
-                deserializer
-        );
-    }
-
-
-    @Bean
-    public ObjectMapper kafkaObjectMapper() {
-
-        ObjectMapper mapper = new ObjectMapper();
-
-        mapper.registerModule(
-                new JavaTimeModule()
-        );
-
-        return mapper;
+        return new DefaultKafkaConsumerFactory<>(config);
     }
 
 }
