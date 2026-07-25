@@ -17,18 +17,34 @@ public class OpenSearchCameraRepository {
     private final OpenSearchClient client;
 
 
-
     public void save(CameraDocument document) {
 
 
         try {
 
+
+            boolean exists =
+                    client.indices()
+                            .exists(e ->
+                                    e.index("cameras")
+                            )
+                            .value();
+
+
+            if (!exists) {
+
+                client.indices()
+                        .create(c ->
+                                c.index("cameras")
+                        );
+            }
+
+
             client.index(
-                    IndexRequest.of(i -> i
+                    i -> i
                             .index("cameras")
                             .id(document.getCameraId().toString())
                             .document(document)
-                    )
             );
 
 
@@ -41,5 +57,4 @@ public class OpenSearchCameraRepository {
         }
 
     }
-
 }

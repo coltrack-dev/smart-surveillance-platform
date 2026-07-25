@@ -23,7 +23,7 @@ public class CameraEventsConsumer {
 
         log.info("Received event {}", event);
 
-        //cameraIndexService.index(event);
+        cameraIndexService.index(event);
 
         // проверка DLT
         //throw new RuntimeException(
