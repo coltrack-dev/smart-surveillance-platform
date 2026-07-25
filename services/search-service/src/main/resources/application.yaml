@@ -1,3 +1,25 @@
+server:
+  port: 8093
+
 spring:
+
   application:
     name: search-service
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    consumer:
+      group-id: search-service
+
+      auto-offset-reset: earliest
+
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+
+        spring.json.trusted.packages: "com.coltrack.events"
+
+        spring.json.value.default.type: com.coltrack.events.CameraRegisteredEvent
