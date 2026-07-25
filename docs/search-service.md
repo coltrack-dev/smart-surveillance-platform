@@ -49,7 +49,7 @@ log.info(...)
               CameraIndexService
 ```
 ---
-
+### dead-letter
 ```txt
 camera-service
       |
@@ -68,3 +68,23 @@ search-service
       v
  camera.events.DLT
 ```
+---
+### Сделаем слой OpenSearch
+```txt
+camera-service
+      |
+      | Kafka
+      v
+camera.events
+      |
+      v
+search-service
+      |
+      v
+OpenSearch
+      |
+      v
+REST /api/search/cameras
+```
+
+

@@ -28,6 +28,10 @@ dependencies {
     implementation 'org.springframework.kafka:spring-kafka'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
+    implementation 'org.opensearch.client:opensearch-java:2.15.0'
+    implementation 'org.opensearch.client:opensearch-rest-client:2.15.0'
+    implementation 'org.apache.httpcomponents.client5:httpclient5'
+
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
