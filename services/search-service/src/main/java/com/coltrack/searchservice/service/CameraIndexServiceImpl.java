@@ -5,9 +5,10 @@ import com.coltrack.events.CameraRegisteredEvent;
 import com.coltrack.searchservice.document.CameraDocument;
 import com.coltrack.searchservice.repository.OpenSearchCameraRepository;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-
+@Slf4j
 @Service
 public class CameraIndexServiceImpl
         implements CameraIndexService {
@@ -37,5 +38,8 @@ public class CameraIndexServiceImpl
 
 
         repository.save(document);
+
+        log.info("FINISHED INDEX {}", event.cameraId());
+
     }
 }
