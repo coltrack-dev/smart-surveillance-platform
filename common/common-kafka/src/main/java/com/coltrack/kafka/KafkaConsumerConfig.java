@@ -1,6 +1,9 @@
 package com.coltrack.kafka;
 
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 
@@ -22,7 +25,9 @@ public class KafkaConsumerConfig {
 
 
     @Bean
-    public ConsumerFactory<String,Object> consumerFactory() {
+    public ConsumerFactory<String, Object> consumerFactory(
+            ObjectMapper objectMapper
+    ) {
 
 
         Map<String,Object> config = new HashMap<>();
@@ -46,13 +51,33 @@ public class KafkaConsumerConfig {
         );
 
 
-        config.put(
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-                JsonDeserializer.class
+        JsonDeserializer<Object> deserializer =
+                new JsonDeserializer<>(objectMapper);
+
+
+        deserializer.addTrustedPackages(
+                "com.coltrack.events"
         );
 
 
-        return new DefaultKafkaConsumerFactory<>(config);
+        return new DefaultKafkaConsumerFactory<>(
+                config,
+                new StringDeserializer(),
+                deserializer
+        );
+    }
+
+
+    @Bean
+    public ObjectMapper kafkaObjectMapper() {
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        mapper.registerModule(
+                new JavaTimeModule()
+        );
+
+        return mapper;
     }
 
 }
