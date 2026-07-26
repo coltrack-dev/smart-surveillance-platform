@@ -28,6 +28,7 @@ public class CameraEntity {
 
     private String location;
 
+    private String rtspUrl;
 
     @Column(nullable = false)
     private Instant createdAt;
@@ -35,7 +36,7 @@ public class CameraEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private CameraStatus status;
+    private CameraStatus status = CameraStatus.OFFLINE;
 
 
     private Instant lastHeartbeat;
@@ -45,12 +46,14 @@ public class CameraEntity {
     public CameraEntity(
             UUID id,
             String name,
-            String location
+            String location,
+            String rtspUrl
     ) {
 
         this.id = id;
         this.name = name;
         this.location = location;
+        this.rtspUrl = rtspUrl;
         this.createdAt = Instant.now();
         this.status = CameraStatus.OFFLINE;
         this.lastHeartbeat = null;

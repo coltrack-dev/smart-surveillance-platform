@@ -12,6 +12,8 @@ public record CameraUpdatedEvent(
 
         String location,
 
+        String rtspUrl,
+
         Instant updatedAt
 
 ) {

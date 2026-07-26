@@ -24,7 +24,19 @@ public class CameraIndexServiceImpl
             CameraRegisteredEvent event
     ) {
 
+        CameraDocument document =
+                new CameraDocument(
+                        event.cameraId(),
+                        event.name(),
+                        event.location(),
+                        event.rtspUrl(),
+                        "OFFLINE",
+                        event.createdAt(),
+                        null
+                );
 
+
+/*
         CameraDocument document =
                 new CameraDocument(
                         event.cameraId(),
@@ -34,6 +46,7 @@ public class CameraIndexServiceImpl
                         event.createdAt(),
                         null
                 );
+*/
 
 
         repository.save(document);
@@ -46,7 +59,18 @@ public class CameraIndexServiceImpl
             CameraUpdatedEvent event
     ) {
 
+        CameraDocument document =
+                new CameraDocument(
+                        event.cameraId(),
+                        event.name(),
+                        event.location(),
+                        event.rtspUrl(),
+                        "OFFLINE",
+                        event.updatedAt(),
+                        null
+                );
 
+/*
         CameraDocument document =
                 new CameraDocument(
                         event.cameraId(),
@@ -56,6 +80,7 @@ public class CameraIndexServiceImpl
                         event.updatedAt(),
                         null
                 );
+*/
 
 
         repository.save(document);

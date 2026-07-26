@@ -3,8 +3,10 @@ package com.coltrack.cameraservice.controller;
 
 import com.coltrack.cameraservice.dto.CreateCameraRequest;
 import com.coltrack.cameraservice.entity.CameraEntity;
+import com.coltrack.cameraservice.service.CameraMonitoringService;
 import com.coltrack.cameraservice.service.CameraService;
 
+import com.coltrack.cameraservice.service.RtspStreamChecker;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
@@ -23,7 +25,7 @@ public class CameraController {
 
 
     private final CameraService service;
-
+    private final CameraMonitoringService monitoringService;
 
 
     @PostMapping
@@ -34,7 +36,8 @@ public class CameraController {
         CameraEntity camera =
                 service.create(
                         request.name(),
-                        request.location()
+                        request.location(),
+                        request.rtspUrl()
                 );
 
 
@@ -78,7 +81,8 @@ public class CameraController {
         return service.update(
                 id,
                 request.name(),
-                request.location()
+                request.location(),
+                request.rtspUrl()
         );
     }
 
@@ -100,6 +104,15 @@ public class CameraController {
     ) {
 
         return service.heartbeat(id);
+
+    }
+
+    @PostMapping("/{id}/check-stream")
+    public CameraEntity checkStream(
+            @PathVariable UUID id
+    ) {
+
+        return monitoringService.checkCamera(id);
 
     }
 }

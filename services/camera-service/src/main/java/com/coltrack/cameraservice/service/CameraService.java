@@ -2,6 +2,7 @@ package com.coltrack.cameraservice.service;
 
 
 import com.coltrack.cameraservice.entity.CameraEntity;
+import com.coltrack.cameraservice.entity.CameraStatus;
 import com.coltrack.cameraservice.repository.CameraRepository;
 
 import com.coltrack.events.CameraDeletedEvent;
@@ -11,6 +12,7 @@ import com.coltrack.events.CameraUpdatedEvent;
 
 import com.coltrack.kafka.KafkaTopics;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -20,37 +22,23 @@ import java.util.UUID;
 
 
 @Service
+@RequiredArgsConstructor
 public class CameraService {
 
-
     private final CameraRepository repository;
-
     private final KafkaTemplate<String, Object> kafkaTemplate;
-
-
-    public CameraService(
-            CameraRepository repository,
-            KafkaTemplate<String, Object> kafkaTemplate
-    ) {
-
-        this.repository = repository;
-        this.kafkaTemplate = kafkaTemplate;
-
-    }
-
-
 
     public CameraEntity create(
             String name,
-            String location
+            String location,
+            String rtspUrl
     ) {
-
-
         CameraEntity camera =
                 new CameraEntity(
                         UUID.randomUUID(),
                         name,
-                        location
+                        location,
+                        rtspUrl
                 );
 
 
@@ -65,6 +53,7 @@ public class CameraService {
                         camera.getId(),
                         camera.getName(),
                         camera.getLocation(),
+                        camera.getRtspUrl(),
                         camera.getCreatedAt()
                 )
         );
@@ -105,7 +94,8 @@ public class CameraService {
     public CameraEntity update(
             UUID id,
             String name,
-            String location
+            String location,
+            String rtspUrl
     ) {
 
 
@@ -129,17 +119,14 @@ public class CameraService {
                         camera.getId(),
                         camera.getName(),
                         camera.getLocation(),
+                        camera.getRtspUrl(),
                         Instant.now()
                 )
         );
 
 
         return camera;
-
     }
-
-
-
 
 
     public void delete(
