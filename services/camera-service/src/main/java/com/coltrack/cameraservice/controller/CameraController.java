@@ -94,4 +94,12 @@ public class CameraController {
 
     }
 
+    @PostMapping("/{id}/heartbeat")
+    public CameraEntity heartbeat(
+            @PathVariable UUID id
+    ) {
+
+        return service.heartbeat(id);
+
+    }
 }

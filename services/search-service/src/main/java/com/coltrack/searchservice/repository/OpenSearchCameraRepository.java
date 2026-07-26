@@ -13,7 +13,9 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 
@@ -115,5 +117,39 @@ public class OpenSearchCameraRepository {
                     e
             );
         }
+    }
+
+    public void updateHeartbeat(
+            UUID cameraId,
+            Instant timestamp
+    ) {
+
+        try {
+
+            client.update(
+                    u -> u
+                            .index("cameras")
+                            .id(cameraId.toString())
+                            .doc(
+                                    Map.of(
+                                            "status",
+                                            "ONLINE",
+
+                                            "lastHeartbeat",
+                                            timestamp.toString()
+                                    )
+                            ),
+                    CameraDocument.class
+            );
+
+
+        } catch (Exception e) {
+
+            throw new RuntimeException(
+                    "OpenSearch heartbeat update failed",
+                    e
+            );
+        }
+
     }
 }

@@ -30,7 +30,9 @@ public class CameraIndexServiceImpl
                         event.cameraId(),
                         event.name(),
                         event.location(),
-                        event.createdAt()
+                        "OFFLINE",
+                        event.createdAt(),
+                        null
                 );
 
 
@@ -50,12 +52,13 @@ public class CameraIndexServiceImpl
                         event.cameraId(),
                         event.name(),
                         event.location(),
+                        null,
+                        event.updatedAt(),
                         null
                 );
 
 
         repository.save(document);
-
 
     }
 
@@ -68,6 +71,20 @@ public class CameraIndexServiceImpl
 
         repository.delete(
                 event.cameraId()
+        );
+
+    }
+
+
+    @Override
+    public void updateHeartbeat(
+            CameraHeartbeatEvent event
+    ) {
+
+
+        repository.updateHeartbeat(
+                event.cameraId(),
+                event.timestamp()
         );
 
     }
