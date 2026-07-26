@@ -27,5 +27,7 @@ include(
         'services:recording-service',
         'services:notification-service',
         'services:analytics-service',
-        'services:search-service'
+        'services:search-service',
+        'services:stream-service'
 )
+
