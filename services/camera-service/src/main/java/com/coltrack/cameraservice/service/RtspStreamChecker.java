@@ -17,6 +17,9 @@ public class RtspStreamChecker {
             Executors.newCachedThreadPool();
 
 
+    // TODO: Rework camera stream health monitoring.
+    // FFmpegFrameGrabber should not be used for periodic stream status checks.
+    // Implement persistent RTSP stream monitoring with last frame timestamp tracking.
     public boolean check(String url) {
 
         Future<Boolean> future =
