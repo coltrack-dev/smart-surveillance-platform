@@ -2,11 +2,11 @@ package com.coltrack.searchservice.repository;
 
 
 import com.coltrack.searchservice.document.CameraDocument;
+import com.coltrack.searchservice.dto.CameraSearchResult;
 
 import lombok.RequiredArgsConstructor;
 
 import org.opensearch.client.opensearch.OpenSearchClient;
-
 import org.opensearch.client.opensearch.core.SearchResponse;
 
 import org.springframework.stereotype.Repository;
@@ -26,7 +26,11 @@ public class OpenSearchCameraSearchRepository {
     private final OpenSearchClient client;
 
 
-    public List<CameraDocument> search(String query) {
+    public CameraSearchResult search(
+            String query,
+            int page,
+            int size
+    ) {
 
         try {
 
@@ -34,6 +38,13 @@ public class OpenSearchCameraSearchRepository {
                     client.search(
                             s -> s
                                     .index(INDEX)
+
+                                    .from(
+                                            page * size
+                                    )
+
+                                    .size(size)
+
                                     .query(
                                             q -> q
                                                     .multiMatch(
@@ -45,22 +56,37 @@ public class OpenSearchCameraSearchRepository {
                                                                     )
                                                     )
                                     ),
+
                             CameraDocument.class
                     );
 
 
-            return response.hits()
-                    .hits()
-                    .stream()
-                    .map(hit -> hit.source())
-                    .toList();
+            List<CameraDocument> cameras =
+                    response.hits()
+                            .hits()
+                            .stream()
+                            .map(hit -> hit.source())
+                            .toList();
+
+
+            long total =
+                    response.hits()
+                            .total()
+                            .value();
+
+
+            return new CameraSearchResult(
+                    cameras,
+                    page,
+                    size,
+                    total
+            );
 
 
         } catch (Exception e) {
 
-
             throw new RuntimeException(
-                    "OpenSearch search failed",
+                    "Camera search failed",
                     e
             );
 
