@@ -1,11 +1,13 @@
 package com.coltrack.searchservice.controller;
 
 
-import com.coltrack.searchservice.dto.CameraSearchResult;
+import com.coltrack.searchservice.document.CameraDocument;
 import com.coltrack.searchservice.service.CameraSearchService;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.*;
 
 
@@ -19,25 +21,23 @@ public class CameraSearchController {
 
 
     @GetMapping("/cameras")
-    public CameraSearchResult search(
+    public Page<CameraDocument> searchCameras(
 
-            @RequestParam String q,
+            @RequestParam(required = false)
+            String q,
 
-            @RequestParam(defaultValue = "0")
-            int page,
+            @RequestParam(required = false)
+            String location,
 
-            @RequestParam(defaultValue = "20")
-            int size
+            Pageable pageable
 
     ) {
 
-
         return service.search(
                 q,
-                page,
-                size
+                location,
+                pageable
         );
-
     }
 
 }

@@ -2,15 +2,13 @@ package com.coltrack.searchservice.service;
 
 
 import com.coltrack.searchservice.document.CameraDocument;
-import com.coltrack.searchservice.dto.CameraSearchResult;
-import com.coltrack.searchservice.repository.OpenSearchCameraSearchRepository;
+import com.coltrack.searchservice.repository.OpenSearchCameraRepository;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-
-
-import java.util.List;
 
 
 @Service
@@ -18,22 +16,27 @@ import java.util.List;
 public class CameraSearchService {
 
 
-    private final OpenSearchCameraSearchRepository repository;
+    private final OpenSearchCameraRepository repository;
 
 
 
-    public CameraSearchResult search(
+    public Page<CameraDocument> search(
             String q,
-            int page,
-            int size
+            String location,
+            Pageable pageable
     ) {
 
-        return repository.search(
-                q,
-                page,
-                size
-        );
 
+        if (q == null && location == null) {
+            return repository.findAll(pageable);
+        }
+
+
+        // дальше добавим bool query:
+        // must multi_match(q)
+        // filter term(location)
+
+
+        return repository.findAll(pageable);
     }
-
 }
