@@ -152,4 +152,35 @@ public class OpenSearchCameraRepository {
         }
 
     }
+
+    public void updateStatus(
+            UUID id,
+            String status,
+            Instant time
+    ) {
+
+
+        try {
+
+            client.update(
+                    u -> u
+                            .index("cameras")
+                            .id(id.toString())
+                            .doc(
+                                    Map.of(
+                                            "status",status,
+                                            "lastHeartbeat",time
+                                    )
+                            ),
+                    CameraDocument.class
+            );
+
+
+        } catch(Exception e){
+
+            throw new RuntimeException(e);
+
+        }
+
+    }
 }

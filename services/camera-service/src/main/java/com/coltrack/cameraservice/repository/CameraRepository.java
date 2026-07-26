@@ -2,6 +2,7 @@ package com.coltrack.cameraservice.repository;
 
 
 import com.coltrack.cameraservice.entity.CameraEntity;
+import com.coltrack.cameraservice.entity.CameraStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;
@@ -14,5 +15,10 @@ public interface CameraRepository
 
     List<CameraEntity> findByLastHeartbeatBefore(
             Instant time
+    );
+
+
+    List<CameraEntity> findByStatus(
+            CameraStatus status
     );
 }

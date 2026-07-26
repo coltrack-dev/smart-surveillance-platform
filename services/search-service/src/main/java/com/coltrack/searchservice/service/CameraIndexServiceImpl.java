@@ -76,6 +76,21 @@ public class CameraIndexServiceImpl
     }
 
 
+
+    @Override
+    public void updateStatus(
+            CameraStatusChangedEvent event
+    ) {
+
+
+        repository.updateStatus(
+                event.cameraId(),
+                event.status(),
+                event.changedAt()
+        );
+
+    }
+
     @Override
     public void updateHeartbeat(
             CameraHeartbeatEvent event
@@ -88,5 +103,4 @@ public class CameraIndexServiceImpl
         );
 
     }
-
 }

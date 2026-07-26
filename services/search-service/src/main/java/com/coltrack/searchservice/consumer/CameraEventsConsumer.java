@@ -3,6 +3,7 @@ package com.coltrack.searchservice.consumer;
 
 import com.coltrack.events.*;
 
+import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.searchservice.service.CameraIndexService;
 
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,7 @@ public class CameraEventsConsumer {
 
 
     @KafkaListener(
-            topics = "camera.events",
+            topics = KafkaTopics.CAMERA_EVENTS,
             groupId = "search-service"
     )
     public void consume(
@@ -41,7 +42,11 @@ public class CameraEventsConsumer {
             service.delete(e);
 
         }
+        else if(event instanceof CameraStatusChangedEvent e){
 
+            service.updateStatus(e);
+
+        }
 
     }
 
