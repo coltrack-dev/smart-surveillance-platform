@@ -5,8 +5,17 @@ spring:
 
 
   kafka:
+
     bootstrap-servers: localhost:9092
 
+    consumer:
+
+      group-id: stream-service
+
+      auto-offset-reset: earliest
+
+      properties:
+        spring.json.trusted.packages: com.coltrack.events
 
 server:
   port: 8094
