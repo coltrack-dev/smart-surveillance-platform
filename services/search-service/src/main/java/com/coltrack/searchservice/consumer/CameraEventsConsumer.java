@@ -1,34 +1,48 @@
 package com.coltrack.searchservice.consumer;
 
-import com.coltrack.events.CameraRegisteredEvent;
-import com.coltrack.kafka.KafkaTopics;
+
+import com.coltrack.events.*;
+
 import com.coltrack.searchservice.service.CameraIndexService;
+
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-@Slf4j
+
 @Component
 @RequiredArgsConstructor
 public class CameraEventsConsumer {
 
-    private final CameraIndexService cameraIndexService;
+
+    private final CameraIndexService service;
+
 
     @KafkaListener(
-            topics = KafkaTopics.CAMERA_EVENTS,
+            topics = "camera.events",
             groupId = "search-service"
     )
-    public void consume(CameraRegisteredEvent event) {
+    public void consume(
+            Object event
+    ) {
 
-        log.info("Received event {}", event);
 
-        cameraIndexService.index(event);
+        if (event instanceof CameraRegisteredEvent e) {
 
-        // проверка DLT
-        //throw new RuntimeException(
-        //        "TEST DLT"
-        //);
+            service.index(e);
+
+        } else if (event instanceof CameraUpdatedEvent e) {
+
+            service.update(e);
+
+        } else if (event instanceof CameraDeletedEvent e) {
+
+            service.delete(e);
+
+        }
+
+
     }
 
 }

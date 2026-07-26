@@ -1,12 +1,17 @@
 package com.coltrack.cameraservice.controller;
 
 
+import com.coltrack.cameraservice.dto.CreateCameraRequest;
 import com.coltrack.cameraservice.entity.CameraEntity;
 import com.coltrack.cameraservice.service.CameraService;
 
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,17 +25,28 @@ public class CameraController {
     private final CameraService service;
 
 
+
     @PostMapping
-    public CameraEntity create(
-            @RequestParam String name,
-            @RequestParam String location
+    public ResponseEntity<CameraEntity> create(
+            @RequestBody CreateCameraRequest request
     ) {
 
-        return service.create(
-                name,
-                location
-        );
+        CameraEntity camera =
+                service.create(
+                        request.name(),
+                        request.location()
+                );
+
+
+        return ResponseEntity
+                .created(
+                        URI.create(
+                                "/api/cameras/" + camera.getId()
+                        )
+                )
+                .body(camera);
     }
+
 
 
     @GetMapping
@@ -39,6 +55,7 @@ public class CameraController {
         return service.findAll();
 
     }
+
 
 
     @GetMapping("/{id}")
@@ -51,23 +68,24 @@ public class CameraController {
     }
 
 
+
     @PutMapping("/{id}")
     public CameraEntity update(
             @PathVariable UUID id,
-            @RequestParam String name,
-            @RequestParam String location
+            @RequestBody CreateCameraRequest request
     ) {
 
         return service.update(
                 id,
-                name,
-                location
+                request.name(),
+                request.location()
         );
-
     }
 
 
+
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(
             @PathVariable UUID id
     ) {

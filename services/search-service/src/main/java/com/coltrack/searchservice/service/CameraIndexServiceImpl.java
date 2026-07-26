@@ -1,15 +1,17 @@
 package com.coltrack.searchservice.service;
 
 
-import com.coltrack.events.CameraRegisteredEvent;
+import com.coltrack.events.*;
 import com.coltrack.searchservice.document.CameraDocument;
 import com.coltrack.searchservice.repository.OpenSearchCameraRepository;
 
-import lombok.extern.slf4j.Slf4j;
+import lombok.RequiredArgsConstructor;
+
 import org.springframework.stereotype.Service;
 
-@Slf4j
+
 @Service
+@RequiredArgsConstructor
 public class CameraIndexServiceImpl
         implements CameraIndexService {
 
@@ -17,16 +19,11 @@ public class CameraIndexServiceImpl
     private final OpenSearchCameraRepository repository;
 
 
-    public CameraIndexServiceImpl(
-            OpenSearchCameraRepository repository
-    ) {
-        this.repository = repository;
-    }
-
     @Override
     public void index(
             CameraRegisteredEvent event
     ) {
+
 
         CameraDocument document =
                 new CameraDocument(
@@ -39,7 +36,40 @@ public class CameraIndexServiceImpl
 
         repository.save(document);
 
-        log.info("FINISHED INDEX {}", event.cameraId());
+    }
+
+
+    @Override
+    public void update(
+            CameraUpdatedEvent event
+    ) {
+
+
+        CameraDocument document =
+                new CameraDocument(
+                        event.cameraId(),
+                        event.name(),
+                        event.location(),
+                        null
+                );
+
+
+        repository.save(document);
+
 
     }
+
+
+    @Override
+    public void delete(
+            CameraDeletedEvent event
+    ) {
+
+
+        repository.delete(
+                event.cameraId()
+        );
+
+    }
+
 }

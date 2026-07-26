@@ -14,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.UUID;
 
 
 @Slf4j
@@ -26,7 +27,6 @@ public class OpenSearchCameraRepository {
 
 
     private final OpenSearchClient client;
-
 
 
     public void save(CameraDocument document) {
@@ -49,7 +49,29 @@ public class OpenSearchCameraRepository {
         }
     }
 
+    public void delete(
+            UUID cameraId
+    ) {
 
+        try {
+
+
+            client.delete(
+                    d -> d
+                            .index(INDEX)
+                            .id(cameraId.toString())
+            );
+
+
+        } catch (Exception e) {
+
+            throw new RuntimeException(
+                    "OpenSearch delete failed",
+                    e
+            );
+        }
+
+    }
 
     public Page<CameraDocument> findAll(Pageable pageable) {
 
@@ -71,7 +93,6 @@ public class OpenSearchCameraRepository {
                             .stream()
                             .map(Hit::source)
                             .toList();
-
 
 
             long total =
