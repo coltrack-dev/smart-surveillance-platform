@@ -5,59 +5,59 @@ import lombok.extern.slf4j.Slf4j;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.*;
+
 
 @Slf4j
 @Service
 public class RtspStreamChecker {
 
 
+    private final ExecutorService executor =
+            Executors.newCachedThreadPool();
+
+
     public boolean check(String url) {
 
-
-        FFmpegFrameGrabber grabber = null;
-
+        Future<Boolean> future =
+                executor.submit(() -> checkInternal(url));
 
         try {
+            return future.get(10, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
 
-            grabber = new FFmpegFrameGrabber(url);
+            future.cancel(true);
 
+            log.error("RTSP timeout: {}", url);
 
-            // таймаут подключения 5 секунд
-            grabber.setOption(
-                    "stimeout",
-                    "5000000"
-            );
-
-
-            grabber.start();
-
-
-            // проверяем что реально получили кадр
-            var frame = grabber.grabImage();
-
-
-            boolean available = frame != null;
-
-
-            log.info(
-                    "RTSP check {} result={}",
-                    url,
-                    available
-            );
-
-
-            return available;
-
+            return false;
 
         } catch (Exception e) {
 
+            return false;
+        }
 
-            log.error(
-                    "RTSP check failed: {}",
-                    url,
-                    e
-            );
+    }
 
+
+
+    private boolean checkInternal(String url) {
+
+        FFmpegFrameGrabber grabber = null;
+
+        try {
+            grabber = new FFmpegFrameGrabber(url);
+
+            grabber.setOption("stimeout", "5000000");
+
+            grabber.start();
+
+            return grabber.grabImage() != null;
+
+
+        } catch(Exception e) {
+
+            log.error("RTSP failed {}", url, e);
 
             return false;
 
@@ -68,17 +68,11 @@ public class RtspStreamChecker {
             if (grabber != null) {
 
                 try {
-
                     grabber.stop();
-
-                } catch (Exception ignored) {
-
                 }
+                catch(Exception ignored){}
 
             }
-
         }
-
     }
-
 }
