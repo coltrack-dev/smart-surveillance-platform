@@ -1,4 +1,16 @@
 package com.coltrack.cameraservice.dto;
 
-public class CameraResponse {
-}
+import java.time.Instant;
+import java.util.UUID;
+
+public record CameraResponse(
+
+        UUID id,
+
+        String name,
+
+        String location,
+
+        Instant createdAt
+
+){}

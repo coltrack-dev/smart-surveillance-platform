@@ -2,6 +2,10 @@ package com.coltrack.cameraservice.entity;
 
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -9,6 +13,10 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "cameras")
+@NoArgsConstructor
+@AllArgsConstructor
+@Getter
+@Setter
 public class CameraEntity {
 
 
@@ -23,11 +31,6 @@ public class CameraEntity {
 
 
     private Instant createdAt;
-
-
-    protected CameraEntity() {
-    }
-
 
     public CameraEntity(
             UUID id,
