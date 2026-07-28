@@ -1,4 +1,66 @@
 package com.coltrack.streamservice.controller;
 
+import com.coltrack.streamservice.model.StreamSession;
+import com.coltrack.streamservice.service.StreamSessionManager;
+
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Collection;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/streams")
+@RequiredArgsConstructor
 public class StreamController {
+
+    private final StreamSessionManager manager;
+
+
+    @PostMapping("/{cameraId}/start")
+    public ResponseEntity<StreamSession> start(
+            @PathVariable UUID cameraId
+    ) {
+
+        StreamSession session =
+                manager.start(cameraId);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(session);
+
+    }
+
+
+    @PostMapping("/{cameraId}/stop")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void stop(
+            @PathVariable UUID cameraId
+    ) {
+
+        manager.stop(cameraId);
+
+    }
+
+
+    @GetMapping("/{cameraId}")
+    public StreamSession get(
+            @PathVariable UUID cameraId
+    ) {
+
+        return manager.find(cameraId);
+
+    }
+
+
+    @GetMapping
+    public Collection<StreamSession> findAll() {
+
+        return manager.findAll();
+
+    }
+
 }
