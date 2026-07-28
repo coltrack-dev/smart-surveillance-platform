@@ -1,8 +1,9 @@
 package com.coltrack.streamservice.service;
 
 
+import com.coltrack.streamservice.client.CameraClient;
+import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.model.StreamSession;
-import com.coltrack.streamservice.model.StreamStatus;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,61 +12,57 @@ import org.springframework.stereotype.Service;
 
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.UUID;
 
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class StreamService {
 
+    private final CameraClient cameraClient;
 
-    private final StreamSessionManager manager;
+    private final StreamManager sessionManager;
 
 
-    public void start(
-            UUID cameraId,
-            String rtspUrl
+    public StreamSession start(
+            UUID cameraId
     ) {
 
+        CameraDto camera =
+                cameraClient.findById(cameraId);
 
-        log.info(
-                "Starting stream camera={} url={}",
-                cameraId,
-                rtspUrl
-        );
-
-
-        StreamSession session =
-                StreamSession.builder()
-                        .cameraId(cameraId)
-                        .rtspUrl(rtspUrl)
-                        .status(StreamStatus.STARTING)
-                        .startedAt(Instant.now())
-                        .build();
-
-
-        manager.add(session);
-
-
-        /*
-          Здесь позже будет:
-
-          FFmpeg process
-          RTSP connection
-          HLS generation
-        */
-
-
-        session.setStatus(
-                StreamStatus.RUNNING
-        );
-
-
-        log.info(
-                "Stream started camera={}",
+        return sessionManager.start(
                 cameraId
+                //,
+                //camera.rtspUrl()
         );
+
+    }
+
+
+    public void stop(
+            UUID cameraId
+    ) {
+
+        sessionManager.stop(cameraId);
+
+    }
+
+
+    public StreamSession find(
+            UUID cameraId
+    ) {
+
+        return sessionManager.find(cameraId);
+
+    }
+
+
+    public Collection<StreamSession> findAll() {
+
+        return sessionManager.findAll();
 
     }
 

@@ -37,8 +37,9 @@ public class CameraEventsConsumer {
 
 
         service.start(
-                event.cameraId(),
-                event.rtspUrl()
+                event.cameraId()
+                //,
+                //event.rtspUrl()
         );
 
     }

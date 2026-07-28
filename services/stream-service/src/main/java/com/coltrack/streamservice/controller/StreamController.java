@@ -1,8 +1,8 @@
 package com.coltrack.streamservice.controller;
 
 import com.coltrack.streamservice.model.StreamSession;
-import com.coltrack.streamservice.service.StreamSessionManager;
 
+import com.coltrack.streamservice.service.StreamManager;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
@@ -17,7 +17,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class StreamController {
 
-    private final StreamSessionManager manager;
+    private final StreamManager manager;
 
 
     @PostMapping("/{cameraId}/start")

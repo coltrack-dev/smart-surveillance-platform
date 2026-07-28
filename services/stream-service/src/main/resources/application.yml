@@ -19,3 +19,10 @@ spring:
 
 server:
   port: 8094
+
+camera-service:
+  url: http://localhost:8091
+
+stream:
+  hls:
+    path: /opt/surveillance/hls
