@@ -1,19 +1,12 @@
 spring:
-
   application:
     name: stream-service
 
-
   kafka:
-
     bootstrap-servers: localhost:9092
-
     consumer:
-
       group-id: stream-service
-
       auto-offset-reset: earliest
-
       properties:
         spring.json.trusted.packages: com.coltrack.events
 
@@ -25,4 +18,5 @@ camera-service:
 
 stream:
   hls:
-    path: /opt/surveillance/hls
+    #path: /opt/surveillance/hls
+    path: ./data/hls
