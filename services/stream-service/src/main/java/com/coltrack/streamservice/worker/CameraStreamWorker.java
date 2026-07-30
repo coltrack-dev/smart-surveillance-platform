@@ -60,10 +60,7 @@ public class CameraStreamWorker implements Runnable {
 
             try {
 
-                log.info(
-                        "Starting FFmpeg camera={}",
-                        session.getCameraId()
-                );
+                log.info("Starting FFmpeg camera={}", session.getCameraId());
 
                 process =
                         new ProcessBuilder(
@@ -72,17 +69,15 @@ public class CameraStreamWorker implements Runnable {
                                 .redirectErrorStream(true)
                                 .start();
 
+                log.info("FFmpeg started camera={} pid={}", session.getCameraId(), process.pid());
+
                 session.setFfmpegProcess(process);
 
-                session.setStatus(
-                        StreamStatus.STARTING
-                );
+                session.setStatus(StreamStatus.STARTING);
 
                 if (session.getStartedAt() == null) {
 
-                    session.setStartedAt(
-                            Instant.now()
-                    );
+                    session.setStartedAt(Instant.now());
                 }
 
                 // Wait until FFmpeg creates HLS playlist.
@@ -94,17 +89,12 @@ public class CameraStreamWorker implements Runnable {
                         )
                 );
 
-                session.setStatus(
-                        StreamStatus.RUNNING
-                );
+                session.setStatus(StreamStatus.RUNNING);
 
                 // Notify system that stream is available.
                 listener.started(session);
 
-                log.info(
-                        "Stream started camera={}",
-                        session.getCameraId()
-                );
+                log.info("Stream started camera={}", session.getCameraId());
 
                 // Monitor FFmpeg process.
                 while (process.isAlive()) {

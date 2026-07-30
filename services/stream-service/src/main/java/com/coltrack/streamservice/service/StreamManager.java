@@ -36,16 +36,31 @@ public class StreamManager implements StreamListener {
      */
     private final Map<UUID, StreamSession> sessions = new ConcurrentHashMap<>();
 
+
     /**
      * Starts camera stream.
      * If stream already running returns existing session.
      */
     public StreamSession start(UUID cameraId) {
+
         StreamSession existing = sessions.get(cameraId);
-        if (existing != null && existing.getStatus() == StreamStatus.RUNNING) {
-            log.info("Stream already running camera={}", cameraId);
-            return existing;
+
+
+        if (existing != null) {
+
+            Process process = existing.getFfmpegProcess();
+
+            if (process != null && process.isAlive()) {
+
+                log.info("Stream already running camera={}", cameraId);
+                return existing;
+            }
+
+            log.warn("Stale stream session found camera={}, removing", cameraId);
+
+            sessions.remove(cameraId);
         }
+
         CameraDto camera = cameraClient.findById(cameraId);
         StreamSession session = StreamSession.builder()
                 .cameraId(camera.id())
@@ -53,6 +68,7 @@ public class StreamManager implements StreamListener {
                 .status(StreamStatus.STARTING)
                 .build();
         sessions.put(cameraId, session);
+
         log.info("Creating stream session camera={} rtsp={}", cameraId, camera.rtspUrl());
         Thread.startVirtualThread(() -> {
             try {
@@ -71,6 +87,7 @@ public class StreamManager implements StreamListener {
         log.info("Stream worker started camera={}", cameraId);
         return session;
     }
+
 
     /**
      * Stops camera stream.
