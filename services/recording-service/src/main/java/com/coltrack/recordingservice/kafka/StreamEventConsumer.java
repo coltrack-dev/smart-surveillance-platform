@@ -3,6 +3,7 @@ package com.coltrack.recordingservice.kafka;
 import com.coltrack.events.StreamFailedEvent;
 import com.coltrack.events.StreamStartedEvent;
 import com.coltrack.events.StreamStoppedEvent;
+import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.recordingservice.service.RecordingManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +24,7 @@ public class StreamEventConsumer {
      * Starts recording when stream becomes available.
      */
     @KafkaListener(
-            topics = "stream-events",
+            topics = KafkaTopics.STREAM_EVENTS,
             groupId = "recording-service"
     )
     public void handleStarted(
@@ -46,7 +47,7 @@ public class StreamEventConsumer {
      * Stops recording when stream stops.
      */
     @KafkaListener(
-            topics = "stream-events",
+            topics = KafkaTopics.STREAM_EVENTS,
             groupId = "recording-service"
     )
     public void handleStopped(
@@ -69,7 +70,7 @@ public class StreamEventConsumer {
      * Stops recording when stream failed.
      */
     @KafkaListener(
-            topics = "stream-events",
+            topics = KafkaTopics.STREAM_EVENTS,
             groupId = "recording-service"
     )
     public void handleFailed(
