@@ -73,19 +73,25 @@ public class StreamManager implements StreamListener {
      * Stops camera stream.
      */
     public void stop(UUID cameraId) {
+
         StreamSession session = sessions.get(cameraId);
         if (session == null) {
             log.warn("Stream not found camera={}", cameraId);
             return;
         }
-        log.info("Stopping stream camera={}", cameraId);
+
+        log.info("Manual stop requested camera={}", cameraId);
+
+        session.setStopRequested(true);
         session.setStatus(StreamStatus.STOPPING);
+
         Process process = session.getFfmpegProcess();
         if (process != null) {
             log.info("Destroying ffmpeg process camera={}", cameraId);
             process.destroyForcibly();
         }
     }
+
     /**
      * Returns stream session by camera id.
      */

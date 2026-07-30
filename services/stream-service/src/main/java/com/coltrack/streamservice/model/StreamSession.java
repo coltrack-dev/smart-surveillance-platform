@@ -66,4 +66,5 @@ public class StreamSession {
      */
     private String lastError;
 
+    private volatile boolean stopRequested;
 }

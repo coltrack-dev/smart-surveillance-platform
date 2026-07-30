@@ -51,7 +51,7 @@ public class CameraStreamWorker implements Runnable {
 
         // Main reconnect loop.
         // Worker keeps trying until stream is explicitly stopped.
-        while (session.getStatus() != StreamStatus.STOPPED) {
+        while (!session.isStopRequested()) {
 
             Process process = null;
 
@@ -106,6 +106,18 @@ public class CameraStreamWorker implements Runnable {
                 // Monitor FFmpeg process.
                 while (process.isAlive()) {
 
+                    if (session.isStopRequested()) {
+
+                        log.info(
+                                "Manual stop detected camera={}",
+                                session.getCameraId()
+                        );
+
+                        process.destroyForcibly();
+
+                        break;
+                    }
+
                     session.setLastFrameTime(
                             Instant.now()
                     );
@@ -116,11 +128,29 @@ public class CameraStreamWorker implements Runnable {
                 int exitCode =
                         process.waitFor();
 
-                // User manually stopped stream.
-                if (session.getStatus() == StreamStatus.STOPPED) {
+                /*
+                 * User manually stopped stream.
+                 * Do not reconnect and do not mark as failed.
+                 */
+                if (session.isStopRequested()) {
+
+                    log.info(
+                            "FFmpeg stopped manually camera={} exitCode={}",
+                            session.getCameraId(),
+                            exitCode
+                    );
+
+                    session.setStatus(
+                            StreamStatus.STOPPED
+                    );
+
                     break;
                 }
 
+                /*
+                 * FFmpeg crashed unexpectedly.
+                 * Stream should reconnect.
+                 */
                 session.setLastError(
                         "FFmpeg exited with code " + exitCode
                 );
@@ -132,15 +162,24 @@ public class CameraStreamWorker implements Runnable {
                 listener.failed(session);
 
                 log.warn(
-                        "FFmpeg stopped camera={}, reconnecting",
-                        session.getCameraId()
+                        "FFmpeg stopped camera={}, exitCode={}, reconnecting",
+                        session.getCameraId(),
+                        exitCode
                 );
 
             }
             catch (Exception e) {
 
-                // Ignore errors during manual shutdown.
-                if (session.getStatus() == StreamStatus.STOPPED) {
+                /*
+                 * Ignore errors during manual shutdown.
+                 */
+                if (session.isStopRequested()) {
+
+                    log.info(
+                            "Stream shutdown requested camera={}",
+                            session.getCameraId()
+                    );
+
                     break;
                 }
 
@@ -163,17 +202,21 @@ public class CameraStreamWorker implements Runnable {
             finally {
 
                 // Cleanup FFmpeg process.
-                if (process != null) {
+                if (process != null && process.isAlive()) {
+
+                    log.info(
+                            "Destroying FFmpeg process camera={}",
+                            session.getCameraId()
+                    );
 
                     process.destroyForcibly();
-
                 }
 
                 session.setFfmpegProcess(null);
             }
 
             // Prepare reconnect attempt.
-            if (session.getStatus() != StreamStatus.STOPPED) {
+            if (!session.isStopRequested()) {
 
                 session.setReconnectCount(
                         session.getReconnectCount() + 1
@@ -188,6 +231,10 @@ public class CameraStreamWorker implements Runnable {
                 sleepBeforeReconnect();
             }
         }
+
+        session.setStatus(
+                StreamStatus.STOPPED
+        );
 
         listener.stopped(session);
 
@@ -242,6 +289,10 @@ public class CameraStreamWorker implements Runnable {
             Thread.currentThread()
                     .interrupt();
 
+            log.warn(
+                    "Reconnect sleep interrupted camera={}",
+                    session.getCameraId()
+            );
         }
     }
 
