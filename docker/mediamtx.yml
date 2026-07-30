@@ -1,0 +1,14 @@
+############################################
+# MediaMTX configuration
+# Sprint 3 (MVP)
+############################################
+
+logLevel: info
+
+rtsp: yes
+
+hls: yes
+
+paths:
+
+  test: {}

@@ -1,5 +1,11 @@
 services:
 
+  #
+  # Apache Kafka
+  #
+  # Используется для обмена событиями между микросервисами:
+  # camera-service -> stream-service -> analytics-service -> search-service
+  #
   kafka:
     image: apache/kafka:latest
     container_name: surveillance-kafka
@@ -8,28 +14,48 @@ services:
       - "9092:9092"
 
     environment:
+      # Идентификатор брокера
       KAFKA_NODE_ID: 1
+
+      # Один процесс выполняет роль брокера и контроллера
       KAFKA_PROCESS_ROLES: broker,controller
 
+      # Конфигурация контроллера KRaft (без ZooKeeper)
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
 
+      # Слушаем клиентские подключения и внутренний канал контроллера
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
 
+      # Адрес, который получают клиенты
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
 
+      # Имя listener'а контроллера
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
+      # Для локальной разработки достаточно одной реплики
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
 
+  #
+  # OpenSearch
+  #
+  # Используется search-service
+  # для полнотекстового поиска камер, записей и событий.
+  #
   opensearch:
     image: opensearchproject/opensearch:2.15.0
     container_name: surveillance-opensearch
 
     environment:
+      # Запуск одним узлом
       discovery.type: single-node
+
+      # Без встроенной безопасности (локальная разработка)
       DISABLE_SECURITY_PLUGIN: "true"
+
+      # Ограничение памяти JVM
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+
       bootstrap.memory_lock: "true"
 
     ulimits:
@@ -39,3 +65,60 @@ services:
 
     ports:
       - "9200:9200"
+
+
+  #
+  # MediaMTX
+  #
+  # RTSP/HLS/WebRTC сервер.
+  # На этапе MVP используется как тестовый RTSP сервер.
+  #
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+
+    ports:
+      # RTSP
+      - "8554:8554"
+
+      # HLS/Web интерфейс
+      - "8888:8888"
+
+    volumes:
+      - ./docker/mediamtx.yml:/mediamtx.yml:ro
+
+    restart: unless-stopped
+
+
+  #
+  # RTSP Publisher
+  #
+  # Генерирует виртуальную IP-камеру.
+  #
+  # FFmpeg создает тестовую видеокартинку (testsrc),
+  # кодирует её в H.264 и публикует в MediaMTX
+  # как RTSP поток:
+  #
+  # rtsp://localhost:8554/test
+  #
+  rtsp-publisher:
+    image: linuxserver/ffmpeg:latest
+    container_name: rtsp-publisher
+
+    depends_on:
+      - mediamtx
+
+    command: >
+      -re
+      -f lavfi
+      -i testsrc=size=1280x720:rate=25
+      -f lavfi
+      -i sine=frequency=1000
+      -c:v libx264
+      -preset veryfast
+      -pix_fmt yuv420p
+      -c:a aac
+      -f rtsp
+      rtsp://mediamtx:8554/test
+
+    restart: unless-stopped
