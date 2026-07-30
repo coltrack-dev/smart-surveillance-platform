@@ -11,10 +11,18 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+
+import com.coltrack.events.StreamStartedEvent;
+import com.coltrack.events.StreamStoppedEvent;
+import com.coltrack.events.StreamFailedEvent;
+import com.coltrack.events.StreamReconnectingEvent;
+
+import java.time.Instant;
 
 /**
  * Manages camera streams lifecycle.
@@ -158,9 +166,19 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.RUNNING);
         sessions.put(cameraId, session);
         log.info("Stream started successfully camera={}", cameraId);
+/*
         publishEvent(
                 "STREAM_STARTED",
                 session
+        );
+*/
+        publishEvent(
+                new StreamStartedEvent(
+                        UUID.randomUUID(),
+                        session.getCameraId(),
+                        Instant.now()
+                ),
+                session.getCameraId()
         );
     }
 
@@ -173,9 +191,19 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.STOPPED);
         sessions.remove(cameraId);
         log.info("Stream stopped camera={}", cameraId);
+/*
         publishEvent(
                 "STREAM_STOPPED",
                 session
+        );
+*/
+        publishEvent(
+                new StreamStoppedEvent(
+                        UUID.randomUUID(),
+                        session.getCameraId(),
+                        Instant.now()
+                ),
+                session.getCameraId()
         );
     }
 
@@ -188,9 +216,20 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.ERROR);
         sessions.remove(cameraId);
         log.error("Stream failed camera={}", cameraId);
+/*
         publishEvent(
                 "STREAM_FAILED",
                 session
+        );
+*/
+        publishEvent(
+                new StreamFailedEvent(
+                        UUID.randomUUID(),
+                        session.getCameraId(),
+                        session.getLastError(),
+                        Instant.now()
+                ),
+                session.getCameraId()
         );
     }
 
@@ -202,47 +241,65 @@ public class StreamManager implements StreamListener {
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.RECONNECTING);
         log.warn("Trying to reconnect stream camera={}", cameraId);
+/*
         publishEvent(
                 "STREAM_RECONNECTING",
                 session
+        );
+*/
+        publishEvent(
+                new StreamReconnectingEvent(
+                        UUID.randomUUID(),
+                        session.getCameraId(),
+                        Instant.now()
+                ),
+                session.getCameraId()
         );
     }
 
     /**
      * Sends stream lifecycle events to Kafka.
      */
-    private void publishEvent(String type, StreamSession session) {
-        StreamEvent event = new StreamEvent(
-                type,
-                session.getCameraId(),
-                session.getStatus(),
-                System.currentTimeMillis()
-        );
+    /**
+     * Sends stream lifecycle event to Kafka.
+     */
+    private void publishEvent(
+            Object event,
+            UUID cameraId
+    ) {
+
         log.debug(
-                "Publishing stream event type={} camera={}",
-                type,
-                session.getCameraId()
+                "Publishing stream event={} camera={}",
+                event.getClass().getSimpleName(),
+                cameraId
         );
+
         kafkaTemplate.send(
                 STREAM_EVENTS_TOPIC,
-                session.getCameraId().toString(),
+                cameraId.toString(),
                 event
-        ).whenComplete((result, error) -> {
-            if (error != null) {
-                log.error(
-                        "Failed publishing kafka event type={} camera={}",
-                        type,
-                        session.getCameraId(),
-                        error
-                );
-            } else {
-                log.debug(
-                        "Kafka event published type={} camera={}",
-                        type,
-                        session.getCameraId()
-                );
-            }
-        });
+        ).whenComplete(
+                (result, error) -> {
+
+                    if (error != null) {
+
+                        log.error(
+                                "Failed publishing event={} camera={}",
+                                event.getClass().getSimpleName(),
+                                cameraId,
+                                error
+                        );
+
+                    } else {
+
+                        log.debug(
+                                "Kafka event published event={} camera={}",
+                                event.getClass().getSimpleName(),
+                                cameraId
+                        );
+                    }
+                }
+        );
     }
 
     /**

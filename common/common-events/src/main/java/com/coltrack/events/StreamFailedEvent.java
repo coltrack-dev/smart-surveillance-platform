@@ -8,9 +8,11 @@ import java.util.UUID;
  */
 public record StreamFailedEvent(
 
+        UUID eventId,
+
         UUID cameraId,
 
-        String error,
+        String reason,
 
         Instant failedAt
 

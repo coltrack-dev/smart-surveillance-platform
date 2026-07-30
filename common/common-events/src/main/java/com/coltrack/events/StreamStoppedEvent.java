@@ -4,9 +4,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Published when video streaming has been stopped.
+ * Published when video streaming has stopped.
  */
 public record StreamStoppedEvent(
+
+        UUID eventId,
 
         UUID cameraId,
 

@@ -23,4 +23,16 @@ public class RecordingSession {
     private String filePath;
 
     private Process ffmpegProcess;
+
+    /**
+     * Indicates that recording should stop gracefully.
+     */
+    @Builder.Default
+    private volatile boolean stopRequested = false;
+
+
+    /**
+     * Error description if recording failed.
+     */
+    private String lastError;
 }

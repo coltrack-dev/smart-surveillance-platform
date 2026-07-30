@@ -4,15 +4,15 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Published before reconnecting to the RTSP source.
+ * Published before stream reconnect attempt.
  */
 public record StreamReconnectingEvent(
 
+        UUID eventId,
+
         UUID cameraId,
 
-        int reconnectAttempt,
-
-        Instant reconnectAt
+        Instant reconnectingAt
 
 ) {
 }

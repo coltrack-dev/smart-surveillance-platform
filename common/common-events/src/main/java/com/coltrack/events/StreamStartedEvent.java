@@ -8,6 +8,8 @@ import java.util.UUID;
  */
 public record StreamStartedEvent(
 
+        UUID eventId,
+
         UUID cameraId,
 
         Instant startedAt

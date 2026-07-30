@@ -4,13 +4,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Published when stream has been successfully restored.
+ * Published when stream recovered after failure.
  */
 public record StreamRecoveredEvent(
 
-        UUID cameraId,
+        UUID eventId,
 
-        int reconnectCount,
+        UUID cameraId,
 
         Instant recoveredAt
 

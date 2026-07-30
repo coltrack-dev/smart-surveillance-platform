@@ -6,9 +6,12 @@ public enum RecordingStatus {
 
     RECORDING,
 
+    STOPPING,
+
+    STOPPED,
+
     COMPLETED,
 
-    FAILED,
+    FAILED
 
-    STOPPED
 }
