@@ -28,12 +28,14 @@ public class StreamManager implements StreamListener {
     private final CameraClient cameraClient;
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+
     /**
      * Active camera streams.
      * Key - camera id.
      * Value - stream session.
      */
     private final Map<UUID, StreamSession> sessions = new ConcurrentHashMap<>();
+
     /**
      * Starts camera stream.
      * If stream already running returns existing session.
@@ -69,6 +71,7 @@ public class StreamManager implements StreamListener {
         log.info("Stream worker started camera={}", cameraId);
         return session;
     }
+
     /**
      * Stops camera stream.
      */
@@ -98,12 +101,14 @@ public class StreamManager implements StreamListener {
     public StreamSession find(UUID cameraId) {
         return sessions.get(cameraId);
     }
+
     /**
      * Returns all active streams.
      */
     public Collection<StreamSession> findAll() {
         return sessions.values();
     }
+
     /**
      * Removes stream session manually.
      */
@@ -111,6 +116,7 @@ public class StreamManager implements StreamListener {
         log.info("Removing stream session camera={}", cameraId);
         sessions.remove(cameraId);
     }
+
     /**
      * Returns available cameras from camera-service.
      */
@@ -118,6 +124,7 @@ public class StreamManager implements StreamListener {
         log.debug("Loading available cameras");
         return cameraClient.findAll();
     }
+
     /**
      * Called when FFmpeg started successfully.
      * CameraStreamWorker invokes this method.
@@ -133,6 +140,7 @@ public class StreamManager implements StreamListener {
                 session
         );
     }
+
     /**
      * Called when FFmpeg stopped normally.
      */
@@ -147,6 +155,7 @@ public class StreamManager implements StreamListener {
                 session
         );
     }
+
     /**
      * Called when stream failed.
      */
@@ -161,6 +170,7 @@ public class StreamManager implements StreamListener {
                 session
         );
     }
+
     /**
      * Called before reconnect attempt.
      */
@@ -174,6 +184,7 @@ public class StreamManager implements StreamListener {
                 session
         );
     }
+
     /**
      * Sends stream lifecycle events to Kafka.
      */

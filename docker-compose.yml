@@ -122,3 +122,11 @@ services:
       rtsp://mediamtx:8554/test
 
     restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus
+    container_name: surveillance-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
