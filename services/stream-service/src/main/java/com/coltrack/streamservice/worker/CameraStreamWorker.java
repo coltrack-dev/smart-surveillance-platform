@@ -49,6 +49,9 @@ public class CameraStreamWorker implements Runnable {
                         session.getCameraId()
                 );
 
+        hlsService.cleanupStreamDirectory(outputDir);
+
+
         // Main reconnect loop.
         // Worker keeps trying until stream is explicitly stopped.
         while (!session.isStopRequested()) {
@@ -335,8 +338,16 @@ public class CameraStreamWorker implements Runnable {
                 "-hls_list_size",
                 "5",
 
+                "-start_number",
+                "0",
+
+                "-hls_segment_filename",
+                outputDir
+                        .resolve("segment%05d.ts")
+                        .toString(),
+
                 "-hls_flags",
-                "delete_segments+append_list",
+                "delete_segments+independent_segments+omit_endlist",
 
                 outputDir
                         .resolve("index.m3u8")
