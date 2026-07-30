@@ -125,39 +125,22 @@ public class HlsService {
      * - index.m3u8
      * - *.ts segments
      */
-    public void cleanupStreamDirectory(
-            Path directory
-    ) {
-
+    public void cleanupStreamDirectory(Path directory) {
 
         if (!Files.exists(directory)) {
-
             return;
         }
 
+        log.info("Cleaning HLS directory {}", directory);
 
-        log.info(
-                "Cleaning HLS directory {}",
-                directory
-        );
+        try (Stream<Path> files = Files.list(directory)) {
 
-
-        try (Stream<Path> files =
-                     Files.list(directory)) {
-
-
-            files
-                    .filter(this::isHlsFile)
+            files.filter(this::isHlsFile)
                     .forEach(this::deleteFile);
-
-
         }
         catch (IOException e) {
 
-            log.error(
-                    "Failed cleaning HLS directory {}",
-                    directory,
-                    e
+            log.error("Failed cleaning HLS directory {}", directory, e
             );
         }
     }

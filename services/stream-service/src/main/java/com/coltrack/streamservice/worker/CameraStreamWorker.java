@@ -81,7 +81,7 @@ public class CameraStreamWorker implements Runnable {
                 }
 
                 // Wait until FFmpeg creates HLS playlist.
-                waitForPlaylist(outputDir);
+                waitForPlaylist(outputDir, process);
 
                 session.setHlsUrl(
                         hlsService.getStreamUrl(
@@ -241,27 +241,37 @@ public class CameraStreamWorker implements Runnable {
      * Waits until FFmpeg creates HLS playlist.
      */
     private void waitForPlaylist(
-            Path outputDir
+            Path outputDir,
+            Process process
     ) throws Exception {
 
         Path playlist =
                 outputDir.resolve("index.m3u8");
 
-        for (
-                int i = 0;
-                i < PLAYLIST_TIMEOUT_SECONDS * 2;
-                i++
-        ) {
+        for (int i = 0; i < PLAYLIST_TIMEOUT_SECONDS * 2; i++) {
 
             if (Files.exists(playlist)) {
+
                 return;
+            }
+
+            /*
+             * FFmpeg exited before creating playlist.
+             * Do not wait until timeout.
+             */
+            if (!process.isAlive()) {
+
+                throw new IOException(
+                        "FFmpeg exited before HLS playlist creation. Exit code="
+                                + process.exitValue()
+                );
             }
 
             Thread.sleep(500);
         }
 
         throw new IOException(
-                "HLS playlist was not created"
+                "Timed out waiting for HLS playlist"
         );
     }
 
