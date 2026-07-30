@@ -10,21 +10,32 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
-import java.util.List;
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
 public class StreamMetricsService {
 
+
     private final MeterRegistry registry;
 
+
     /**
-     * Live collection of active stream sessions.
-     * <p>
-     * StreamManager provides ConcurrentHashMap.values(),
-     * therefore changes in sessions are visible automatically.
+     * Active stream sessions.
+     *
+     * StreamManager provides live ConcurrentHashMap values.
      */
-    private Collection<StreamSession> sessions = List.of();
+    private Collection<StreamSession> sessions =
+            Collections.emptyList();
+
+
+    /**
+     * Registered camera metrics.
+     */
+    private final Set<String> registeredCameras =
+            ConcurrentHashMap.newKeySet();
 
 
     public StreamMetricsService(
@@ -36,8 +47,6 @@ public class StreamMetricsService {
 
     /**
      * Configure stream session source.
-     * <p>
-     * Called by StreamManager after initialization.
      */
     public void setSessions(
             Collection<StreamSession> sessions
@@ -52,10 +61,11 @@ public class StreamMetricsService {
 
 
     /**
-     * Register global stream metrics.
+     * Global stream metrics.
      */
     @PostConstruct
     public void registerMetrics() {
+
 
         Gauge.builder(
                         "stream_active_count",
@@ -72,28 +82,69 @@ public class StreamMetricsService {
 
 
         log.info(
-                "Stream metrics registered"
+                "Global stream metrics registered"
         );
     }
 
 
     /**
-     * Register metrics for specific camera stream.
-     * <p>
-     * Metrics:
-     * - last frame delay;
-     * - reconnect counter;
-     * - stream status.
+     * Register metrics for camera stream.
      */
     public void registerSessionMetrics(
             StreamSession session
     ) {
+
 
         String cameraId =
                 session.getCameraId()
                         .toString();
 
 
+        if (!registeredCameras.add(cameraId)) {
+
+            log.debug(
+                    "Metrics already registered camera={}",
+                    cameraId
+            );
+
+            return;
+        }
+
+
+        /*
+         * Static camera information.
+         *
+         * Example:
+         *
+         * stream_info{
+         *   camera="f9bb..."
+         * } 1
+         */
+        Gauge.builder(
+                        "stream_info",
+                        session,
+                        s -> 1
+                )
+                .tag(
+                        "camera",
+                        cameraId
+                )
+                .description(
+                        "Camera stream information"
+                )
+                .register(registry);
+
+
+
+        /*
+         * Seconds since last frame.
+         *
+         * Example:
+         *
+         * stream_last_frame_age_seconds{
+         *   camera="f9bb..."
+         * } 0.8
+         */
         Gauge.builder(
                         "stream_last_frame_age_seconds",
                         session,
@@ -104,11 +155,12 @@ public class StreamMetricsService {
                                 return -1;
                             }
 
+
                             return Duration.between(
                                             s.getLastFrameTime(),
                                             Instant.now()
                                     )
-                                    .toSeconds();
+                                    .toMillis() / 1000.0;
                         }
                 )
                 .tag(
@@ -121,6 +173,10 @@ public class StreamMetricsService {
                 .register(registry);
 
 
+
+        /*
+         * Reconnect attempts counter.
+         */
         Gauge.builder(
                         "stream_reconnect_count",
                         session,
@@ -136,50 +192,69 @@ public class StreamMetricsService {
                 .register(registry);
 
 
+
+        /*
+         * Stream lifecycle state.
+         *
+         * Values:
+         *
+         * -1 ERROR
+         *  0 STOPPED
+         *  1 RUNNING
+         *  2 STARTING
+         *  3 RECONNECTING
+         *  4 STOPPING
+         */
         Gauge.builder(
                         "stream_status",
                         session,
-                        s -> {
-
-                            if (s.getStatus() == null) {
-
-                                return -1;
-                            }
-
-                            return switch (session.getSafeStatus()) {
-
-                                case RUNNING ->
-                                        1;
-
-                                case STARTING ->
-                                        2;
-
-                                case RECONNECTING ->
-                                        3;
-
-                                case STOPPING ->
-                                        4;
-
-                                case STOPPED ->
-                                        0;
-
-                                case ERROR ->
-                                        -1;
-                            };
-                        }
+                        s -> mapStatus(
+                                s.getSafeStatus()
+                        )
                 )
                 .tag(
                         "camera",
                         cameraId
                 )
                 .description(
-                        "Stream state: -1 unknown, 0 stopped, 1 running, 2 reconnecting, 3 error, 4 starting"
+                        "Stream lifecycle status"
                 )
                 .register(registry);
+
+
 
         log.info(
                 "Registered stream metrics camera={}",
                 cameraId
         );
+    }
+
+
+
+    private int mapStatus(
+            com.coltrack.streamservice.model.StreamStatus status
+    ) {
+
+
+        return switch (status) {
+
+            case ERROR ->
+                    -1;
+
+            case STOPPED ->
+                    0;
+
+            case RUNNING ->
+                    1;
+
+            case STARTING ->
+                    2;
+
+            case RECONNECTING ->
+                    3;
+
+            case STOPPING ->
+                    4;
+        };
     }
 }
