@@ -15,6 +15,7 @@ import java.util.UUID;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class CameraEntity {
 
 
@@ -41,7 +42,9 @@ public class CameraEntity {
 
     private Instant lastHeartbeat;
 
-
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean autoStart = false;
 
     public CameraEntity(
             UUID id,

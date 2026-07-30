@@ -7,5 +7,7 @@ public record CreateCameraRequest(
 
         String location,
 
-        String rtspUrl
+        String rtspUrl,
+
+        boolean autoStart
 ) {}

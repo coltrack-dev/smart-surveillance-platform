@@ -14,6 +14,8 @@ public record CameraRegisteredEvent(
 
         String rtspUrl,
 
+        boolean autoStart,
+
         Instant createdAt
 
 ) {}

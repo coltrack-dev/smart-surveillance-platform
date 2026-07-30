@@ -54,6 +54,7 @@ public class CameraService {
                         camera.getName(),
                         camera.getLocation(),
                         camera.getRtspUrl(),
+                        camera.isAutoStart(),
                         camera.getCreatedAt()
                 )
         );
