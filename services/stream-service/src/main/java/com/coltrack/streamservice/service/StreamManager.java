@@ -79,7 +79,6 @@ public class StreamManager {
         StreamSession session =
                 sessions.get(cameraId);
 
-
         if (session == null) {
 
             log.warn(
@@ -90,24 +89,26 @@ public class StreamManager {
             return;
         }
 
+        session.setStatus(
+                StreamStatus.STOPPED
+        );
+
         Process process =
                 session.getFfmpegProcess();
 
         if (process != null) {
 
-            process.destroy();
+            process.destroyForcibly();
 
         }
 
-        session.setStatus(
-                StreamStatus.STOPPED
-        );
-
         sessions.remove(cameraId);
 
-        log.info("Stream stopped camera={}", cameraId);
+        log.info(
+                "Stream stopped camera={}",
+                cameraId
+        );
     }
-
 
     public StreamSession find(UUID cameraId) {
 

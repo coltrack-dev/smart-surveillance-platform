@@ -7,6 +7,8 @@ public enum StreamStatus {
 
     RUNNING,
 
+    RECONNECTING,
+
     STOPPED,
 
     ERROR
