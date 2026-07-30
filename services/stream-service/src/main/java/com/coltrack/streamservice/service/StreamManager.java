@@ -37,26 +37,18 @@ public class StreamManager {
             UUID cameraId
     ) {
 
-
         StreamSession existing =
                 sessions.get(cameraId);
-
 
         if (existing != null &&
                 existing.getStatus() == StreamStatus.RUNNING) {
 
-            log.info(
-                    "Stream already running camera={}",
-                    cameraId
-            );
+            log.info("Stream already running camera={}", cameraId);
 
             return existing;
         }
 
-
-        CameraDto camera =
-                cameraClient.findById(cameraId);
-
+        CameraDto camera = cameraClient.findById(cameraId);
 
         StreamSession session =
                 StreamSession.builder()
@@ -65,12 +57,10 @@ public class StreamManager {
                         .status(StreamStatus.STARTING)
                         .build();
 
-
         sessions.put(
                 cameraId,
                 session
         );
-
 
         Thread.startVirtualThread(
                 new CameraStreamWorker(
@@ -79,15 +69,9 @@ public class StreamManager {
                 )
         );
 
-
-        log.info(
-                "Stream starting camera={}",
-                cameraId
-        );
-
+        log.info("Stream starting camera={}", cameraId);
 
         return session;
-
     }
 
     public void stop(UUID cameraId) {
@@ -106,10 +90,8 @@ public class StreamManager {
             return;
         }
 
-
         Process process =
                 session.getFfmpegProcess();
-
 
         if (process != null) {
 
@@ -117,45 +99,35 @@ public class StreamManager {
 
         }
 
-
         session.setStatus(
                 StreamStatus.STOPPED
         );
 
-
         sessions.remove(cameraId);
 
-
-        log.info(
-                "Stream stopped camera={}",
-                cameraId
-        );
-
+        log.info("Stream stopped camera={}", cameraId);
     }
 
 
-    public StreamSession find(
-            UUID cameraId
-    ) {
+    public StreamSession find(UUID cameraId) {
 
         return sessions.get(cameraId);
-
     }
 
 
     public Collection<StreamSession> findAll() {
 
         return sessions.values();
-
     }
 
 
-    public void remove(
-            UUID cameraId
-    ) {
+    public void remove(UUID cameraId) {
 
         sessions.remove(cameraId);
-
     }
 
+    public Collection<CameraDto> findAvailableCameras() {
+
+        return cameraClient.findAll();
+    }
 }

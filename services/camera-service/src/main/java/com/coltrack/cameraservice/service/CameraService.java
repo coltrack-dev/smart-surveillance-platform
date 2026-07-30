@@ -31,20 +31,21 @@ public class CameraService {
     public CameraEntity create(
             String name,
             String location,
-            String rtspUrl
+            String rtspUrl,
+            boolean autoStart
     ) {
-        CameraEntity camera =
-                new CameraEntity(
-                        UUID.randomUUID(),
-                        name,
-                        location,
-                        rtspUrl
-                );
 
+        CameraEntity camera = CameraEntity.builder()
+                .id(UUID.randomUUID())
+                .name(name)
+                .location(location)
+                .rtspUrl(rtspUrl)
+                .autoStart(autoStart)
+                .status(CameraStatus.OFFLINE)
+                .createdAt(Instant.now())
+                .build();
 
         repository.save(camera);
-
-
 
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_EVENTS,
@@ -59,12 +60,8 @@ public class CameraService {
                 )
         );
 
-
         return camera;
-
     }
-
-
 
     public List<CameraEntity> findAll() {
 
@@ -73,13 +70,9 @@ public class CameraService {
     }
 
 
-
-
     public CameraEntity findById(
             UUID id
     ) {
-
-
         return repository.findById(id)
                 .orElseThrow(
                         () -> new RuntimeException(
@@ -88,9 +81,6 @@ public class CameraService {
                 );
 
     }
-
-
-
 
     public CameraEntity update(
             UUID id,
@@ -103,15 +93,11 @@ public class CameraService {
         CameraEntity camera =
                 findById(id);
 
-
         camera.setName(name);
-
         camera.setLocation(location);
-
+        camera.setRtspUrl(rtspUrl);
 
         repository.save(camera);
-
-
 
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_EVENTS,
@@ -125,23 +111,15 @@ public class CameraService {
                 )
         );
 
-
         return camera;
     }
 
 
-    public void delete(
-            UUID id
-    ) {
+    public void delete(UUID id) {
 
-
-        CameraEntity camera =
-                findById(id);
-
+        CameraEntity camera = findById(id);
 
         repository.delete(camera);
-
-
 
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_EVENTS,
@@ -151,37 +129,19 @@ public class CameraService {
                         Instant.now()
                 )
         );
-
     }
 
+    public CameraEntity heartbeat(UUID id) {
 
-
-
-    public CameraEntity heartbeat(
-            UUID id
-    ) {
-
-
-        CameraEntity camera =
-                findById(id);
-
+        CameraEntity camera = findById(id);
 
         Instant now = Instant.now();
 
+        camera.setStatus(com.coltrack.cameraservice.entity.CameraStatus.ONLINE);
 
-        camera.setStatus(
-                com.coltrack.cameraservice.entity.CameraStatus.ONLINE
-        );
-
-
-        camera.setLastHeartbeat(
-                now
-        );
-
+        camera.setLastHeartbeat(now);
 
         repository.save(camera);
-
-
 
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_HEARTBEAT,
@@ -192,9 +152,6 @@ public class CameraService {
                 )
         );
 
-
         return camera;
-
     }
-
 }

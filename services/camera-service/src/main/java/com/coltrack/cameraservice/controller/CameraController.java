@@ -37,7 +37,8 @@ public class CameraController {
                 service.create(
                         request.name(),
                         request.location(),
-                        request.rtspUrl()
+                        request.rtspUrl(),
+                        request.autoStart()
                 );
 
 

@@ -1,5 +1,6 @@
 package com.coltrack.streamservice.controller;
 
+import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.service.StreamManager;
 
@@ -48,6 +49,15 @@ public class StreamController {
         return ResponseEntity
                 .noContent()
                 .build();
+    }
+
+    /**
+     * Получить список всех зарегистрированных камер.
+     */
+    @GetMapping("/cameras")
+    public Collection<CameraDto> cameras() {
+
+        return manager.findAvailableCameras();
     }
 
     /**
