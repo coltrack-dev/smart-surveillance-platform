@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.model;
 
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.*;
 
 import java.time.Instant;
@@ -50,6 +51,7 @@ public class StreamSession {
     /**
      * Запущенный процесс FFmpeg.
      */
+    @JsonIgnore
     private Process ffmpegProcess;
 
 

@@ -39,7 +39,7 @@ public class CameraStatusScheduler {
     /**
      * Проверяем состояние камер каждые 10 секунд
      */
-    @Scheduled(fixedRate = 10000)
+    //@Scheduled(fixedRate = 10000)
     public void checkStatus() {
 
         Instant now = Instant.now();
