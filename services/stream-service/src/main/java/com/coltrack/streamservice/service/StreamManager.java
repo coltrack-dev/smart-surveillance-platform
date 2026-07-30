@@ -2,6 +2,7 @@ package com.coltrack.streamservice.service;
 
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
+import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.worker.CameraStreamWorker;
@@ -28,6 +29,7 @@ public class StreamManager implements StreamListener {
     private final CameraClient cameraClient;
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final StreamMetricsService metricsService;
 
     /**
      * Active camera streams.
@@ -68,6 +70,10 @@ public class StreamManager implements StreamListener {
                 .status(StreamStatus.STARTING)
                 .build();
         sessions.put(cameraId, session);
+
+        metricsService.registerSessionMetrics(
+                session
+        );
 
         log.info("Creating stream session camera={} rtsp={}", cameraId, camera.rtspUrl());
         Thread.startVirtualThread(() -> {

@@ -67,4 +67,15 @@ public class StreamSession {
     private String lastError;
 
     private volatile boolean stopRequested;
+
+    public boolean isRunning() {
+        return status == StreamStatus.RUNNING;
+    }
+
+    public StreamStatus getSafeStatus() {
+
+        return status == null
+                ? StreamStatus.STOPPED
+                : status;
+    }
 }
