@@ -9,15 +9,21 @@ import lombok.extern.slf4j.Slf4j;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 
 @Slf4j
 public class RecordingWorker implements Runnable {
 
+
     private final RecordingSession session;
+
     private final RecordingStorageService storageService;
+
     private final String rtspUrl;
+
     private final RecordingListener listener;
+
 
     public RecordingWorker(
             RecordingSession session,
@@ -32,17 +38,22 @@ public class RecordingWorker implements Runnable {
         this.listener = listener;
     }
 
+
     @Override
     public void run() {
 
+
         Process process = null;
+
 
         log.info(
                 "Recording worker started camera={}",
                 session.getCameraId()
         );
 
+
         try {
+
 
             Path directory =
                     storageService.createRecordingDirectory(
@@ -72,9 +83,7 @@ public class RecordingWorker implements Runnable {
 
             process =
                     new ProcessBuilder(
-                            buildCommand(
-                                    outputFile
-                            )
+                            buildCommand(outputFile)
                     )
                             .redirectErrorStream(true)
                             .start();
@@ -83,6 +92,20 @@ public class RecordingWorker implements Runnable {
             session.setFfmpegProcess(
                     process
             );
+
+
+            /*
+             * Give FFmpeg some time to connect RTSP.
+             */
+            Thread.sleep(2000);
+
+
+            if (!process.isAlive()) {
+
+                throw new IllegalStateException(
+                        "FFmpeg terminated immediately"
+                );
+            }
 
 
             session.setStatus(
@@ -94,7 +117,11 @@ public class RecordingWorker implements Runnable {
                     Instant.now()
             );
 
-            listener.started(session);
+
+            listener.started(
+                    session
+            );
+
 
             log.info(
                     "FFmpeg recording started camera={} pid={}",
@@ -103,17 +130,23 @@ public class RecordingWorker implements Runnable {
             );
 
 
+
             while (process.isAlive()) {
 
 
                 if (session.isStopRequested()) {
+
 
                     log.info(
                             "Recording stop requested camera={}",
                             session.getCameraId()
                     );
 
-                    process.destroyForcibly();
+
+                    stopFfmpeg(
+                            process
+                    );
+
 
                     break;
                 }
@@ -123,15 +156,17 @@ public class RecordingWorker implements Runnable {
             }
 
 
+
             int exitCode =
                     process.waitFor();
+
 
 
             if (session.isStopRequested()) {
 
 
                 log.info(
-                        "Recording stopped manually camera={} exitCode={}",
+                        "Recording stopped camera={} exitCode={}",
                         session.getCameraId(),
                         exitCode
                 );
@@ -141,13 +176,17 @@ public class RecordingWorker implements Runnable {
                         RecordingStatus.STOPPED
                 );
 
-                listener.stopped(session);
+
+                listener.stopped(
+                        session
+                );
+
 
             } else {
 
 
                 log.warn(
-                        "FFmpeg recording finished unexpectedly camera={} exitCode={}",
+                        "FFmpeg finished unexpectedly camera={} exitCode={}",
                         session.getCameraId(),
                         exitCode
                 );
@@ -157,8 +196,12 @@ public class RecordingWorker implements Runnable {
                         RecordingStatus.FAILED
                 );
 
-                listener.failed(session);
+
+                listener.failed(
+                        session
+                );
             }
+
 
 
             session.setFinishedAt(
@@ -181,19 +224,28 @@ public class RecordingWorker implements Runnable {
                     e
             );
 
+
+            listener.failed(
+                    session
+            );
+
+
         }
         finally {
 
 
             if (process != null && process.isAlive()) {
 
-                log.info(
-                        "Destroying FFmpeg process camera={}",
+
+                log.warn(
+                        "Force stopping FFmpeg camera={}",
                         session.getCameraId()
                 );
 
 
-                process.destroyForcibly();
+                stopFfmpeg(
+                        process
+                );
             }
 
 
@@ -209,6 +261,67 @@ public class RecordingWorker implements Runnable {
         );
     }
 
+
+
+
+
+    /**
+     * Graceful FFmpeg shutdown.
+     *
+     * SIGINT allows FFmpeg to write MP4 metadata (moov atom).
+     */
+    private void stopFfmpeg(Process process) {
+
+        try {
+
+            log.info(
+                    "Sending graceful stop to FFmpeg pid={}",
+                    process.pid()
+            );
+
+
+            // SIGTERM
+            process.destroy();
+
+
+            if (!process.waitFor(
+                    10,
+                    TimeUnit.SECONDS
+            )) {
+
+
+                log.warn(
+                        "FFmpeg did not terminate gracefully pid={}",
+                        process.pid()
+                );
+
+
+                process.destroyForcibly();
+
+
+                process.waitFor();
+            }
+
+
+            log.info(
+                    "FFmpeg stopped pid={} alive={}",
+                    process.pid(),
+                    process.isAlive()
+            );
+
+
+        } catch (Exception e) {
+
+
+            log.error(
+                    "Failed stopping FFmpeg",
+                    e
+            );
+
+
+            process.destroyForcibly();
+        }
+    }
 
 
     /**
@@ -231,6 +344,11 @@ public class RecordingWorker implements Runnable {
 
                 "ffmpeg",
 
+                "-hide_banner",
+
+                "-loglevel",
+                "warning",
+
                 "-rtsp_transport",
                 "tcp",
 
@@ -242,6 +360,9 @@ public class RecordingWorker implements Runnable {
 
                 "-movflags",
                 "+faststart",
+
+                "-f",
+                "mp4",
 
                 "-y",
 
