@@ -1,3 +1,78 @@
+server:
+  port: 8095
+
 spring:
   application:
     name: recording-service
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+    consumer:
+      group-id: recording-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+        spring.json.trusted.packages: com.coltrack.*
+
+
+# Camera service connection
+camera-service:
+  url: http://localhost:8091
+
+
+# Recording storage
+recording:
+  storage:
+    path: data/recordings
+
+
+# FFmpeg settings
+ffmpeg:
+  path: ffmpeg
+
+  recording:
+    format: mp4
+    video-codec: copy
+    audio-enabled: false
+
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - metrics
+          - prometheus
+
+  endpoint:
+    health:
+      show-details: always
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+
+# Logging
+logging:
+  level:
+    root: INFO
+
+    com.coltrack.recordingservice: DEBUG
+
+    org.apache.kafka: WARN
