@@ -98,6 +98,7 @@ public class RecordingManager implements RecordingListener {
                                 new RecordingWorker(
                                         session,
                                         storageService,
+                                        camera.rtspUrl(),
                                         this
                                 );
                         worker.run();
