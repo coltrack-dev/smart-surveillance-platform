@@ -7,85 +7,68 @@ import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.recordingservice.service.RecordingManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 
-@Slf4j
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class StreamEventConsumer {
-
 
     private final RecordingManager recordingManager;
 
-
-    /**
-     * Starts recording when stream becomes available.
-     */
     @KafkaListener(
             topics = KafkaTopics.STREAM_EVENTS,
             groupId = "recording-service"
     )
-    public void handleStarted(
-            StreamStartedEvent event
-    ) {
+    public void consume(ConsumerRecord<String, Object> record) {
+
+        Object event = record.value();
 
         log.info(
-                "Stream started event received camera={}",
-                event.cameraId()
+                "Stream event received {}",
+                event
         );
 
 
-        recordingManager.start(
-                event.cameraId()
-        );
-    }
+        if (event instanceof StreamStartedEvent started) {
+
+            log.info(
+                    "Starting recording camera={}",
+                    started.cameraId()
+            );
+
+            recordingManager.start(
+                    started.cameraId()
+            );
+        }
 
 
-    /**
-     * Stops recording when stream stops.
-     */
-    @KafkaListener(
-            topics = KafkaTopics.STREAM_EVENTS,
-            groupId = "recording-service"
-    )
-    public void handleStopped(
-            StreamStoppedEvent event
-    ) {
+        else if (event instanceof StreamStoppedEvent stopped) {
 
-        log.info(
-                "Stream stopped event received camera={}",
-                event.cameraId()
-        );
+            log.info(
+                    "Stopping recording camera={}",
+                    stopped.cameraId()
+            );
+
+            recordingManager.stop(
+                    stopped.cameraId()
+            );
+        }
 
 
-        recordingManager.stop(
-                event.cameraId()
-        );
-    }
+        else if (event instanceof StreamFailedEvent failed) {
 
+            log.warn(
+                    "Recording failed camera={}",
+                    failed.cameraId()
+            );
 
-    /**
-     * Stops recording when stream failed.
-     */
-    @KafkaListener(
-            topics = KafkaTopics.STREAM_EVENTS,
-            groupId = "recording-service"
-    )
-    public void handleFailed(
-            StreamFailedEvent event
-    ) {
-
-        log.warn(
-                "Stream failed event received camera={} reason={}",
-                event.cameraId(),
-                event.reason()
-        );
-
-
-        recordingManager.stop(
-                event.cameraId()
-        );
+            recordingManager.stop(
+                    failed.cameraId()
+            );
+        }
     }
 }

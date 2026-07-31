@@ -48,8 +48,8 @@ public class RecordingManager implements RecordingListener {
      */
     public RecordingSession start(UUID cameraId) {
 
-        RecordingSession existing =
-                sessions.get(cameraId);
+        RecordingSession existing = sessions.get(cameraId);
+
         if (existing != null) {
             if (existing.getStatus() == RecordingStatus.RECORDING ||
                     existing.getStatus() == RecordingStatus.STARTING) {
@@ -68,6 +68,8 @@ public class RecordingManager implements RecordingListener {
 
         CameraDto camera =
                 cameraClient.findById(cameraId);
+
+        log.info("start recording for {}", camera.rtspUrl());
 
         RecordingSession session =
                 RecordingSession.builder()
