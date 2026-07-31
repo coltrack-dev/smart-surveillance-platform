@@ -1,5 +1,6 @@
 package com.coltrack.streamservice.service;
 
+import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.metrics.StreamMetricsService;
@@ -33,7 +34,7 @@ import java.time.Instant;
 @Service
 @RequiredArgsConstructor
 public class StreamManager implements StreamListener {
-    private static final String STREAM_EVENTS_TOPIC = "stream-events";
+
     private final CameraClient cameraClient;
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
@@ -275,7 +276,7 @@ public class StreamManager implements StreamListener {
         );
 
         kafkaTemplate.send(
-                STREAM_EVENTS_TOPIC,
+                KafkaTopics.STREAM_EVENTS,
                 cameraId.toString(),
                 event
         ).whenComplete(
@@ -302,9 +303,12 @@ public class StreamManager implements StreamListener {
         );
     }
 
-    /**
+/*
+    */
+/**
      * Kafka event DTO.
-     */
+     *//*
+
     public record StreamEvent(
             String type,
             UUID cameraId,
@@ -312,4 +316,5 @@ public class StreamManager implements StreamListener {
             long timestamp
     ) {
     }
+*/
 }
