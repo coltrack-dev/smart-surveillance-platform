@@ -1,11 +1,13 @@
 package com.coltrack.recordingservice.service;
 
+import com.coltrack.recordingservice.client.CameraClient;
+import com.coltrack.recordingservice.dto.CameraDto;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
+import com.coltrack.recordingservice.worker.RecordingListener;
 import com.coltrack.recordingservice.worker.RecordingWorker;
-
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -13,23 +15,25 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-
 /**
  * Manages recording lifecycle.
- *
+ * <p>
  * Responsible for:
  * - starting recording;
  * - stopping recording;
- * - tracking active recordings.
+ * - tracking active recordings;
+ * - receiving worker lifecycle events.
  */
 @Slf4j
 @Service
-public class RecordingManager {
+@RequiredArgsConstructor
+public class RecordingManager implements RecordingListener {
 
-
+    private final RecordingStorageService storageService;
+    private final CameraClient cameraClient;
     /**
      * Active recording sessions.
-     *
+     * <p>
      * Key - camera id.
      * Value - recording session.
      */
@@ -39,47 +43,39 @@ public class RecordingManager {
 
     /**
      * Starts recording for camera.
-     *
+     * <p>
      * Called when StreamStartedEvent received.
      */
-    public RecordingSession start(
-            UUID cameraId
-    ) {
+    public RecordingSession start(UUID cameraId) {
 
         RecordingSession existing =
                 sessions.get(cameraId);
-
         if (existing != null) {
-
             if (existing.getStatus() == RecordingStatus.RECORDING ||
                     existing.getStatus() == RecordingStatus.STARTING) {
-
-
                 log.info(
                         "Recording already running camera={}",
                         cameraId
                 );
-
-
                 return existing;
             }
-
             log.warn(
                     "Removing stale recording session camera={}",
                     cameraId
             );
-
-
             sessions.remove(cameraId);
         }
+
+        CameraDto camera =
+                cameraClient.findById(cameraId);
 
         RecordingSession session =
                 RecordingSession.builder()
                         .id(UUID.randomUUID())
                         .cameraId(cameraId)
+                        .rtspUrl(camera.rtspUrl())
                         .status(RecordingStatus.STARTING)
                         .build();
-
         sessions.put(
                 cameraId,
                 session
@@ -93,88 +89,95 @@ public class RecordingManager {
 
         Thread.startVirtualThread(
                 () -> {
-
                     try {
-
-                        log.info("Starting RecordingWorker camera={}", cameraId);
-
+                        log.info(
+                                "Starting RecordingWorker camera={}",
+                                cameraId
+                        );
                         RecordingWorker worker =
                                 new RecordingWorker(
-                                        session
+                                        session,
+                                        storageService,
+                                        this
                                 );
-
                         worker.run();
-                    }
-                    catch (Exception e) {
-
-                        log.error("Recording worker failed camera={}", cameraId, e);
-
+                    } catch (Exception e) {
+                        log.error(
+                                "Recording worker failed camera={}",
+                                cameraId,
+                                e
+                        );
                         session.setStatus(
                                 RecordingStatus.FAILED
                         );
                     }
                 }
         );
-
-        log.info("Recording worker started camera={}", cameraId);
-
+        log.info(
+                "Recording worker started camera={}",
+                cameraId
+        );
         return session;
     }
 
-
     /**
      * Stops recording.
-     *
+     * <p>
      * Called when StreamStoppedEvent received.
      */
-    public void stop(
-            UUID cameraId
-    ) {
+    public void stop(UUID cameraId) {
 
-        RecordingSession session =
-                sessions.get(cameraId);
-
+        RecordingSession session = sessions.get(cameraId);
 
         if (session == null) {
-
-            log.warn(
-                    "Recording session not found camera={}",
-                    cameraId
-            );
-
+            log.warn("Recording session not found camera={}", cameraId);
             return;
         }
 
-
-        log.info(
-                "Stopping recording camera={}",
-                cameraId
-        );
-
+        log.info("Stopping recording camera={}", cameraId);
 
         session.setStopRequested(true);
-
         session.setStatus(
                 RecordingStatus.STOPPING
         );
 
-
         Process process =
                 session.getFfmpegProcess();
 
-
         if (process != null) {
-
-            log.info(
-                    "Destroying ffmpeg recording process camera={}",
-                    cameraId
-            );
-
+            log.info("Destroying ffmpeg recording process camera={}", cameraId);
 
             process.destroyForcibly();
         }
     }
 
+    @Override
+    public void started(RecordingSession session) {
+
+        log.info("Recording started camera={}", session.getCameraId());
+
+        session.setStatus(RecordingStatus.RECORDING);
+    }
+
+    @Override
+    public void stopped(RecordingSession session) {
+
+        log.info("Recording stopped camera={}", session.getCameraId());
+
+        session.setStatus(
+                RecordingStatus.STOPPED
+        );
+    }
+
+    @Override
+    public void failed(RecordingSession session) {
+
+        log.error("Recording failed camera={} error={}", session.getCameraId(), session.getLastError());
+
+        session.setStatus(
+                RecordingStatus.FAILED
+        );
+    }
 
     /**
      * Returns recording session.
@@ -184,12 +187,10 @@ public class RecordingManager {
         return sessions.get(cameraId);
     }
 
-
     /**
      * Returns all active recordings.
      */
     public Collection<RecordingSession> findAll() {
-
         return sessions.values();
     }
 

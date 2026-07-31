@@ -14,6 +14,8 @@ public class RecordingSession {
 
     private UUID cameraId;
 
+    private String rtspUrl;
+
     private RecordingStatus status;
 
     private Instant startedAt;
