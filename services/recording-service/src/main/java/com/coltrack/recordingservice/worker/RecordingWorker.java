@@ -114,25 +114,18 @@ public class RecordingWorker implements Runnable {
                                     java.util.concurrent.TimeUnit.SECONDS
                             );
 
-
                     if (!exited) {
 
                         log.warn(
-                                "FFmpeg did not stop gracefully, forcing kill camera={}",
+                                "FFmpeg graceful stop timeout, forcing kill camera={}",
                                 session.getCameraId()
                         );
 
                         process.destroyForcibly();
-
-                        process.waitFor(
-                                5,
-                                java.util.concurrent.TimeUnit.SECONDS
-                        );
                     }
 
                     break;
                 }
-
 
                 Thread.sleep(1000);
             }
@@ -143,25 +136,31 @@ public class RecordingWorker implements Runnable {
 
             if (session.isStopRequested()) {
 
-                session.setStatus(RecordingStatus.STOPPED);
-                listener.stopped(session);
+                session.setStatus(
+                        RecordingStatus.STOPPED
+                );
 
                 log.info(
-                        "Recording finished camera={} exit={}",
+                        "Recording stopped camera={} exitCode={}",
                         session.getCameraId(),
                         exitCode
                 );
+
+                listener.stopped(session);
 
             } else {
 
-                session.setStatus(RecordingStatus.FAILED);
-                listener.failed(session);
+                session.setStatus(
+                        RecordingStatus.FAILED
+                );
 
                 log.warn(
-                        "Recording failed camera={} exit={}",
+                        "Recording failed camera={} exitCode={}",
                         session.getCameraId(),
                         exitCode
                 );
+
+                listener.failed(session);
             }
 
         } catch (Exception e) {
