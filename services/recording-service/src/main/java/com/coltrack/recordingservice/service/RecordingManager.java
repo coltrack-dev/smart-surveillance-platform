@@ -133,25 +133,31 @@ public class RecordingManager implements RecordingListener {
         RecordingSession session = sessions.get(cameraId);
 
         if (session == null) {
-            log.warn("Recording session not found camera={}", cameraId);
+            log.warn(
+                    "Recording session not found camera={}",
+                    cameraId
+            );
             return;
         }
 
-        log.info("Stopping recording camera={}", cameraId);
+        log.info(
+                "Requesting recording stop camera={}",
+                cameraId
+        );
 
         session.setStopRequested(true);
+
         session.setStatus(
                 RecordingStatus.STOPPING
         );
 
-        Process process =
-                session.getFfmpegProcess();
-
-        if (process != null) {
-            log.info("Destroying ffmpeg recording process camera={}", cameraId);
-
-            process.destroyForcibly();
-        }
+        /*
+         * Do not kill FFmpeg here.
+         *
+         * RecordingWorker owns the process lifecycle.
+         * It will send SIGTERM and wait until FFmpeg
+         * writes the container trailer.
+         */
     }
 
     @Override

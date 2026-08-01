@@ -3,27 +3,21 @@ package com.coltrack.recordingservice.worker;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.service.RecordingStorageService;
-
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-
 
 @Slf4j
 public class RecordingWorker implements Runnable {
 
-
     private final RecordingSession session;
-
     private final RecordingStorageService storageService;
-
     private final String rtspUrl;
-
     private final RecordingListener listener;
-
 
     public RecordingWorker(
             RecordingSession session,
@@ -31,122 +25,110 @@ public class RecordingWorker implements Runnable {
             String rtspUrl,
             RecordingListener listener
     ) {
-
         this.session = session;
         this.storageService = storageService;
         this.rtspUrl = rtspUrl;
         this.listener = listener;
     }
 
-
     @Override
     public void run() {
 
-
         Process process = null;
 
-
-        log.info(
-                "Recording worker started camera={}",
-                session.getCameraId()
-        );
-
-
         try {
-
 
             Path directory =
                     storageService.createRecordingDirectory(
                             session.getCameraId()
                     );
 
-
-            storageService.cleanupDirectory(
-                    directory
-            );
-
+            storageService.cleanupDirectory(directory);
 
             Path outputFile =
                     directory.resolve(
                             "recording-" +
                                     Instant.now().toEpochMilli() +
-                                    ".mp4"
+                                    ".mkv"
                     );
 
-
             log.info(
-                    "Starting FFmpeg recording camera={} file={}",
+                    "Starting recording camera={} file={}",
                     session.getCameraId(),
                     outputFile
             );
 
+            List<String> command = buildCommand(outputFile);
 
-            process =
-                    new ProcessBuilder(
-                            buildCommand(outputFile)
-                    )
-                            .redirectErrorStream(true)
-                            .start();
+            log.info("FFmpeg command: {}", String.join(" ", command));
 
-
-            session.setFfmpegProcess(
-                    process
-            );
+            process = new ProcessBuilder(command)
+                    .redirectErrorStream(true)
+                    .start();
 
 
-            /*
-             * Give FFmpeg some time to connect RTSP.
-             */
-            Thread.sleep(2000);
+            session.setFfmpegProcess(process);
+            session.setStatus(RecordingStatus.RECORDING);
+            session.setStartedAt(Instant.now());
 
+            listener.started(session);
 
-            if (!process.isAlive()) {
+            Process finalProcess = process;
 
-                throw new IllegalStateException(
-                        "FFmpeg terminated immediately"
-                );
-            }
+            Thread.startVirtualThread(() -> {
 
+                try (BufferedReader reader =
+                             new BufferedReader(
+                                     new InputStreamReader(
+                                             finalProcess.getInputStream()
+                                     ))) {
 
-            session.setStatus(
-                    RecordingStatus.RECORDING
-            );
+                    String line;
 
+                    while ((line = reader.readLine()) != null) {
+                        log.debug("[ffmpeg] {}", line);
+                    }
 
-            session.setStartedAt(
-                    Instant.now()
-            );
-
-
-            listener.started(
-                    session
-            );
-
-
-            log.info(
-                    "FFmpeg recording started camera={} pid={}",
-                    session.getCameraId(),
-                    process.pid()
-            );
-
-
+                } catch (Exception ignored) {
+                }
+            });
 
             while (process.isAlive()) {
 
-
                 if (session.isStopRequested()) {
 
-
                     log.info(
-                            "Recording stop requested camera={}",
+                            "Stopping recording camera={}",
                             session.getCameraId()
                     );
 
+                    /*
+                     * Graceful stop for ffmpeg.
+                     * Allows muxer to write trailer/index.
+                     */
+                    process.destroy();
 
-                    stopFfmpeg(
-                            process
-                    );
+                    boolean exited =
+                            process.waitFor(
+                                    30,
+                                    java.util.concurrent.TimeUnit.SECONDS
+                            );
 
+
+                    if (!exited) {
+
+                        log.warn(
+                                "FFmpeg did not stop gracefully, forcing kill camera={}",
+                                session.getCameraId()
+                        );
+
+                        process.destroyForcibly();
+
+                        process.waitFor(
+                                5,
+                                java.util.concurrent.TimeUnit.SECONDS
+                        );
+                    }
 
                     break;
                 }
@@ -155,68 +137,38 @@ public class RecordingWorker implements Runnable {
                 Thread.sleep(1000);
             }
 
+            int exitCode = process.waitFor();
 
-
-            int exitCode =
-                    process.waitFor();
-
-
+            session.setFinishedAt(Instant.now());
 
             if (session.isStopRequested()) {
 
+                session.setStatus(RecordingStatus.STOPPED);
+                listener.stopped(session);
 
                 log.info(
-                        "Recording stopped camera={} exitCode={}",
+                        "Recording finished camera={} exit={}",
                         session.getCameraId(),
                         exitCode
                 );
-
-
-                session.setStatus(
-                        RecordingStatus.STOPPED
-                );
-
-
-                listener.stopped(
-                        session
-                );
-
 
             } else {
 
+                session.setStatus(RecordingStatus.FAILED);
+                listener.failed(session);
 
                 log.warn(
-                        "FFmpeg finished unexpectedly camera={} exitCode={}",
+                        "Recording failed camera={} exit={}",
                         session.getCameraId(),
                         exitCode
                 );
-
-
-                session.setStatus(
-                        RecordingStatus.FAILED
-                );
-
-
-                listener.failed(
-                        session
-                );
             }
 
+        } catch (Exception e) {
 
+            session.setStatus(RecordingStatus.FAILED);
 
-            session.setFinishedAt(
-                    Instant.now()
-            );
-
-
-        }
-        catch (Exception e) {
-
-
-            session.setStatus(
-                    RecordingStatus.FAILED
-            );
-
+            listener.failed(session);
 
             log.error(
                     "Recording failed camera={}",
@@ -224,128 +176,43 @@ public class RecordingWorker implements Runnable {
                     e
             );
 
-
-            listener.failed(
-                    session
-            );
-
-
         }
         finally {
 
-
             if (process != null && process.isAlive()) {
 
-
                 log.warn(
-                        "Force stopping FFmpeg camera={}",
+                        "FFmpeg still alive after worker finish, terminating camera={}",
                         session.getCameraId()
                 );
 
+                process.destroy();
 
-                stopFfmpeg(
-                        process
-                );
+                try {
+                    if (!process.waitFor(
+                            5,
+                            java.util.concurrent.TimeUnit.SECONDS
+                    )) {
+                        process.destroyForcibly();
+                    }
+                }
+                catch (InterruptedException e) {
+
+                    Thread.currentThread().interrupt();
+                    process.destroyForcibly();
+                }
             }
 
 
-            session.setFfmpegProcess(
-                    null
-            );
-        }
-
-
-        log.info(
-                "Recording worker finished camera={}",
-                session.getCameraId()
-        );
-    }
-
-
-
-
-
-    /**
-     * Graceful FFmpeg shutdown.
-     *
-     * SIGINT allows FFmpeg to write MP4 metadata (moov atom).
-     */
-    private void stopFfmpeg(Process process) {
-
-        try {
-
-            log.info(
-                    "Sending graceful stop to FFmpeg pid={}",
-                    process.pid()
-            );
-
-
-            // SIGTERM
-            process.destroy();
-
-
-            if (!process.waitFor(
-                    10,
-                    TimeUnit.SECONDS
-            )) {
-
-
-                log.warn(
-                        "FFmpeg did not terminate gracefully pid={}",
-                        process.pid()
-                );
-
-
-                process.destroyForcibly();
-
-
-                process.waitFor();
-            }
-
-
-            log.info(
-                    "FFmpeg stopped pid={} alive={}",
-                    process.pid(),
-                    process.isAlive()
-            );
-
-
-        } catch (Exception e) {
-
-
-            log.error(
-                    "Failed stopping FFmpeg",
-                    e
-            );
-
-
-            process.destroyForcibly();
+            session.setFfmpegProcess(null);
         }
     }
 
-
-    /**
-     * FFmpeg command:
-     *
-     * RTSP
-     *   |
-     *   v
-     * FFmpeg
-     *   |
-     *   v
-     * MP4
-     */
-    private List<String> buildCommand(
-            Path outputFile
-    ) {
-
-
+    private List<String> buildCommand(Path outputFile) {
         return List.of(
-
                 "ffmpeg",
 
                 "-hide_banner",
-
                 "-loglevel",
                 "warning",
 
@@ -355,18 +222,31 @@ public class RecordingWorker implements Runnable {
                 "-i",
                 rtspUrl,
 
-                "-c",
-                "copy",
+                "-map",
+                "0",
 
-                "-movflags",
-                "+faststart",
+                "-c:v",
+                "libx264",
+
+                "-preset",
+                "veryfast",
+
+                "-pix_fmt",
+                "yuv420p",
+
+                "-c:a",
+                "aac",
+
+                "-max_muxing_queue_size",
+                "1024",
 
                 "-f",
-                "mp4",
+                "matroska",
 
                 "-y",
 
                 outputFile.toString()
         );
+
     }
 }

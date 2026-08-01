@@ -13,7 +13,7 @@ public class CameraHealthScheduler {
     private final CameraMonitoringService service;
 
 
-    @Scheduled(fixedDelay = 10000)
+    //@Scheduled(fixedDelay = 10000)
     public void checkCameras() {
 
         service.checkAll();
