@@ -2,8 +2,12 @@ package com.coltrack.recordingservice.model;
 
 import lombok.Builder;
 import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -104,7 +108,8 @@ public class RecordingSession {
     /**
      * S3 object key.
      */
-    private String s3Key;
+    @Builder.Default
+    private List<String> s3Keys = new ArrayList<>();
 
     /**
      * Upload completed successfully.

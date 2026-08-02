@@ -3,10 +3,7 @@ package com.coltrack.recordingservice.worker;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
-import com.coltrack.recordingservice.service.FfprobeService;
-import com.coltrack.recordingservice.service.RecordingMetadataService;
-import com.coltrack.recordingservice.service.RecordingStatisticsService;
-import com.coltrack.recordingservice.service.RecordingStorageService;
+import com.coltrack.recordingservice.service.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
@@ -30,6 +27,7 @@ public class RecordingWorker implements Runnable {
     private final RecordingMetadataService recordingMetadataService;
     private final FfprobeService ffprobeService;
     private final RecordingStatisticsService recordingStatisticsService;
+    private final S3StorageService s3StorageService;
 
     private final Deque<String> errorLines = new ArrayDeque<>(30);
 
@@ -39,6 +37,7 @@ public class RecordingWorker implements Runnable {
             RecordingMetadataService recordingMetadataService,
             FfprobeService ffprobeService,
             RecordingStatisticsService recordingStatisticsService,
+            S3StorageService s3StorageService,
             String rtspUrl,
             RecordingListener listener
     ) {
@@ -47,6 +46,7 @@ public class RecordingWorker implements Runnable {
         this.recordingMetadataService = recordingMetadataService;
         this.ffprobeService = ffprobeService;
         this.recordingStatisticsService = recordingStatisticsService;
+        this.s3StorageService = s3StorageService;
         this.rtspUrl = rtspUrl;
         this.listener = listener;
     }
@@ -292,6 +292,19 @@ public class RecordingWorker implements Runnable {
                     metadata,
                     session
             );
+
+            Thread.startVirtualThread(() -> {
+
+                try {
+
+                    s3StorageService.uploadRecording(session);
+                    log.info("S3 upload completed camera={}", session.getCameraId());
+
+                } catch (Exception e) {
+
+                    log.error("S3 upload failed camera={}", session.getCameraId(), e);
+                }
+            });
 
         } else {
 

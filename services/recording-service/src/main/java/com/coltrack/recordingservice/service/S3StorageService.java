@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -52,14 +54,20 @@ public class S3StorageService implements ObjectStorageService {
 
             files.filter(Files::isRegularFile)
                     .sorted()
-                    .forEach(file -> uploadFile(session, file));
+                    .forEach(file -> {
+
+                        String key =
+                                uploadFile(
+                                        session,
+                                        file
+                                );
+
+                        session.getS3Keys().add(key);
+                    });
 
         } catch (IOException e) {
 
-            throw new RuntimeException(
-                    "Unable to upload recording",
-                    e
-            );
+            throw new RuntimeException("Unable to upload recording", e);
         }
 
         session.setUploaded(true);
@@ -71,7 +79,7 @@ public class S3StorageService implements ObjectStorageService {
         }
     }
 
-    private void uploadFile(RecordingSession session, Path file) {
+    private String uploadFile(RecordingSession session, Path file) {
 
         String key = buildObjectKey(
                 session,
@@ -96,6 +104,8 @@ public class S3StorageService implements ObjectStorageService {
                 request,
                 RequestBody.fromFile(file)
         );
+
+        return key;
     }
 
     @Override
