@@ -1,16 +1,22 @@
 package com.coltrack.recordingservice.worker;
 
+import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
+import com.coltrack.recordingservice.service.RecordingMetadataService;
 import com.coltrack.recordingservice.service.RecordingStorageService;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 
 @Slf4j
 public class RecordingWorker implements Runnable {
@@ -19,15 +25,18 @@ public class RecordingWorker implements Runnable {
     private final RecordingStorageService storageService;
     private final String rtspUrl;
     private final RecordingListener listener;
+    private final RecordingMetadataService recordingMetadataService;
 
     public RecordingWorker(
             RecordingSession session,
             RecordingStorageService storageService,
+            RecordingMetadataService recordingMetadataService,
             String rtspUrl,
             RecordingListener listener
     ) {
         this.session = session;
         this.storageService = storageService;
+        this.recordingMetadataService = recordingMetadataService;
         this.rtspUrl = rtspUrl;
         this.listener = listener;
     }
@@ -44,9 +53,8 @@ public class RecordingWorker implements Runnable {
 
         Process process = null;
 
-        /*
-         * Keeps last FFmpeg error lines.
-         */
+        RecordingEntity metadata = null;
+
         java.util.Deque<String> errorLines =
                 new java.util.ArrayDeque<>(30);
 
@@ -60,7 +68,7 @@ public class RecordingWorker implements Runnable {
             storageService.cleanupDirectory(directory);
 
             /*
-             * FFmpeg will create:
+             * FFmpeg creates:
              *
              * recording-000.mkv
              * recording-001.mkv
@@ -86,7 +94,7 @@ public class RecordingWorker implements Runnable {
             );
 
             /*
-             * Keep stdout/stderr separated.
+             * Start FFmpeg process.
              */
             process =
                     new ProcessBuilder(command)
@@ -99,6 +107,15 @@ public class RecordingWorker implements Runnable {
             session.setStartedAt(
                     Instant.now()
             );
+
+            /*
+             * Create metadata only after FFmpeg started successfully.
+             */
+            metadata = recordingMetadataService.create(
+                    session.getCameraId(),
+                    directory.toString()
+            );
+
 
             listener.started(session);
 
@@ -218,6 +235,19 @@ public class RecordingWorker implements Runnable {
 
                 listener.stopped(session);
 
+                if (metadata != null) {
+
+                    long size = storageService.calculateDirectorySize(
+                            outputPattern.getParent()
+                    );
+
+                    recordingMetadataService.complete(
+                            metadata,
+                            size,
+                            exitCode
+                    );
+                }
+
             } else {
 
                 session.setStatus(
@@ -244,7 +274,15 @@ public class RecordingWorker implements Runnable {
                         exitCode
                 );
 
+
                 listener.failed(session);
+
+                if (metadata != null) {
+                    recordingMetadataService.failed(
+                            metadata,
+                            ""// todo
+                    );
+                }
             }
 
         } catch (Exception e) {
@@ -253,6 +291,7 @@ public class RecordingWorker implements Runnable {
                     RecordingStatus.FAILED
             );
 
+
             listener.failed(session);
 
             log.error(
@@ -260,6 +299,13 @@ public class RecordingWorker implements Runnable {
                     session.getCameraId(),
                     e
             );
+
+            if (metadata != null) {
+                recordingMetadataService.failed(
+                        metadata,
+                        e.getMessage()
+                );
+            }
 
         } finally {
 

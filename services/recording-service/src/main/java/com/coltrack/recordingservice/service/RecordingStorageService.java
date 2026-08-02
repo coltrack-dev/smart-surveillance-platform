@@ -202,4 +202,23 @@ public class RecordingStorageService {
             return Instant.MIN;
         }
     }
+
+    public long calculateDirectorySize(Path dir) throws IOException {
+
+        try (Stream<Path> stream = Files.walk(dir)) {
+
+            long sum = stream
+                    .filter(Files::isRegularFile)
+                    .mapToLong(path -> {
+                        try {
+                            return Files.size(path);
+                        } catch (IOException e) {
+                            return 0L;
+                        }
+                    })
+                    .sum();
+            return sum;
+        }
+    }
+
 }

@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 public class RecordingManager implements RecordingListener {
 
     private final RecordingStorageService storageService;
+    private final RecordingMetadataService recordingMetadataService;
     private final CameraClient cameraClient;
 
     /**
@@ -144,6 +145,7 @@ public class RecordingManager implements RecordingListener {
                                 new RecordingWorker(
                                         session,
                                         storageService,
+                                        recordingMetadataService,
                                         camera.rtspUrl(),
                                         this
                                 );

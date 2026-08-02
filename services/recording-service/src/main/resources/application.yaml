@@ -5,10 +5,19 @@ spring:
   application:
     name: recording-service
 
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  datasource:
+    url: jdbc:postgresql://192.168.13.128:5432/surveillance_db
+    username: surveillance_user
+    password: surveillance_password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+#  autoconfigure:
+#    exclude:
+#      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+#      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
 
   kafka:
     bootstrap-servers: localhost:9092
