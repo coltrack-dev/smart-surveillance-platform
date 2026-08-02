@@ -35,6 +35,8 @@ services:
       # Для локальной разработки достаточно одной реплики
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
+      # На время разработки
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
 
   #
   # OpenSearch

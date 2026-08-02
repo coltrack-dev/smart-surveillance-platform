@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
@@ -64,13 +65,10 @@ public class RecordingManager implements RecordingListener {
             process.destroy();
 
             try {
-
                 if (!process.waitFor(30, TimeUnit.SECONDS)) {
 
                     log.warn("Force killing ffmpeg camera={}", session.getCameraId());
-
                     process.destroyForcibly();
-
                     process.waitFor(2, TimeUnit.SECONDS);
                 }
 
@@ -86,86 +84,104 @@ public class RecordingManager implements RecordingListener {
     }
 
 
-    /**
-     * Starts recording for camera.
-     * <p>
-     * Called when StreamStartedEvent received.
-     */
-    public RecordingSession start(UUID cameraId) {
-
-        RecordingSession existing = sessions.get(cameraId);
-
-        if (existing != null) {
-            if (existing.getStatus() == RecordingStatus.RECORDING ||
-                    existing.getStatus() == RecordingStatus.STARTING) {
-                log.info(
-                        "Recording already running camera={}",
-                        cameraId
-                );
-                return existing;
-            }
-            log.warn(
-                    "Removing stale recording session camera={}",
-                    cameraId
-            );
-            sessions.remove(cameraId);
-        }
-
-        CameraDto camera =
-                cameraClient.findById(cameraId);
-
-        log.info("start recording for {}", camera.rtspUrl());
-
-        RecordingSession session =
-                RecordingSession.builder()
-                        .id(UUID.randomUUID())
-                        .cameraId(cameraId)
-                        .rtspUrl(camera.rtspUrl())
-                        .status(RecordingStatus.STARTING)
-                        .build();
-        sessions.put(
-                cameraId,
-                session
-        );
-
-        log.info(
-                "Creating recording session camera={} id={}",
-                cameraId,
-                session.getId()
-        );
+    private void startWorker(RecordingSession session) {
 
         Thread.startVirtualThread(
                 () -> {
                     try {
-                        log.info(
-                                "Starting RecordingWorker camera={}",
-                                cameraId
-                        );
+                        log.info("Starting RecordingWorker camera={}", session.getCameraId());
+
                         RecordingWorker worker =
                                 new RecordingWorker(
                                         session,
                                         storageService,
                                         recordingMetadataService,
-                                        camera.rtspUrl(),
+                                        session.getRtspUrl(),
                                         this
                                 );
+
                         worker.run();
                     } catch (Exception e) {
-                        log.error(
-                                "Recording worker failed camera={}",
-                                cameraId,
-                                e
-                        );
+
+                        log.error("Recording worker failed camera={}", session.getCameraId(), e);
+
                         session.setStatus(
                                 RecordingStatus.FAILED
                         );
                     }
                 }
         );
-        log.info(
-                "Recording worker started camera={}",
-                cameraId
-        );
+
+        log.info("Recording worker started camera={}", session.getCameraId());
+    }
+
+    /**
+     * Starts recording for camera.
+     * <p>
+     * Called when StreamStartedEvent received.
+     */
+    public RecordingSession start(UUID cameraId, Instant eventTime) {
+
+        RecordingSession session =
+                sessions.compute(cameraId, (id, existing) -> {
+
+                    if (existing != null) {
+
+                        /*
+                         * Ignore duplicate start events.
+                         */
+                        if (existing.getStatus() == RecordingStatus.RECORDING ||
+                                existing.getStatus() == RecordingStatus.STARTING) {
+
+                            log.info("Recording already running camera={}", cameraId);
+
+                            return existing;
+                        }
+
+                        /*
+                         * Ignore old Kafka events.
+                         */
+                        if (existing.getStartedAt() != null &&
+                                eventTime != null &&
+                                existing.getStartedAt().isAfter(eventTime)) {
+
+                            log.warn("Ignoring old start event camera={} eventTime={} current={}", cameraId, eventTime, existing.getStartedAt());
+
+                            return existing;
+                        }
+
+                        log.warn(
+                                "Removing stale recording session camera={}",
+                                cameraId
+                        );
+                    }
+
+                    CameraDto camera =
+                            cameraClient.findById(cameraId);
+
+                    RecordingSession newSession =
+                            RecordingSession.builder()
+                                    .id(UUID.randomUUID())
+                                    .cameraId(cameraId)
+                                    .rtspUrl(camera.rtspUrl())
+                                    .status(RecordingStatus.STARTING)
+                                    .startedAt(
+                                            eventTime != null
+                                                    ? eventTime
+                                                    : Instant.now()
+                                    )
+                                    .build();
+
+                    log.info("Creating recording session camera={} id={}", cameraId, newSession.getId());
+
+
+                    startWorker(newSession);
+
+
+                    return newSession;
+                });
+
+
         return session;
     }
 
@@ -174,36 +190,33 @@ public class RecordingManager implements RecordingListener {
      * <p>
      * Called when StreamStoppedEvent received.
      */
-    public void stop(UUID cameraId) {
+    public synchronized void stop(UUID cameraId, Instant eventTime) {
 
-        RecordingSession session = sessions.get(cameraId);
+        RecordingSession session =
+                sessions.get(cameraId);
 
         if (session == null) {
-            log.warn(
-                    "Recording session not found camera={}",
-                    cameraId
-            );
+
+            log.warn("Recording session not found camera={}", cameraId);
             return;
         }
 
-        log.info(
-                "Requesting recording stop camera={}",
-                cameraId
-        );
+        if (session.getStartedAt() != null &&
+                eventTime.isBefore(session.getStartedAt())) {
+
+
+            log.warn("Ignoring old stop event camera={} eventTime={} startedAt={}", cameraId, eventTime, session.getStartedAt());
+
+            return;
+        }
+
+        log.info("Requesting recording stop camera={}", cameraId);
 
         session.setStopRequested(true);
 
         session.setStatus(
                 RecordingStatus.STOPPING
         );
-
-        /*
-         * Do not kill FFmpeg here.
-         *
-         * RecordingWorker owns the process lifecycle.
-         * It will send SIGTERM and wait until FFmpeg
-         * writes the container trailer.
-         */
     }
 
     @Override

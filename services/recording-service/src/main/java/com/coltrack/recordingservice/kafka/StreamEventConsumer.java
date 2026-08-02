@@ -17,58 +17,104 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class StreamEventConsumer {
 
+
     private final RecordingManager recordingManager;
+
 
     @KafkaListener(
             topics = KafkaTopics.STREAM_EVENTS,
             groupId = "recording-service"
     )
-    public void consume(ConsumerRecord<String, Object> record) {
+    public void consume(
+            ConsumerRecord<String, Object> record
+    ) {
 
         Object event = record.value();
 
+
         log.info(
-                "Stream event received {}",
+                "Stream event received offset={} event={}",
+                record.offset(),
                 event
         );
 
 
         if (event instanceof StreamStartedEvent started) {
 
-            log.info(
-                    "Starting recording camera={}",
-                    started.cameraId()
-            );
-
-            recordingManager.start(
-                    started.cameraId()
-            );
+            handleStarted(started);
+            return;
         }
 
 
-        else if (event instanceof StreamStoppedEvent stopped) {
+        if (event instanceof StreamStoppedEvent stopped) {
 
-            log.info(
-                    "Stopping recording camera={}",
-                    stopped.cameraId()
-            );
-
-            recordingManager.stop(
-                    stopped.cameraId()
-            );
+            handleStopped(stopped);
+            return;
         }
 
 
-        else if (event instanceof StreamFailedEvent failed) {
+        if (event instanceof StreamFailedEvent failed) {
 
-            log.warn(
-                    "Recording failed camera={}",
-                    failed.cameraId()
-            );
-
-            recordingManager.stop(
-                    failed.cameraId()
-            );
+            handleFailed(failed);
+            return;
         }
+
+
+        log.warn(
+                "Unknown stream event type={}",
+                event.getClass()
+        );
+    }
+
+
+    private void handleStarted(
+            StreamStartedEvent event
+    ) {
+
+        log.info(
+                "Stream started event camera={}",
+                event.cameraId()
+        );
+
+
+        recordingManager.start(
+                event.cameraId(),
+                event.startedAt()
+        );
+    }
+
+
+    private void handleStopped(
+            StreamStoppedEvent event
+    ) {
+
+        log.info(
+                "Stream stopped event camera={}",
+                event.cameraId()
+        );
+
+
+        recordingManager.stop(
+                event.cameraId(),
+                event.stoppedAt()
+        );
+    }
+
+
+    private void handleFailed(
+            StreamFailedEvent event
+    ) {
+
+        log.warn(
+                "Stream failed event camera={} reason={}",
+                event.cameraId(),
+                event.reason()
+        );
+
+
+        recordingManager.stop(
+                event.cameraId(),
+                event.failedAt()
+        );
     }
 }
