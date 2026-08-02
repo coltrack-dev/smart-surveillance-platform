@@ -35,6 +35,8 @@ public class RecordingManager implements RecordingListener {
     private final RecordingStorageService storageService;
     private final RecordingMetadataService recordingMetadataService;
     private final CameraClient cameraClient;
+    private final RecordingStatisticsService recordingStatisticsService;
+    private final FfprobeService ffprobeService;
 
     /**
      * Active recording sessions.
@@ -96,6 +98,8 @@ public class RecordingManager implements RecordingListener {
                                         session,
                                         storageService,
                                         recordingMetadataService,
+                                        ffprobeService,
+                                        recordingStatisticsService,
                                         session.getRtspUrl(),
                                         this
                                 );

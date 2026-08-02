@@ -221,4 +221,39 @@ public class RecordingStorageService {
         }
     }
 
+    public int countSegments(Path directory) {
+
+        try (Stream<Path> stream = Files.list(directory)) {
+
+            return (int) stream
+                    .filter(Files::isRegularFile)
+                    .filter(file -> file.toString().endsWith(".mkv"))
+                    .count();
+
+        } catch (IOException e) {
+
+            log.warn("Unable to count recording segments {}", directory, e);
+
+            return 0;
+        }
+    }
+
+    public Path findFirstSegment(Path directory) {
+
+        try (Stream<Path> stream = Files.list(directory)) {
+
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(file -> file.toString().endsWith(".mkv"))
+                    .sorted()
+                    .findFirst()
+                    .orElse(null);
+
+        } catch (IOException e) {
+
+            log.warn("Unable to find first recording segment {}", directory, e);
+
+            return null;
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.coltrack.recordingservice.service;
 
 import com.coltrack.recordingservice.model.RecordingEntity;
+import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,28 +37,20 @@ public class RecordingMetadataService {
 
     public void complete(
             RecordingEntity entity,
-            long sizeBytes,
-            int exitCode
+            RecordingSession session
     ) {
 
-        Instant now = Instant.now();
+        entity.setFinishedAt(session.getFinishedAt());
 
-        entity.setFinishedAt(now);
+        entity.setDurationSeconds(session.getDurationSeconds());
 
-        entity.setDurationSeconds(
-                now.getEpochSecond()
-                        -
-                        entity.getStartedAt()
-                                .getEpochSecond()
-        );
+        entity.setSizeBytes(session.getSizeBytes());
 
-        entity.setSizeBytes(sizeBytes);
+        entity.setExitCode(session.getExitCode());
 
-        entity.setExitCode(exitCode);
+        entity.setSegmentsCount(session.getSegmentsCount());
 
-        entity.setStatus(
-                RecordingStatus.STOPPED
-        );
+        entity.setStatus(RecordingStatus.STOPPED);
 
         repository.save(entity);
     }
