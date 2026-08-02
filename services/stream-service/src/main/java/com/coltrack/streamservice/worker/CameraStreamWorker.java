@@ -6,7 +6,9 @@ import com.coltrack.streamservice.service.HlsService;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -14,7 +16,7 @@ import java.util.List;
 
 /**
  * Worker responsible for running FFmpeg process.
- *
+ * <p>
  * Responsibilities:
  * - start RTSP -> HLS conversion;
  * - monitor FFmpeg process;
@@ -24,7 +26,7 @@ import java.util.List;
 @Slf4j
 public class CameraStreamWorker implements Runnable {
 
-    private static final int PLAYLIST_TIMEOUT_SECONDS = 15;
+    private static final int PLAYLIST_TIMEOUT_SECONDS = 30;
     private static final int RECONNECT_DELAY_SECONDS = 5;
 
     private final StreamSession session;
@@ -51,16 +53,16 @@ public class CameraStreamWorker implements Runnable {
 
         hlsService.cleanupStreamDirectory(outputDir);
 
-
-        // Main reconnect loop.
-        // Worker keeps trying until stream is explicitly stopped.
         while (!session.isStopRequested()) {
 
             Process process = null;
 
             try {
 
-                log.info("Starting FFmpeg camera={}", session.getCameraId());
+                log.info(
+                        "Starting FFmpeg camera={}",
+                        session.getCameraId()
+                );
 
                 process =
                         new ProcessBuilder(
@@ -69,19 +71,56 @@ public class CameraStreamWorker implements Runnable {
                                 .redirectErrorStream(true)
                                 .start();
 
-                log.info("FFmpeg started camera={} pid={}", session.getCameraId(), process.pid());
+                log.info(
+                        "FFmpeg started camera={} pid={}",
+                        session.getCameraId(),
+                        process.pid()
+                );
+
+                /*
+                 * Consume FFmpeg output continuously.
+                 * Prevents process from blocking because of a full pipe
+                 * and provides diagnostics.
+                 */
+                Process finalProcess = process;
+
+                Thread.startVirtualThread(() -> {
+
+                    try (BufferedReader reader =
+                                 new BufferedReader(
+                                         new InputStreamReader(
+                                                 finalProcess.getInputStream()
+                                         ))) {
+
+                        String line;
+
+                        while ((line = reader.readLine()) != null) {
+                            log.debug("[ffmpeg] {}", line);
+                        }
+
+                    } catch (Exception ignored) {
+                    }
+                });
 
                 session.setFfmpegProcess(process);
-
                 session.setStatus(StreamStatus.STARTING);
 
                 if (session.getStartedAt() == null) {
-
                     session.setStartedAt(Instant.now());
                 }
 
-                // Wait until FFmpeg creates HLS playlist.
+                log.info(
+                        "Waiting HLS playlist camera={} dir={}",
+                        session.getCameraId(),
+                        outputDir.toAbsolutePath()
+                );
+
                 waitForPlaylist(outputDir, process);
+
+                log.info(
+                        "HLS playlist created camera={}",
+                        session.getCameraId()
+                );
 
                 session.setHlsUrl(
                         hlsService.getStreamUrl(
@@ -91,12 +130,16 @@ public class CameraStreamWorker implements Runnable {
 
                 session.setStatus(StreamStatus.RUNNING);
 
-                // Notify system that stream is available.
                 listener.started(session);
 
-                log.info("Stream started camera={}", session.getCameraId());
+                log.info(
+                        "Stream started camera={}",
+                        session.getCameraId()
+                );
 
-                // Monitor FFmpeg process.
+                /*
+                 * Monitor FFmpeg.
+                 */
                 while (process.isAlive()) {
 
                     if (session.isStopRequested()) {
@@ -106,7 +149,15 @@ public class CameraStreamWorker implements Runnable {
                                 session.getCameraId()
                         );
 
-                        process.destroyForcibly();
+                        process.destroy();
+
+                        if (!process.waitFor(
+                                5,
+                                java.util.concurrent.TimeUnit.SECONDS
+                        )) {
+
+                            process.destroyForcibly();
+                        }
 
                         break;
                     }
@@ -121,10 +172,6 @@ public class CameraStreamWorker implements Runnable {
                 int exitCode =
                         process.waitFor();
 
-                /*
-                 * User manually stopped stream.
-                 * Do not reconnect and do not mark as failed.
-                 */
                 if (session.isStopRequested()) {
 
                     log.info(
@@ -133,39 +180,46 @@ public class CameraStreamWorker implements Runnable {
                             exitCode
                     );
 
-                    session.setStatus(
-                            StreamStatus.STOPPED
-                    );
+                    session.setStatus(StreamStatus.STOPPED);
 
                     break;
                 }
 
-                /*
-                 * FFmpeg crashed unexpectedly.
-                 * Stream should reconnect.
-                 */
                 session.setLastError(
                         "FFmpeg exited with code " + exitCode
                 );
 
-                session.setStatus(
-                        StreamStatus.ERROR
-                );
+                session.setStatus(StreamStatus.ERROR);
 
                 listener.failed(session);
 
                 log.warn(
-                        "FFmpeg stopped camera={}, exitCode={}, reconnecting",
+                        "FFmpeg exited camera={} exitCode={}, reconnecting",
                         session.getCameraId(),
                         exitCode
                 );
 
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
+
+                log.error("*** Stream failed camera={}", session.getCameraId(), e);
 
                 /*
-                 * Ignore errors during manual shutdown.
+                 * If playlist was not created,
+                 * ensure FFmpeg is not left running.
                  */
+                if (process != null && process.isAlive()) {
+
+                    log.warn("Stopping orphan FFmpeg camera={}", session.getCameraId());
+
+                    process.destroyForcibly();
+
+                    try {
+                        process.waitFor();
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+
                 if (session.isStopRequested()) {
 
                     log.info(
@@ -176,25 +230,14 @@ public class CameraStreamWorker implements Runnable {
                     break;
                 }
 
-                session.setStatus(
-                        StreamStatus.ERROR
-                );
+                session.setStatus(StreamStatus.ERROR);
 
-                session.setLastError(
-                        e.getMessage()
-                );
+                session.setLastError(e.getMessage());
 
                 listener.failed(session);
 
-                log.error(
-                        "Stream failed camera={}",
-                        session.getCameraId(),
-                        e
-                );
-            }
-            finally {
+            } finally {
 
-                // Cleanup FFmpeg process.
                 if (process != null && process.isAlive()) {
 
                     log.info(
@@ -202,13 +245,29 @@ public class CameraStreamWorker implements Runnable {
                             session.getCameraId()
                     );
 
-                    process.destroyForcibly();
+                    process.destroy();
+
+                    try {
+
+                        if (!process.waitFor(
+                                5,
+                                java.util.concurrent.TimeUnit.SECONDS
+                        )) {
+
+                            process.destroyForcibly();
+                        }
+
+                    } catch (InterruptedException e) {
+
+                        Thread.currentThread().interrupt();
+
+                        process.destroyForcibly();
+                    }
                 }
 
                 session.setFfmpegProcess(null);
             }
 
-            // Prepare reconnect attempt.
             if (!session.isStopRequested()) {
 
                 session.setReconnectCount(
@@ -225,9 +284,7 @@ public class CameraStreamWorker implements Runnable {
             }
         }
 
-        session.setStatus(
-                StreamStatus.STOPPED
-        );
+        session.setStatus(StreamStatus.STOPPED);
 
         listener.stopped(session);
 
@@ -240,25 +297,38 @@ public class CameraStreamWorker implements Runnable {
     /**
      * Waits until FFmpeg creates HLS playlist.
      */
+    /**
+     * Waits until FFmpeg creates the HLS playlist.
+     */
     private void waitForPlaylist(
             Path outputDir,
             Process process
-    ) throws Exception {
+    ) throws IOException, InterruptedException {
 
-        Path playlist =
-                outputDir.resolve("index.m3u8");
+        Path playlist = outputDir.resolve("index.m3u8");
 
-        for (int i = 0; i < PLAYLIST_TIMEOUT_SECONDS * 2; i++) {
+        log.info(
+                "Waiting for HLS playlist camera={} path={}",
+                session.getCameraId(),
+                playlist.toAbsolutePath()
+        );
+
+        long started = System.currentTimeMillis();
+        long deadline = started + PLAYLIST_TIMEOUT_SECONDS * 1000L;
+
+        while (System.currentTimeMillis() < deadline) {
 
             if (Files.exists(playlist)) {
+
+                log.info(
+                        "HLS playlist created camera={} after {} ms",
+                        session.getCameraId(),
+                        System.currentTimeMillis() - started
+                );
 
                 return;
             }
 
-            /*
-             * FFmpeg exited before creating playlist.
-             * Do not wait until timeout.
-             */
             if (!process.isAlive()) {
 
                 throw new IOException(
@@ -271,7 +341,13 @@ public class CameraStreamWorker implements Runnable {
         }
 
         throw new IOException(
-                "Timed out waiting for HLS playlist"
+                String.format(
+                        "Timed out waiting for HLS playlist (%d s). Path=%s, exists=%s, processAlive=%s",
+                        PLAYLIST_TIMEOUT_SECONDS,
+                        playlist.toAbsolutePath(),
+                        Files.exists(playlist),
+                        process.isAlive()
+                )
         );
     }
 
@@ -286,8 +362,7 @@ public class CameraStreamWorker implements Runnable {
                     RECONNECT_DELAY_SECONDS * 1000L
             );
 
-        }
-        catch (InterruptedException e) {
+        } catch (InterruptedException e) {
 
             Thread.currentThread()
                     .interrupt();
@@ -301,13 +376,13 @@ public class CameraStreamWorker implements Runnable {
 
     /**
      * FFmpeg command:
-     *
+     * <p>
      * RTSP camera
-     *      |
-     *      v
+     * |
+     * v
      * FFmpeg
-     *      |
-     *      v
+     * |
+     * v
      * HLS playlist + segments
      */
     private List<String> buildCommand(
