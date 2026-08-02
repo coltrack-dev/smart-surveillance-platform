@@ -1,0 +1,202 @@
+* {
+    box-sizing: border-box;
+}
+
+
+body {
+    margin: 0;
+    font-family: Inter,
+    Arial,
+    Helvetica,
+    sans-serif;
+
+    background: #f5f7fa;
+    color: #1f2937;
+}
+
+
+#app {
+    min-height: 100vh;
+}
+
+
+h1 {
+    margin-bottom: 24px;
+}
+
+
+button {
+
+    background: #2563eb;
+
+    color: white;
+
+    border: none;
+
+    padding: 8px 16px;
+
+    border-radius: 6px;
+
+    cursor: pointer;
+
+    margin-right: 8px;
+
+}
+
+
+button:hover {
+
+    background: #1d4ed8;
+
+}
+
+
+button.stop {
+
+    background: #dc2626;
+
+}
+
+
+button.stop:hover {
+
+    background: #b91c1c;
+
+}
+
+
+.page {
+
+    padding: 24px;
+
+}
+
+
+.grid {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(auto-fill, minmax(420px, 1fr));
+
+    gap: 20px;
+
+}
+
+
+.camera-card {
+
+    background: white;
+
+    border-radius: 12px;
+
+    padding: 20px;
+
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+}
+
+
+.camera-header {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    margin-bottom: 15px;
+
+}
+
+
+.status {
+
+    padding: 4px 10px;
+
+    border-radius: 12px;
+
+    font-size: 12px;
+
+    background: #e5e7eb;
+
+}
+
+
+.status.online {
+
+    background: #dcfce7;
+
+    color: #166534;
+
+}
+
+
+.status.offline {
+
+    background: #fee2e2;
+
+    color: #991b1b;
+
+}
+
+
+.player {
+
+    margin-top: 20px;
+
+    background: black;
+
+    border-radius: 8px;
+
+    overflow: hidden;
+
+}
+
+
+video {
+
+    width: 100%;
+
+    display: block;
+
+}
+
+.app-layout {
+
+    min-height:100vh;
+
+}
+
+
+.header {
+
+    height:64px;
+
+    background:#111827;
+
+    color:white;
+
+    display:flex;
+
+    align-items:center;
+
+    padding:0 24px;
+
+}
+
+
+.header h2 {
+
+    margin:0;
+
+    font-size:20px;
+
+}
+
+
+.content {
+
+    padding:20px;
+
+}
