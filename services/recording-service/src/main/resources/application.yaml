@@ -53,6 +53,13 @@ recording:
     secret-key: yyyy
     region: us-east-1
     delete-local-after-upload: false
+  s3:
+    enabled: true
+    endpoint: https://s3.wasabisys.com
+    bucket: surveillance
+    access-key: xxxx
+    secret-key: yyyy
+    region: us-east-1
 
 # FFmpeg settings
 ffmpeg:
