@@ -5,7 +5,9 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -22,41 +24,48 @@ import java.util.stream.Stream;
 @Slf4j
 @Service
 public class RecordingStorageService {
+
     private final Path storageRoot;
+
     public RecordingStorageService(
             @Value("${recording.storage.path}") String storagePath
     ) {
         this.storageRoot = Path.of(storagePath);
     }
+
     /**
      * Creates directory for camera recordings.
      */
     public Path createRecordingDirectory(UUID cameraId) {
-        Path directory =
-                storageRoot.resolve(
-                        cameraId.toString()
-                );
+
+        LocalDate date = LocalDate.now();
+
+        Path path = Paths.get(
+                "data",
+                "recordings",
+                cameraId.toString(),
+                date.toString()
+        );
+
         try {
-            Files.createDirectories(directory);
+            Files.createDirectories(path);
+
             log.info(
                     "Recording directory created camera={} path={}",
                     cameraId,
-                    directory
+                    path
             );
-            return directory;
-        }
-        catch (IOException e) {
-            log.error(
-                    "Failed creating recording directory camera={}",
-                    cameraId,
-                    e
-            );
-            throw new IllegalStateException(
+
+            return path;
+
+        } catch (IOException e) {
+            throw new RuntimeException(
                     "Cannot create recording directory",
                     e
             );
         }
     }
+
     /**
      * Removes unfinished or temporary recording files.
      *

@@ -6,6 +6,7 @@ import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.worker.RecordingListener;
 import com.coltrack.recordingservice.worker.RecordingWorker;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages recording lifecycle.
@@ -31,14 +33,56 @@ public class RecordingManager implements RecordingListener {
 
     private final RecordingStorageService storageService;
     private final CameraClient cameraClient;
+
     /**
      * Active recording sessions.
      * <p>
      * Key - camera id.
      * Value - recording session.
      */
-    private final Map<UUID, RecordingSession> sessions =
-            new ConcurrentHashMap<>();
+    private final Map<UUID, RecordingSession> sessions = new ConcurrentHashMap<>();
+
+
+    @PreDestroy
+    public void shutdown() {
+
+        log.info("Stopping all recordings...");
+
+        for (RecordingSession session : sessions.values()) {
+
+            session.setStopRequested(true);
+
+            Process process = session.getFfmpegProcess();
+
+            if (process == null || !process.isAlive()) {
+                continue;
+            }
+
+            log.info("Stopping ffmpeg camera={}", session.getCameraId());
+
+            process.destroy();
+
+            try {
+
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+
+                    log.warn("Force killing ffmpeg camera={}", session.getCameraId());
+
+                    process.destroyForcibly();
+
+                    process.waitFor(2, TimeUnit.SECONDS);
+                }
+
+            } catch (InterruptedException e) {
+
+                Thread.currentThread().interrupt();
+
+                process.destroyForcibly();
+            }
+        }
+
+        log.info("All recording processes stopped");
+    }
 
 
     /**
