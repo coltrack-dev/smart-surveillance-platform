@@ -47,19 +47,19 @@ recording:
     path: data/recordings
   export:
     enabled: true
-    endpoint: https://s3.wasabisys.com
-    bucket: surveillance
-    access-key: xxxx
-    secret-key: yyyy
-    region: us-east-1
+    endpoint: ${WASABI_ENDPOINT}
+    bucket:  ${WASABI_BUCKET}
+    access-key: ${WASABI_ACCESS_KEY}
+    secret-key: ${WASABI_SECRET_KEY}
+    region:  ${WASABI_REGION:us-central-1}
     delete-local-after-upload: false
   s3:
     enabled: true
-    endpoint: https://s3.wasabisys.com
-    bucket: surveillance
-    access-key: xxxx
-    secret-key: yyyy
-    region: us-east-1
+    endpoint: ${WASABI_ENDPOINT}
+    bucket:  ${WASABI_BUCKET}
+    access-key: ${WASABI_ACCESS_KEY}
+    secret-key: ${WASABI_SECRET_KEY}
+    region: ${WASABI_REGION:us-central-1}
 
 # FFmpeg settings
 ffmpeg:
