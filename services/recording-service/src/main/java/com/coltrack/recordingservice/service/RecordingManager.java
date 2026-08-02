@@ -64,7 +64,7 @@ public class RecordingManager implements RecordingListener {
 
             try {
 
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                if (!process.waitFor(30, TimeUnit.SECONDS)) {
 
                     log.warn("Force killing ffmpeg camera={}", session.getCameraId());
 
