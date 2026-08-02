@@ -4,6 +4,12 @@ plugins {
     id 'io.spring.dependency-management'
 }
 
+dependencyManagement {
+    imports {
+        mavenBom "software.amazon.awssdk:bom:2.31.70"
+    }
+}
+
 group = 'com.coltrack'
 version = '0.0.1-SNAPSHOT'
 
@@ -28,6 +34,12 @@ dependencies {
     implementation 'org.springframework.kafka:spring-kafka'
 
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    implementation "software.amazon.awssdk:s3"
+    implementation "software.amazon.awssdk:auth"
+    implementation "software.amazon.awssdk:regions"
+
+    implementation "org.springframework.boot:spring-boot-starter-validation"
 
     implementation 'org.projectlombok:lombok'
 
