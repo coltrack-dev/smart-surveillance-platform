@@ -16,8 +16,20 @@ import {
 import CameraPlayer from '../components/camera/CameraPlayer.vue';
 
 
-const cameras =
-    ref<Camera[]>([]);
+const cameras = ref<Camera[]>([
+  {
+    id: "1",
+    name: "Entrance Camera",
+    rtspUrl: "",
+    status: "ONLINE"
+  },
+  {
+    id: "2",
+    name: "Warehouse Camera",
+    rtspUrl: "",
+    status: "OFFLINE"
+  }
+]);
 
 
 const streams =

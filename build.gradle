@@ -11,6 +11,9 @@ allprojects {
     version = '0.0.1-SNAPSHOT'
 }
 
+ext {
+    springCloudVersion = "2025.0.0"
+}
 
 subprojects {
 
@@ -26,6 +29,7 @@ subprojects {
     dependencyManagement {
         imports {
             mavenBom "org.springframework.boot:spring-boot-dependencies:3.5.8"
+            mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
         }
     }
 
