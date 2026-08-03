@@ -9,8 +9,9 @@ import com.coltrack.streamservice.model.StreamSession;
 public interface StreamListener {
 
     /**
-     * Called when FFmpeg successfully started
-     * and HLS playlist was created.
+     * Called when HLS stream becomes ready.
+     * CameraStreamWorker invokes this method
+     * after FFmpeg start and successful HLS playlist creation.
      */
     void started(StreamSession session);
 

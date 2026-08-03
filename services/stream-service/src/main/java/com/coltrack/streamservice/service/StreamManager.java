@@ -7,6 +7,7 @@ import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.worker.CameraStreamWorker;
+import com.coltrack.streamservice.worker.StreamEventPublisher;
 import com.coltrack.streamservice.worker.StreamListener;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
@@ -40,6 +43,7 @@ public class StreamManager implements StreamListener {
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final StreamMetricsService metricsService;
+    private final StreamEventPublisher streamWebSocketPublisher;
 
     /**
      * Active camera streams.
@@ -168,20 +172,22 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.RUNNING);
         sessions.put(cameraId, session);
         log.info("Stream started successfully camera={}", cameraId);
-/*
-        publishEvent(
-                "STREAM_STARTED",
-                session
-        );
-*/
-        publishEvent(
+
+        StreamStartedEvent event =
                 new StreamStartedEvent(
                         UUID.randomUUID(),
                         session.getCameraId(),
+                        session.getHlsUrl(),
                         Instant.now()
-                ),
+                );
+
+        publishEvent(
+                event,
                 session.getCameraId()
         );
+
+        streamWebSocketPublisher.publish(event);
+
     }
 
     /**
@@ -193,12 +199,7 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.STOPPED);
         sessions.remove(cameraId);
         log.info("Stream stopped camera={}", cameraId);
-/*
-        publishEvent(
-                "STREAM_STOPPED",
-                session
-        );
-*/
+
         publishEvent(
                 new StreamStoppedEvent(
                         UUID.randomUUID(),
@@ -218,12 +219,7 @@ public class StreamManager implements StreamListener {
         session.setStatus(StreamStatus.ERROR);
         sessions.remove(cameraId);
         log.error("Stream failed camera={}", cameraId);
-/*
-        publishEvent(
-                "STREAM_FAILED",
-                session
-        );
-*/
+
         publishEvent(
                 new StreamFailedEvent(
                         UUID.randomUUID(),
@@ -243,12 +239,7 @@ public class StreamManager implements StreamListener {
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.RECONNECTING);
         log.warn("Trying to reconnect stream camera={}", cameraId);
-/*
-        publishEvent(
-                "STREAM_RECONNECTING",
-                session
-        );
-*/
+
         publishEvent(
                 new StreamReconnectingEvent(
                         UUID.randomUUID(),
@@ -304,18 +295,4 @@ public class StreamManager implements StreamListener {
         );
     }
 
-/*
-    */
-/**
-     * Kafka event DTO.
-     *//*
-
-    public record StreamEvent(
-            String type,
-            UUID cameraId,
-            StreamStatus status,
-            long timestamp
-    ) {
-    }
-*/
 }
