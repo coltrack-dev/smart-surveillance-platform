@@ -7,6 +7,13 @@ spring:
       server:
         webflux:
           routes:
+            # HLS video stream
+            #
+            - id: hls-stream
+              uri: http://localhost:8094
+              predicates:
+                - Path=/hls/**
+
             #
             # Camera Service
             #
@@ -27,12 +34,6 @@ spring:
               filters:
                 - RewritePath=/api/v1/streams(?<segment>/?.*), /api/streams${segment}
 
-            # HLS video stream
-            #
-            - id: hls-stream
-              uri: http://localhost:8094
-              predicates:
-                - Path=/hls/**
 
             #
             # Recording Service
