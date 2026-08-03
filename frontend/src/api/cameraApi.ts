@@ -1,17 +1,49 @@
 import http from "./http";
-import type { Camera } from "../types/camera";
 
-export async function findAllCameras(): Promise<Camera[]> {
+export interface StreamInfo {
 
-    const response = await http.get<Camera[]>("/cameras");
+    cameraId: string;
+
+    status: string;
+
+    hlsUrl?: string;
+
+}
+
+
+export async function startStream(
+    cameraId: string
+): Promise<StreamInfo> {
+
+    const response =
+        await http.post(
+            `/streams/${cameraId}/start`
+        );
 
     return response.data;
 
 }
 
-export async function findCamera(id: string): Promise<Camera> {
 
-    const response = await http.get<Camera>(`/cameras/${id}`);
+export async function stopStream(
+    cameraId: string
+) {
+
+    await http.post(
+        `/streams/${cameraId}/stop`
+    );
+
+}
+
+
+export async function getStream(
+    cameraId: string
+): Promise<StreamInfo> {
+
+    const response =
+        await http.get(
+            `/streams/${cameraId}`
+        );
 
     return response.data;
 

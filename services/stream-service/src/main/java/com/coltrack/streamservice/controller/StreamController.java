@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.controller;
 
 import com.coltrack.streamservice.client.dto.CameraDto;
+import com.coltrack.streamservice.dto.StreamResponse;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.service.StreamManager;
 
@@ -24,16 +25,32 @@ public class StreamController {
      * Запуск RTSP -> FFmpeg -> HLS потока.
      */
     @PostMapping("/{cameraId}/start")
-    public ResponseEntity<StreamSession> start(
+    public ResponseEntity<StreamResponse> start(
             @PathVariable UUID cameraId
     ) {
 
         StreamSession session =
                 manager.start(cameraId);
 
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(session);
+        StreamResponse response =
+                StreamResponse.builder()
+                        .cameraId(session.getCameraId())
+                        .status(session.getStatus())
+                        .hlsUrl(
+                                "/hls/"
+                                        + cameraId
+                                        + "/index.m3u8"
+                        )
+                        .startedAt(session.getStartedAt())
+                        .reconnectCount(
+                                session.getReconnectCount()
+                        )
+                        .lastError(
+                                session.getLastError()
+                        )
+                        .build();
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -64,7 +81,7 @@ public class StreamController {
      * Получить состояние конкретного потока.
      */
     @GetMapping("/{cameraId}")
-    public ResponseEntity<StreamSession> get(
+    public ResponseEntity<StreamResponse> get(
             @PathVariable UUID cameraId
     ) {
 
@@ -72,12 +89,29 @@ public class StreamController {
                 manager.find(cameraId);
 
         if (session == null) {
-            return ResponseEntity
-                    .notFound()
+
+            return ResponseEntity.notFound()
                     .build();
         }
 
-        return ResponseEntity.ok(session);
+        return ResponseEntity.ok(
+                StreamResponse.builder()
+                        .cameraId(cameraId)
+                        .status(session.getStatus())
+                        .hlsUrl(
+                                "/hls/"
+                                        + cameraId
+                                        + "/index.m3u8"
+                        )
+                        .startedAt(session.getStartedAt())
+                        .reconnectCount(
+                                session.getReconnectCount()
+                        )
+                        .lastError(
+                                session.getLastError()
+                        )
+                        .build()
+        );
     }
 
     /**

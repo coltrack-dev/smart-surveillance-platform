@@ -8,6 +8,7 @@ import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.worker.CameraStreamWorker;
 import com.coltrack.streamservice.worker.StreamListener;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;

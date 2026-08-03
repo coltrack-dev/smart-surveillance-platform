@@ -1,77 +1,161 @@
 <script setup lang="ts">
-import type { Camera } from "@/types/camera";
+import { ref } from "vue";
+
+import type { Camera } from "@/types/Camera";
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 
-defineProps<{
+import {
+  startStream as apiStartStream,
+  stopStream as apiStopStream
+} from "@/api/streamApi";
+
+const props = defineProps<{
   camera: Camera;
 }>();
 
-function startStream() {
+// HLS URL получаем после запуска stream
+const hlsUrl = ref<string>();
 
-  console.log("Start stream");
+// Состояние операций
+const streamLoading = ref(false);
+const recordingLoading = ref(false);
+
+// Запуск видеопотока
+async function startStream() {
+  try {
+    streamLoading.value = true;
+
+    const stream = await apiStartStream(
+        props.camera.id
+    );
+
+    /*
+     * Backend возвращает:
+     *
+     * {
+     *   cameraId: "...",
+     *   status: "RUNNING",
+     *   hlsUrl: "/hls/.../index.m3u8"
+     * }
+     */
+
+    if (stream.hlsUrl) {
+
+      /*
+       * Если gateway находится на другом порту,
+       * добавляем полный URL.
+       */
+      hlsUrl.value =
+          stream.hlsUrl.startsWith("http")
+              ? stream.hlsUrl
+              : `${window.location.origin}${stream.hlsUrl}`;
+    }
+
+  } catch (e) {
+
+    console.error(
+        "Unable to start stream",
+        e
+    );
+
+  } finally {
+
+    streamLoading.value = false;
+
+  }
+}
+
+// Остановка видеопотока
+async function stopStream() {
+
+  try {
+
+    streamLoading.value = true;
+
+    await apiStopStream(
+        props.camera.id
+    );
+
+    // Убираем видео после остановки
+    hlsUrl.value = undefined;
+
+  } catch (e) {
+
+    console.error(
+        "Unable to stop stream",
+        e
+    );
+
+  } finally {
+
+    streamLoading.value = false;
+
+  }
 
 }
 
-function stopStream() {
-
-  console.log("Stop stream");
-
-}
-
+// Пока заглушки.
+// Подключим к recordingApi.ts следующим шагом.
 function startRecording() {
 
-  console.log("Start recording");
+  console.log(
+      "Start recording",
+      props.camera.id
+  );
 
 }
 
 function stopRecording() {
 
-  console.log("Stop recording");
+  console.log(
+      "Stop recording",
+      props.camera.id
+  );
 
 }
 </script>
 
 <template>
-
   <div class="camera-card">
 
     <div class="camera-header">
 
       <div>
-
-        <h2>{{ camera.name }}</h2>
+        <h2>
+          {{ camera.name }}
+        </h2>
 
         <div class="camera-id">
-
           {{ camera.id }}
-
         </div>
-
       </div>
 
       <span
           class="status"
-          :class="camera.status?.toLowerCase()"
+          :class="camera.status.toLowerCase()"
       >
-            {{ camera.status }}
-        </span>
+        {{ camera.status }}
+      </span>
 
     </div>
 
+    <!-- HLS player -->
     <CameraPlayer
-        :url="camera.hlsUrl"
+        :url="hlsUrl"
     />
 
     <div class="buttons">
 
       <button
           class="primary"
+          :disabled="streamLoading"
           @click="startStream"
       >
         Start Stream
       </button>
 
       <button
+          :disabled="streamLoading"
           @click="stopStream"
       >
         Stop Stream
@@ -83,12 +167,14 @@ function stopRecording() {
 
       <button
           class="danger"
+          :disabled="recordingLoading"
           @click="startRecording"
       >
         Start Recording
       </button>
 
       <button
+          :disabled="recordingLoading"
           @click="stopRecording"
       >
         Stop Recording
@@ -97,155 +183,82 @@ function stopRecording() {
     </div>
 
   </div>
-
 </template>
 
 <style scoped>
-
 .camera-card {
-
   background: white;
-
   border-radius: 12px;
-
   border: 1px solid #ddd;
-
   padding: 18px;
-
   box-shadow: 0 2px 8px rgba(0,0,0,.08);
-
 }
 
 .camera-header {
-
   display: flex;
-
   justify-content: space-between;
-
   align-items: center;
-
   margin-bottom: 16px;
-
 }
 
 .camera-header h2 {
-
   margin: 0;
-
   font-size: 18px;
-
 }
 
 .camera-id {
-
   color: gray;
-
   font-size: 12px;
-
   margin-top: 4px;
-
   word-break: break-all;
-
 }
 
 .status {
-
   padding: 6px 12px;
-
   border-radius: 20px;
-
   font-size: 12px;
-
   font-weight: bold;
-
   color: white;
-
 }
 
 .status.online {
-
   background: #16a34a;
-
 }
 
 .status.offline {
-
   background: #dc2626;
-
 }
 
 .status.recording {
-
   background: #ea580c;
-
-}
-
-.player {
-
-  height: 240px;
-
-  background: #111827;
-
-  color: white;
-
-  display: flex;
-
-  justify-content: center;
-
-  align-items: center;
-
-  border-radius: 8px;
-
-  margin-bottom: 16px;
-
 }
 
 .buttons {
-
   display: flex;
-
   gap: 10px;
-
-  margin-bottom: 10px;
-
+  margin-top: 10px;
 }
 
 button {
-
   flex: 1;
-
   padding: 10px;
-
   border: none;
-
   border-radius: 6px;
-
   cursor: pointer;
-
-  background: #e5e7eb;
-
 }
 
-button:hover {
-
-  opacity: .9;
-
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
 }
 
 .primary {
-
   background: #2563eb;
-
   color: white;
-
 }
 
 .danger {
-
   background: #dc2626;
-
   color: white;
-
 }
-
 </style>
