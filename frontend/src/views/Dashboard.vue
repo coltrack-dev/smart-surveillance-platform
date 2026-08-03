@@ -3,11 +3,25 @@ import { onMounted } from "vue";
 
 import CameraCard from "../components/camera/CameraCard.vue";
 import { useCameraStore } from "../stores/camera";
+import { connectStreamSocket } from "@/ws/streamSocket";
 
 const store = useCameraStore();
 
 onMounted(async () => {
+
   await store.load();
+
+  connectStreamSocket(
+      event => {
+
+        console.log(
+            "EVENT FROM BACKEND",
+            event
+        );
+
+      }
+  );
+
 });
 </script>
 
