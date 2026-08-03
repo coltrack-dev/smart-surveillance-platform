@@ -4,6 +4,7 @@ import Hls from "hls.js";
 
 const props = defineProps<{
   url?: string;
+  connecting?: boolean;
 }>();
 
 // HTML5 video элемент
@@ -267,14 +268,24 @@ onUnmounted(
     </div>
 
     <div
-        v-if="!loading && !playing && !error"
+        v-if="connecting"
         class="overlay"
     >
+      <div class="spinner"></div>
 
+      <div class="message">
+        Connecting video stream...
+      </div>
+    </div>
+
+
+    <div
+        v-if="!connecting && !loading && !playing && !error"
+        class="overlay"
+    >
       <div class="message">
         No video stream
       </div>
-
     </div>
 
     <div

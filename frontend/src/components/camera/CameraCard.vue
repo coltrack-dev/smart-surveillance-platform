@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import {
+  computed,
+  ref
+} from "vue";
 
 import type { Camera } from "@/types/Сamera.ts";
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
-import { computed } from "vue";
+
 import { useStreamStore } from "@/stores/streamStore";
 
 import {
@@ -21,13 +24,17 @@ const recordingLoading = ref(false);
 
 const streamStore = useStreamStore();
 
-// URL Gateway, через который доступен HLS
-const gatewayUrl =
-    import.meta.env.VITE_API_URL || "http://localhost:8080";
-
+// HLS URL сервера
 const hlsBaseUrl =
-    import.meta.env.VITE_HLS_URL || "http://localhost:8080";
+    import.meta.env.VITE_HLS_URL ||
+    "http://localhost:8080";
 
+/*
+ * Получаем HLS URL из Pinia.
+ *
+ * URL появляется только после StreamStartedEvent
+ * через WebSocket.
+ */
 const hlsUrl = computed(() => {
 
   const stream =
@@ -35,8 +42,9 @@ const hlsUrl = computed(() => {
           props.camera.id
       );
 
-  if (!stream?.hlsUrl)
+  if (!stream?.hlsUrl) {
     return undefined;
+  }
 
   return stream.hlsUrl.startsWith("http")
       ? stream.hlsUrl
@@ -44,12 +52,37 @@ const hlsUrl = computed(() => {
 
 });
 
+
+/*
+ * Показываем "Connecting video stream..."
+ *
+ * только после нажатия Start Stream,
+ * но до получения StreamStartedEvent.
+ */
+const streamConnecting = computed(() => {
+
+  return streamStore.isStarting(
+      props.camera.id
+  );
+
+});
+
+
 // Запуск видеопотока
 async function startStream() {
 
   try {
 
     streamLoading.value = true;
+
+    /*
+     * FFmpeg еще не готов.
+     * Включаем индикатор ожидания.
+     */
+    streamStore.setStarting(
+        props.camera.id,
+        true
+    );
 
     const stream =
         await apiStartStream(
@@ -67,16 +100,13 @@ async function startStream() {
      * {
      *   cameraId: "...",
      *   status: "STARTING",
-     *   hlsUrl: null,
-     *   startedAt: null
+     *   hlsUrl: "/hls/..."
      * }
      *
-     * HLS URL НЕ устанавливаем здесь.
+     * Здесь HLS URL НЕ устанавливаем.
      *
-     * Поток еще не готов.
-     * Когда FFmpeg создаст index.m3u8,
-     * backend отправит StreamStartedEvent
-     * через WebSocket.
+     * После создания index.m3u8
+     * backend отправит StreamStartedEvent.
      *
      * WebSocket обновит Pinia store,
      * после чего CameraPlayer получит URL.
@@ -89,12 +119,19 @@ async function startStream() {
         e
     );
 
+    streamStore.setStarting(
+        props.camera.id,
+        false
+    );
+
   } finally {
 
     streamLoading.value = false;
 
   }
+
 }
+
 
 // Остановка видеопотока
 async function stopStream() {
@@ -107,8 +144,12 @@ async function stopStream() {
         props.camera.id
     );
 
-    // Убираем видео после остановки
-    hlsUrl.value = undefined;
+    /*
+     * HLS URL вручную не удаляем.
+     *
+     * После StreamStoppedEvent
+     * store сам удалит поток.
+     */
 
   } catch (e) {
 
@@ -125,25 +166,6 @@ async function stopStream() {
 
 }
 
-// Пока заглушки.
-// Подключим к recordingApi.ts следующим шагом.
-function startRecording() {
-
-  console.log(
-      "Start recording",
-      props.camera.id
-  );
-
-}
-
-function stopRecording() {
-
-  console.log(
-      "Stop recording",
-      props.camera.id
-  );
-
-}
 </script>
 
 <template>
@@ -173,6 +195,7 @@ function stopRecording() {
     <!-- HLS player -->
     <CameraPlayer
         :url="hlsUrl"
+        :connecting="streamConnecting"
     />
 
     <div class="buttons">
