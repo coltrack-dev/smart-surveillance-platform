@@ -10,7 +10,15 @@ import java.util.UUID;
 
 
 @Entity
-@Table(name = "cameras")
+@Table(
+        name = "cameras",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_camera_number",
+                        columnNames = "camera_number"
+                )
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -18,16 +26,18 @@ import java.util.UUID;
 @Builder
 public class CameraEntity {
 
-
     @Id
     private UUID id;
+
+    @Column(
+            name = "camera_number",
+            nullable = false
+    )
+    private Integer cameraNumber;
 
 
     @Column(nullable = false)
     private String name;
-
-
-    private String location;
 
     private String rtspUrl;
 
@@ -52,21 +62,14 @@ public class CameraEntity {
     @Column
     private Instant lastStatusChangedAt;
 
-    public CameraEntity(
-            UUID id,
-            String name,
-            String location,
-            String rtspUrl
-    ) {
 
-        this.id = id;
-        this.name = name;
-        this.location = location;
-        this.rtspUrl = rtspUrl;
-        this.createdAt = Instant.now();
-        this.status = CameraStatus.OFFLINE;
-        this.lastHeartbeat = null;
+    // LBS
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "lbs_id")
+    private LbsLocationEntity location;
 
-    }
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private CameraCategoryEntity category;
 
 }

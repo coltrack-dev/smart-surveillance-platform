@@ -9,6 +9,10 @@ import com.coltrack.cameraservice.service.CameraService;
 import com.coltrack.cameraservice.service.RtspStreamChecker;
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -54,12 +58,17 @@ public class CameraController {
 
 
     @GetMapping
-    public List<CameraEntity> findAll() {
+    public Page<CameraEntity> findAll(
+            @PageableDefault(
+                    size = 20,
+                    sort = "cameraNumber",
+                    direction = Sort.Direction.ASC
+            )
+            Pageable pageable
+    ) {
 
-        return service.findAll();
-
+        return service.findAll(pageable);
     }
-
 
 
     @GetMapping("/{id}")

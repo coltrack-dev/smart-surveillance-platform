@@ -13,6 +13,8 @@ import com.coltrack.events.CameraUpdatedEvent;
 import com.coltrack.kafka.KafkaTopics;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -63,12 +65,10 @@ public class CameraService {
         return camera;
     }
 
-    public List<CameraEntity> findAll() {
+    public Page<CameraEntity> findAll(Pageable pageable) {
 
-        return repository.findAll();
-
+        return repository.findAll(pageable);
     }
-
 
     public CameraEntity findById(
             UUID id
