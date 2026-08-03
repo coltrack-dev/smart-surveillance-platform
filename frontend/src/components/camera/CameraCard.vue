@@ -3,6 +3,8 @@ import { ref } from "vue";
 
 import type { Camera } from "@/types/Сamera.ts";
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
+import { computed } from "vue";
+import { useStreamStore } from "@/stores/streamStore";
 
 import {
   startStream as apiStartStream,
@@ -13,12 +15,11 @@ const props = defineProps<{
   camera: Camera;
 }>();
 
-// HLS URL получаем после запуска stream
-const hlsUrl = ref<string>();
-
 // Состояние операций
 const streamLoading = ref(false);
 const recordingLoading = ref(false);
+
+const streamStore = useStreamStore();
 
 // URL Gateway, через который доступен HLS
 const gatewayUrl =
@@ -26,6 +27,22 @@ const gatewayUrl =
 
 const hlsBaseUrl =
     import.meta.env.VITE_HLS_URL || "http://localhost:8080";
+
+const hlsUrl = computed(() => {
+
+  const stream =
+      streamStore.getStream(
+          props.camera.id
+      );
+
+  if (!stream?.hlsUrl)
+    return undefined;
+
+  return stream.hlsUrl.startsWith("http")
+      ? stream.hlsUrl
+      : `${hlsBaseUrl}${stream.hlsUrl}`;
+
+});
 
 // Запуск видеопотока
 async function startStream() {
@@ -49,36 +66,21 @@ async function startStream() {
      *
      * {
      *   cameraId: "...",
-     *   status: "RUNNING",
-     *   hlsUrl: "/hls/.../index.m3u8"
+     *   status: "STARTING",
+     *   hlsUrl: null,
+     *   startedAt: null
      * }
+     *
+     * HLS URL НЕ устанавливаем здесь.
+     *
+     * Поток еще не готов.
+     * Когда FFmpeg создаст index.m3u8,
+     * backend отправит StreamStartedEvent
+     * через WebSocket.
+     *
+     * WebSocket обновит Pinia store,
+     * после чего CameraPlayer получит URL.
      */
-
-    if (stream.hlsUrl) {
-
-      /*
-       * Backend возвращает относительный путь.
-       *
-       * HLS идет через Gateway:
-       *
-       * http://localhost:8080/hls/...
-       */
-//      hlsUrl.value =
-//          stream.hlsUrl.startsWith("http")
-//              ? stream.hlsUrl
-//              : gatewayUrl + stream.hlsUrl;
-
-      hlsUrl.value =
-          stream.hlsUrl.startsWith("http")
-              ? stream.hlsUrl
-              : hlsBaseUrl + stream.hlsUrl;
-
-      console.log(
-          "HLS URL",
-          hlsUrl.value
-      );
-
-    }
 
   } catch (e) {
 

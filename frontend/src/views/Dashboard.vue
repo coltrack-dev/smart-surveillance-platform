@@ -4,8 +4,10 @@ import { onMounted } from "vue";
 import CameraCard from "../components/camera/CameraCard.vue";
 import { useCameraStore } from "../stores/camera";
 import { connectStreamSocket } from "@/ws/streamSocket";
+import { useStreamStore } from "@/stores/streamStore";
 
 const store = useCameraStore();
+const streamStore = useStreamStore();
 
 onMounted(async () => {
 
@@ -14,8 +16,7 @@ onMounted(async () => {
   connectStreamSocket(
       event => {
 
-        console.log(
-            "EVENT FROM BACKEND",
+        streamStore.updateStream(
             event
         );
 
