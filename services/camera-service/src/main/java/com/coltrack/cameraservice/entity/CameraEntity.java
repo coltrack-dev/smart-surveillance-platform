@@ -46,6 +46,12 @@ public class CameraEntity {
     @Builder.Default
     private boolean autoStart = false;
 
+    @Column(columnDefinition = "TEXT")
+    private String lastError;
+
+    @Column
+    private Instant lastStatusChangedAt;
+
     public CameraEntity(
             UUID id,
             String name,
