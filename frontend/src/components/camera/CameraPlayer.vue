@@ -133,8 +133,39 @@ async function loadPlayer() {
  */
 watch(
     () => props.url,
-    () => loadPlayer()
+    (newUrl) => {
+
+      if (!newUrl) {
+
+        stopPlayer();
+
+        return;
+
+      }
+
+      loadPlayer();
+
+    }
 );
+
+function stopPlayer() {
+
+  if (hls) {
+
+    hls.destroy();
+    hls = null;
+
+  }
+
+  if (video.value) {
+
+    video.value.pause();
+    video.value.removeAttribute("src");
+    video.value.load();
+
+  }
+
+}
 
 /*
  * Первичная загрузка.
@@ -149,15 +180,11 @@ onMounted(
 onUnmounted(
     () => {
 
-      if (hls) {
-
-        hls.destroy();
-        hls = null;
-
-      }
+      stopPlayer();
 
     }
 );
+
 </script>
 
 <template>
