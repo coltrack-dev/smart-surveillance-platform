@@ -20,13 +20,28 @@ const hlsUrl = ref<string>();
 const streamLoading = ref(false);
 const recordingLoading = ref(false);
 
+// URL Gateway, через который доступен HLS
+const gatewayUrl =
+    import.meta.env.VITE_API_URL || "http://localhost:8080";
+
+const hlsBaseUrl =
+    import.meta.env.VITE_HLS_URL || "http://localhost:8080";
+
 // Запуск видеопотока
 async function startStream() {
+
   try {
+
     streamLoading.value = true;
 
-    const stream = await apiStartStream(
-        props.camera.id
+    const stream =
+        await apiStartStream(
+            props.camera.id
+        );
+
+    console.log(
+        "STREAM RESPONSE",
+        stream
     );
 
     /*
@@ -42,13 +57,27 @@ async function startStream() {
     if (stream.hlsUrl) {
 
       /*
-       * Если gateway находится на другом порту,
-       * добавляем полный URL.
+       * Backend возвращает относительный путь.
+       *
+       * HLS идет через Gateway:
+       *
+       * http://localhost:8080/hls/...
        */
+//      hlsUrl.value =
+//          stream.hlsUrl.startsWith("http")
+//              ? stream.hlsUrl
+//              : gatewayUrl + stream.hlsUrl;
+
       hlsUrl.value =
           stream.hlsUrl.startsWith("http")
               ? stream.hlsUrl
-              : `${window.location.origin}${stream.hlsUrl}`;
+              : hlsBaseUrl + stream.hlsUrl;
+
+      console.log(
+          "HLS URL",
+          hlsUrl.value
+      );
+
     }
 
   } catch (e) {

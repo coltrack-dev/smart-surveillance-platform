@@ -1,109 +1,181 @@
 <script setup lang="ts">
-import {onMounted, onUnmounted, ref, watch} from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
+import Hls from "hls.js";
 
 const props = defineProps<{
-
-  url?: string
-
+  url?: string;
 }>();
 
+// HTML5 video элемент
 const video = ref<HTMLVideoElement>();
 
-let hls: any = null;
+// Экземпляр hls.js
+let hls: Hls | null = null;
 
+/**
+ * Загрузка HLS потока.
+ */
 async function loadPlayer() {
 
-  if (!video.value)
+  if (!video.value || !props.url) {
     return;
+  }
 
-  if (!props.url)
-    return;
-
+  // Уничтожаем старый поток перед загрузкой нового
   if (hls) {
 
     hls.destroy();
-
     hls = null;
 
   }
 
   /*
-   * Safari
+   * Safari имеет встроенную поддержку HLS.
    */
-
-  if (video.value.canPlayType("application/vnd.apple.mpegurl")) {
+  if (
+      video.value.canPlayType(
+          "application/vnd.apple.mpegurl"
+      )
+  ) {
 
     video.value.src = props.url;
+
+    await video.value.play();
+
+    return;
+  }
+
+  /*
+   * Chrome/Firefox используют hls.js.
+   */
+  if (!Hls.isSupported()) {
+
+    console.error(
+        "HLS is not supported"
+    );
 
     return;
 
   }
 
+  hls = new Hls({
+    enableWorker: true,
+    lowLatencyMode: true
+  });
+
   /*
-   * hls.js
+   * Поток подключен к video элементу.
    */
+  hls.on(
+      Hls.Events.MEDIA_ATTACHED,
+      () => {
 
-  const Hls =
-      (await import("hls.js")).default;
+        console.log(
+            "HLS media attached"
+        );
 
-  if (!Hls.isSupported())
-    return;
+        hls?.loadSource(
+            props.url!
+        );
 
-  hls = new Hls();
+      }
+  );
 
-  hls.loadSource(props.url);
+  /*
+   * Manifest успешно загружен.
+   */
+  hls.on(
+      Hls.Events.MANIFEST_PARSED,
+      async () => {
 
-  hls.attachMedia(video.value);
+        console.log(
+            "HLS manifest parsed"
+        );
 
+        try {
+
+          await video.value?.play();
+
+        } catch (error) {
+
+          console.warn(
+              "Autoplay blocked",
+              error
+          );
+
+        }
+
+      }
+  );
+
+  /*
+   * Ошибки HLS.
+   */
+  hls.on(
+      Hls.Events.ERROR,
+      (_, data) => {
+
+        console.error(
+            "HLS error",
+            data
+        );
+
+      }
+  );
+
+  hls.attachMedia(
+      video.value
+  );
 }
 
+/*
+ * Перезапуск плеера при изменении URL.
+ */
 watch(
     () => props.url,
+    () => loadPlayer()
+);
+
+/*
+ * Первичная загрузка.
+ */
+onMounted(
     loadPlayer
 );
 
-onMounted(loadPlayer);
+/*
+ * Очистка ресурсов.
+ */
+onUnmounted(
+    () => {
 
-onUnmounted(() => {
+      if (hls) {
 
-  if (hls)
-    hls.destroy();
+        hls.destroy();
+        hls = null;
 
-});
+      }
+
+    }
+);
 </script>
 
 <template>
-
   <video
-
       ref="video"
-
       controls
-
       autoplay
-
       muted
-
       playsinline
-
       class="player"
-
   />
-
 </template>
 
 <style scoped>
-
 .player {
-
   width: 100%;
-
   height: 240px;
-
   background: black;
-
   border-radius: 8px;
-
 }
-
 </style>
