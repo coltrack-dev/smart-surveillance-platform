@@ -5,6 +5,7 @@ import {
 } from "vue";
 
 import type { Camera } from "@/types/Сamera.ts";
+
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 
 import { useStreamStore } from "@/stores/streamStore";
@@ -14,26 +15,31 @@ import {
   stopStream as apiStopStream
 } from "@/api/streamApi";
 
+
 const props = defineProps<{
   camera: Camera;
 }>();
 
+
 // Состояние операций
 const streamLoading = ref(false);
+
 const recordingLoading = ref(false);
 
+
 const streamStore = useStreamStore();
+
 
 // HLS URL сервера
 const hlsBaseUrl =
     import.meta.env.VITE_HLS_URL ||
     "http://localhost:8080";
 
+
 /*
  * Получаем HLS URL из Pinia.
  *
- * URL появляется только после StreamStartedEvent
- * через WebSocket.
+ * URL появляется после StreamEvent через WebSocket.
  */
 const hlsUrl = computed(() => {
 
@@ -56,8 +62,8 @@ const hlsUrl = computed(() => {
 /*
  * Показываем "Connecting video stream..."
  *
- * только после нажатия Start Stream,
- * но до получения StreamStartedEvent.
+ * после нажатия Start Stream,
+ * до получения StreamEvent со статусом RUNNING.
  */
 const streamConnecting = computed(() => {
 
@@ -65,20 +71,21 @@ const streamConnecting = computed(() => {
       props.camera.id
   );
 
+
+
 });
 
-
-// Запуск видеопотока
 async function startStream() {
+
+  console.log(
+      "START STREAM CLICK",
+      props.camera.id
+  );
 
   try {
 
     streamLoading.value = true;
 
-    /*
-     * FFmpeg еще не готов.
-     * Включаем индикатор ожидания.
-     */
     streamStore.setStarting(
         props.camera.id,
         true
@@ -93,24 +100,6 @@ async function startStream() {
         "STREAM RESPONSE",
         stream
     );
-
-    /*
-     * Backend возвращает:
-     *
-     * {
-     *   cameraId: "...",
-     *   status: "STARTING",
-     *   hlsUrl: "/hls/..."
-     * }
-     *
-     * Здесь HLS URL НЕ устанавливаем.
-     *
-     * После создания index.m3u8
-     * backend отправит StreamStartedEvent.
-     *
-     * WebSocket обновит Pinia store,
-     * после чего CameraPlayer получит URL.
-     */
 
   } catch (e) {
 
@@ -131,7 +120,6 @@ async function startStream() {
   }
 
 }
-
 
 // Остановка видеопотока
 async function stopStream() {

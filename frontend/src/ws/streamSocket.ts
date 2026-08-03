@@ -1,51 +1,105 @@
 import { Client } from "@stomp/stompjs";
 
+import type { Camera } from "@/types/Сamera";
+import type { StreamEvent } from "@/types/StreamEvent";
+
 let client: Client | null = null;
 
 export function connectStreamSocket(
-    onEvent: (event: any) => void
-) {
+    onStreamEvent: (event: StreamEvent) => void,
+    onCameraEvent: (camera: Camera) => void
+): void {
+
+    if (client?.active) {
+        return;
+    }
 
     client = new Client({
 
-        brokerURL:
-            "ws://localhost:8094/ws",
+        brokerURL: "ws://localhost:8094/ws",
 
         reconnectDelay: 5000,
 
-        debug: (message) => {
-            console.log(
-                "STOMP:",
-                message
-            );
+        debug(message) {
+            console.log("STOMP:", message);
         },
 
         onConnect() {
 
-            console.log(
-                "WebSocket connected"
-            );
+            console.log("WebSocket connected");
 
-            client?.subscribe(
+            client!.subscribe(
                 "/topic/streams",
                 message => {
 
-                    const event =
-                        JSON.parse(
-                            message.body
-                        );
+                    const event: StreamEvent =
+                        JSON.parse(message.body);
 
-                    console.log(
-                        "STREAM EVENT",
-                        event
-                    );
+                    console.log("STREAM EVENT", event);
 
-                    onEvent(event);
+                    onStreamEvent(event);
+
                 }
             );
+
+            client!.subscribe(
+                "/topic/cameras",
+                message => {
+
+                    const camera: Camera =
+                        JSON.parse(message.body);
+
+                    console.log("CAMERA EVENT", camera);
+
+                    onCameraEvent(camera);
+
+                }
+            );
+
+        },
+
+        onStompError(frame) {
+
+            console.error(
+                "Broker error:",
+                frame.headers["message"]
+            );
+
+            console.error(frame.body);
+
+        },
+
+        onWebSocketError(error) {
+
+            console.error(
+                "WebSocket error",
+                error
+            );
+
+        },
+
+        onDisconnect() {
+
+            console.log(
+                "WebSocket disconnected"
+            );
+
         }
 
     });
 
     client.activate();
+
+}
+
+export function disconnectStreamSocket(): void {
+
+    if (client) {
+
+        client.deactivate();
+
+        client = null;
+
+    }
+
 }

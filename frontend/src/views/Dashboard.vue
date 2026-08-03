@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import {
+  onMounted,
+  onUnmounted
+} from "vue";
 
 import CameraCard from "../components/camera/CameraCard.vue";
+
 import { useCameraStore } from "../stores/camera";
-import { connectStreamSocket } from "@/ws/streamSocket";
 import { useStreamStore } from "@/stores/streamStore";
+
+import {
+  connectStreamSocket,
+  disconnectStreamSocket
+} from "@/ws/streamSocket";
 
 const store = useCameraStore();
 const streamStore = useStreamStore();
@@ -14,14 +22,26 @@ onMounted(async () => {
   await store.load();
 
   connectStreamSocket(
-      event => {
 
-        streamStore.updateStream(
-            event
-        );
+      streamEvent => {
+
+        streamStore.updateStream(streamEvent);
+
+      },
+
+      camera => {
+
+        store.updateCamera(camera);
 
       }
+
   );
+
+});
+
+onUnmounted(() => {
+
+  disconnectStreamSocket();
 
 });
 </script>

@@ -1,9 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import type { Camera } from "../types/Сamera";
-import { findAllCameras } from "../api/cameraApi";
-
+import type { Camera } from "@/types/Сamera";
+import { findAllCameras } from "@/api/cameraApi";
 
 export const useCameraStore = defineStore("camera", () => {
 
@@ -12,13 +11,13 @@ export const useCameraStore = defineStore("camera", () => {
     const loading = ref(false);
 
     const totalPages = ref(0);
-    const currentPage = ref(0);
 
+    const currentPage = ref(0);
 
     async function load(
         page = 0,
         size = 20
-    ) {
+    ): Promise<void> {
 
         loading.value = true;
 
@@ -32,6 +31,7 @@ export const useCameraStore = defineStore("camera", () => {
             cameras.value = result.content;
 
             totalPages.value = result.totalPages;
+
             currentPage.value = result.number;
 
         } finally {
@@ -42,6 +42,27 @@ export const useCameraStore = defineStore("camera", () => {
 
     }
 
+    /**
+     * Обновить камеру по событию WebSocket.
+     */
+    function updateCamera(
+        camera: Camera
+    ): void {
+
+        const existing = cameras.value.find(
+            c => c.id === camera.id
+        );
+
+        if (!existing) {
+            return;
+        }
+
+        Object.assign(
+            existing,
+            camera
+        );
+
+    }
 
     return {
 
@@ -53,7 +74,9 @@ export const useCameraStore = defineStore("camera", () => {
 
         currentPage,
 
-        load
+        load,
+
+        updateCamera
 
     };
 

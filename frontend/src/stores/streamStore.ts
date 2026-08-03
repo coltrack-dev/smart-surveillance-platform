@@ -1,94 +1,137 @@
 import { defineStore } from "pinia";
+import { ref } from "vue";
+
+import type { StreamEvent } from "@/types/StreamEvent";
+
 
 export interface StreamInfo {
 
     cameraId: string;
 
-    hlsUrl: string;
+    status: string;
 
-    startedAt: string;
+    hlsUrl: string | null;
+
+    error: string | null;
+
+    startedAt: string | null;
 
 }
 
+
 export const useStreamStore = defineStore(
-    "streams",
-    {
+    "stream",
+    () => {
 
-        state: () => ({
-
-            streams:
-                {} as Record<string, StreamInfo>,
-
-            starting:
-                {} as Record<string, boolean>
-
-        }),
+        const streams = ref<Record<string, StreamInfo>>({});
 
 
-        actions: {
+        /**
+         * Потоки, которые ожидают запуска.
+         * После StreamStartedEvent снимаются.
+         */
+        const startingStreams = ref<Record<string, boolean>>({});
 
 
-            /**
-             * Устанавливаем состояние запуска.
+        function updateStream(
+            event: StreamEvent
+        ): void {
+
+            const old =
+                streams.value[event.cameraId];
+
+
+            streams.value[event.cameraId] = {
+
+                cameraId: event.cameraId,
+
+                status: event.status,
+
+                hlsUrl: event.hlsUrl,
+
+                error: event.error,
+
+                startedAt:
+                    old?.startedAt ?? null
+
+            };
+
+
+            /*
+             * Только WebSocket событие
+             * подтверждает запуск.
              */
-            setStarting(
-                cameraId: string,
-                value: boolean
+            if (
+                event.status === "RUNNING"
             ) {
 
-                this.starting[cameraId] = value;
-
-            },
-
-
-            /**
-             * WebSocket событие StreamStartedEvent.
-             */
-            updateStream(
-                event: StreamInfo
-            ) {
-
-                this.streams[
-                    event.cameraId
-                    ] = event;
-
-
-                // Поток готов, убираем spinner
-                this.starting[
-                    event.cameraId
-                    ] = false;
-
-            },
-
-
-            removeStream(
-                cameraId: string
-            ) {
-
-                delete this.streams[cameraId];
-
-                delete this.starting[cameraId];
+                setStarting(
+                    event.cameraId,
+                    false
+                );
 
             }
 
-        },
 
+            if (
+                event.status === "ERROR" ||
+                event.status === "STOPPED"
+            ) {
 
-        getters: {
+                setStarting(
+                    event.cameraId,
+                    false
+                );
 
-
-            getStream:
-                (state) =>
-                    (cameraId: string) =>
-                        state.streams[cameraId],
-
-
-            isStarting:
-                (state) =>
-                    (cameraId: string) =>
-                        state.starting[cameraId] === true
+            }
 
         }
+
+
+        function setStarting(
+            cameraId: string,
+            value: boolean
+        ): void {
+
+            startingStreams.value[cameraId] = value;
+
+        }
+
+
+        function isStarting(
+            cameraId: string
+        ): boolean {
+
+            return (
+                startingStreams.value[cameraId]
+                ?? false
+            );
+
+        }
+
+
+        function getStream(
+            cameraId: string
+        ): StreamInfo | undefined {
+
+            return streams.value[cameraId];
+
+        }
+
+
+        return {
+
+            streams,
+
+            updateStream,
+
+            getStream,
+
+            setStarting,
+
+            isStarting
+
+        };
 
     }
 );
