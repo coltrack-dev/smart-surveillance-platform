@@ -1,141 +1,56 @@
 <script setup lang="ts">
+import { onMounted } from "vue";
 
-import {
-  onMounted,
-  ref
-} from 'vue';
+import CameraCard from "../components/camera/CameraCard.vue";
+import { useCameraStore } from "../stores/camera";
 
-import {
-  getCameras,
-  startStream,
-  stopStream,
-  type Camera
-} from '../api/camera.ts';
+const store = useCameraStore();
 
-
-import CameraPlayer from '../components/camera/CameraPlayer.vue';
-
-
-const cameras = ref<Camera[]>([
-  {
-    id: "1",
-    name: "Entrance Camera",
-    rtspUrl: "",
-    status: "ONLINE"
-  },
-  {
-    id: "2",
-    name: "Warehouse Camera",
-    rtspUrl: "",
-    status: "OFFLINE"
-  }
-]);
-
-
-const streams =
-    ref<Record<string,string>>({});
-
-
-async function load(){
-
-  cameras.value =
-      await getCameras();
-
-}
-
-
-async function start(camera:Camera){
-
-  await startStream(camera.id);
-
-
-  streams.value[camera.id] =
-      `http://localhost:8094/hls/${camera.id}/index.m3u8`;
-
-}
-
-
-async function stop(camera:Camera){
-
-  await stopStream(camera.id);
-
-
-  delete streams.value[camera.id];
-
-}
-
-
-onMounted(load);
-
-
+onMounted(async () => {
+  await store.load();
+});
 </script>
-
 
 <template>
 
-  <div class="page">
+  <div class="dashboard">
 
-    <h1>
-      Surveillance Dashboard
-    </h1>
+    <div class="dashboard-header">
 
+      <h1>Surveillance Dashboard</h1>
 
-    <div class="grid">
+      <div class="camera-count">
 
-
-      <div
-          v-for="camera in cameras"
-          :key="camera.id"
-          class="camera-card"
-      >
-
-
-        <div class="camera-header">
-
-          <h3>
-            {{ camera.name }}
-          </h3>
-
-
-          <span
-              class="status"
-              :class="camera.status.toLowerCase()"
-          >
-{{camera.status}}
-</span>
-
-        </div>
-
-
-        <button
-            @click="start(camera)"
-        >
-          Start
-        </button>
-
-
-        <button
-            class="stop"
-            @click="stop(camera)"
-        >
-          Stop
-        </button>
-
-
-        <div
-            class="player"
-            v-if="streams[camera.id]"
-        >
-
-          <CameraPlayer
-              :url="streams[camera.id]"
-          />
-
-        </div>
-
+        Cameras: {{ store.cameras.length }}
 
       </div>
 
+    </div>
+
+    <div
+        v-if="store.loading"
+        class="loading"
+    >
+      Loading cameras...
+    </div>
+
+    <div
+        v-else-if="store.cameras.length === 0"
+        class="empty"
+    >
+      No cameras found
+    </div>
+
+    <div
+        v-else
+        class="camera-grid"
+    >
+
+      <CameraCard
+          v-for="camera in store.cameras"
+          :key="camera.id"
+          :camera="camera"
+      />
 
     </div>
 
@@ -145,20 +60,54 @@ onMounted(load);
 
 <style scoped>
 
-.grid {
+.dashboard {
 
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:20px;
+  padding: 24px;
 
 }
 
+.dashboard-header {
 
-.camera-card {
+  display: flex;
 
-  border:1px solid #ccc;
-  padding:15px;
-  border-radius:8px;
+  justify-content: space-between;
+
+  align-items: center;
+
+  margin-bottom: 24px;
+
+}
+
+.dashboard-header h1 {
+
+  margin: 0;
+
+}
+
+.camera-count {
+
+  color: #666;
+
+}
+
+.camera-grid {
+
+  display: grid;
+
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+
+  gap: 20px;
+
+}
+
+.loading,
+.empty {
+
+  text-align: center;
+
+  padding: 60px;
+
+  color: gray;
 
 }
 
