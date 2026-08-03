@@ -1,14 +1,24 @@
 import http from "./http";
-import type { Camera } from "@/types/Сamera.ts";
+import type { Camera, CameraPage } from "@/types/Сamera.ts";
+
 
 /**
- * Получить список всех камер.
+ * Получить страницу камер.
  */
-export async function findAllCameras(): Promise<Camera[]> {
+export async function findAllCameras(
+    page = 0,
+    size = 20
+): Promise<CameraPage> {
 
     const response =
-        await http.get<Camera[]>(
-            "/cameras"
+        await http.get<CameraPage>(
+            "/cameras",
+            {
+                params: {
+                    page,
+                    size
+                }
+            }
         );
 
     return response.data;
