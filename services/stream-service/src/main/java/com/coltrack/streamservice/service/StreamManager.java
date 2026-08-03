@@ -6,6 +6,7 @@ import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
+import com.coltrack.streamservice.websocket.StreamWebSocketPublisher;
 import com.coltrack.streamservice.worker.CameraStreamWorker;
 import com.coltrack.streamservice.worker.StreamEventPublisher;
 import com.coltrack.streamservice.worker.StreamListener;
@@ -43,7 +44,8 @@ public class StreamManager implements StreamListener {
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final StreamMetricsService metricsService;
-    private final StreamEventPublisher streamWebSocketPublisher;
+    //private final StreamEventPublisher streamWebSocketPublisher;
+    private final StreamWebSocketPublisher streamWebSocketPublisher;
 
     /**
      * Active camera streams.
@@ -186,7 +188,7 @@ public class StreamManager implements StreamListener {
                 session.getCameraId()
         );
 
-        streamWebSocketPublisher.publish(event);
+        streamWebSocketPublisher.onStreamStarted(event);
 
     }
 

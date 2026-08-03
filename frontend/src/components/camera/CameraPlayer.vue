@@ -120,6 +120,10 @@ async function loadPlayer() {
 
           await video.value?.play();
 
+          loading.value = false;
+          error.value = false;
+          playing.value = true;
+
         } catch (e) {
 
           console.warn(
@@ -157,19 +161,44 @@ async function loadPlayer() {
   /*
    * Видео действительно начало воспроизводиться.
    */
+  function onVideoStarted() {
+
+    console.log(
+        "VIDEO STARTED"
+    );
+
+    loading.value = false;
+    error.value = false;
+    playing.value = true;
+
+  }
+
+
   video.value.addEventListener(
       "playing",
-      () => {
-
-        loading.value = false;
-        error.value = false;
-        playing.value = true;
-
-      },
+      onVideoStarted,
       {
         once: true
       }
   );
+
+  video.value.addEventListener(
+      "canplay",
+      onVideoStarted,
+      {
+        once: true
+      }
+  );
+
+//  video.value.addEventListener(
+//      "timeupdate",
+//      () => {
+//        console.log(
+//            "VIDEO TIME",
+//            video.value?.currentTime
+//        );
+//      }
+//  );
 
   hls.attachMedia(
       video.value
@@ -245,7 +274,6 @@ onUnmounted(
   <div class="player-container">
 
     <video
-        v-show="playing"
         ref="video"
         controls
         autoplay
@@ -254,17 +282,11 @@ onUnmounted(
         class="player"
     />
 
-    <div
-        v-if="loading"
-        class="overlay"
-    >
-
+    <div v-if="loading" class="overlay">
       <div class="spinner"></div>
-
       <div class="message">
         Connecting video stream...
       </div>
-
     </div>
 
     <div
@@ -277,7 +299,6 @@ onUnmounted(
         Connecting video stream...
       </div>
     </div>
-
 
     <div
         v-if="!connecting && !loading && !playing && !error"

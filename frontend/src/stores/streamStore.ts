@@ -57,13 +57,13 @@ export const useStreamStore = defineStore(
             };
 
 
+            console.log( event );
+
             /*
              * Только WebSocket событие
              * подтверждает запуск.
              */
-            if (
-                event.status === "RUNNING"
-            ) {
+            if (event.status === "ONLINE") {
 
                 setStarting(
                     event.cameraId,
@@ -74,8 +74,8 @@ export const useStreamStore = defineStore(
 
 
             if (
-                event.status === "ERROR" ||
-                event.status === "STOPPED"
+                event.status === "OFFLINE" ||
+                event.status === "ERROR"
             ) {
 
                 setStarting(
