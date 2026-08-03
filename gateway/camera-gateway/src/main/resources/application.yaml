@@ -7,23 +7,35 @@ spring:
       server:
         webflux:
           routes:
-
+            #
+            # Camera Service
+            #
             - id: camera-service
-              uri: http://localhost:8081
+              uri: http://localhost:8091
               predicates:
-                - Path=/api/cameras/**
+                - Path=/api/v1/cameras/**
+              filters:
+                - RewritePath=/api/v1/cameras(?<segment>/?.*), /api/cameras${segment}
 
-
+            #
+            # Stream Service
+            #
             - id: stream-service
               uri: http://localhost:8094
               predicates:
-                - Path=/api/streams/**
+                - Path=/api/v1/streams/**
+              filters:
+                - RewritePath=/api/v1/streams(?<segment>/?.*), /api/streams${segment}
 
-
+            #
+            # Recording Service
+            #
             - id: recording-service
               uri: http://localhost:8082
               predicates:
-                - Path=/api/recordings/**
+                - Path=/api/v1/recordings/**
+              filters:
+                - RewritePath=/api/v1/recordings(?<segment>/?.*), /api/recordings${segment}
 
   management:
     endpoints:

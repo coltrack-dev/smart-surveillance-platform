@@ -1,0 +1,5 @@
+defineProps<{
+
+camera: Camera
+
+}>()
