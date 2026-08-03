@@ -1,12 +1,12 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import type { Camera } from "../types/camera";
+import type { Amera } from "../types/Сamera";
 import { findAllCameras } from "../api/cameraApi";
 
 export const useCameraStore = defineStore("camera", () => {
 
-    const cameras = ref<Camera[]>([]);
+    const cameras = ref<Amera[]>([]);
 
     const loading = ref(false);
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-import type { Camera } from "@/types/Camera";
+import type { Camera } from "@/types/Сamera.ts";
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 
 import {
