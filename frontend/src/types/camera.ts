@@ -8,4 +8,6 @@ export interface Camera {
 
     status: string;
 
+    hlsUrl?: string;
+
 }

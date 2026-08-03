@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Camera } from "../../types/camera";
+import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 
 defineProps<{
   camera: Camera;
@@ -57,11 +58,9 @@ function stopRecording() {
 
     </div>
 
-    <div class="player">
-
-      Video Player
-
-    </div>
+    <CameraPlayer
+        :url="camera.hlsUrl"
+    />
 
     <div class="buttons">
 

@@ -1,62 +1,109 @@
 <script setup lang="ts">
-
-import { onMounted, onBeforeUnmount, ref } from 'vue';
-import Hls from 'hls.js';
-
+import {onMounted, onUnmounted, ref, watch} from "vue";
 
 const props = defineProps<{
-  url:string
+
+  url?: string
+
 }>();
 
+const video = ref<HTMLVideoElement>();
 
-const video =
-    ref<HTMLVideoElement | null>(null);
+let hls: any = null;
 
-
-let hls:Hls|null = null;
-
-
-onMounted(()=>{
+async function loadPlayer() {
 
   if (!video.value)
     return;
 
+  if (!props.url)
+    return;
 
-  if (Hls.isSupported()) {
+  if (hls) {
 
-    hls = new Hls();
+    hls.destroy();
 
-    hls.loadSource(props.url);
-
-    hls.attachMedia(video.value);
+    hls = null;
 
   }
-  else {
+
+  /*
+   * Safari
+   */
+
+  if (video.value.canPlayType("application/vnd.apple.mpegurl")) {
 
     video.value.src = props.url;
 
+    return;
+
   }
 
+  /*
+   * hls.js
+   */
+
+  const Hls =
+      (await import("hls.js")).default;
+
+  if (!Hls.isSupported())
+    return;
+
+  hls = new Hls();
+
+  hls.loadSource(props.url);
+
+  hls.attachMedia(video.value);
+
+}
+
+watch(
+    () => props.url,
+    loadPlayer
+);
+
+onMounted(loadPlayer);
+
+onUnmounted(() => {
+
+  if (hls)
+    hls.destroy();
+
 });
-
-
-onBeforeUnmount(()=>{
-
-  hls?.destroy();
-
-});
-
 </script>
-
 
 <template>
 
   <video
+
       ref="video"
+
       controls
+
       autoplay
+
       muted
-      style="width:100%;"
+
+      playsinline
+
+      class="player"
+
   />
 
 </template>
+
+<style scoped>
+
+.player {
+
+  width: 100%;
+
+  height: 240px;
+
+  background: black;
+
+  border-radius: 8px;
+
+}
+
+</style>
