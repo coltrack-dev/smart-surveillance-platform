@@ -37,10 +37,11 @@ public class CameraController {
             @RequestBody CreateCameraRequest request
     ) {
 
+
         CameraEntity camera =
                 service.create(
                         request.name(),
-                        request.location(),
+                        request.lbsLocationId(),
                         request.rtspUrl(),
                         request.autoStart()
                 );
@@ -54,7 +55,6 @@ public class CameraController {
                 )
                 .body(camera);
     }
-
 
 
     @GetMapping
@@ -91,11 +91,10 @@ public class CameraController {
         return service.update(
                 id,
                 request.name(),
-                request.location(),
+                request.lbsLocationId(),
                 request.rtspUrl()
         );
     }
-
 
 
     @DeleteMapping("/{id}")

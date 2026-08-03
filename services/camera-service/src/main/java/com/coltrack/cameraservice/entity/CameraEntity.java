@@ -31,7 +31,8 @@ public class CameraEntity {
 
     @Column(
             name = "camera_number",
-            nullable = false
+            nullable = false,
+            unique = true
     )
     private Integer cameraNumber;
 
@@ -47,8 +48,8 @@ public class CameraEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private CameraStatus status = CameraStatus.OFFLINE;
-
 
     private Instant lastHeartbeat;
 
@@ -65,8 +66,11 @@ public class CameraEntity {
 
     // LBS
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "lbs_id")
-    private LbsLocationEntity location;
+    @JoinColumn(
+            name = "lbs_id",
+            nullable = true
+    )
+    private LbsLocationEntity lbsLocation;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id")

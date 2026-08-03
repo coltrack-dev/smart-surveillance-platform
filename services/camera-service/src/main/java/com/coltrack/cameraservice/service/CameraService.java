@@ -3,8 +3,10 @@ package com.coltrack.cameraservice.service;
 
 import com.coltrack.cameraservice.entity.CameraEntity;
 import com.coltrack.cameraservice.entity.CameraStatus;
+import com.coltrack.cameraservice.entity.LbsLocationEntity;
 import com.coltrack.cameraservice.repository.CameraRepository;
 
+import com.coltrack.cameraservice.repository.LbsLocationRepository;
 import com.coltrack.events.CameraDeletedEvent;
 import com.coltrack.events.CameraHeartbeatEvent;
 import com.coltrack.events.CameraRegisteredEvent;
@@ -29,23 +31,44 @@ public class CameraService {
 
     private final CameraRepository repository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final LbsLocationRepository lbsLocationRepository;
 
     public CameraEntity create(
             String name,
-            String location,
+            UUID lbsLocationId,
             String rtspUrl,
             boolean autoStart
     ) {
 
-        CameraEntity camera = CameraEntity.builder()
-                .id(UUID.randomUUID())
-                .name(name)
-                .location(location)
-                .rtspUrl(rtspUrl)
-                .autoStart(autoStart)
-                .status(CameraStatus.OFFLINE)
-                .createdAt(Instant.now())
-                .build();
+        LbsLocationEntity lbsLocation = null;
+
+
+        if (lbsLocationId != null) {
+
+            lbsLocation =
+                    lbsLocationRepository.findById(lbsLocationId)
+                            .orElseThrow(
+                                    () -> new RuntimeException(
+                                            "LBS location not found"
+                                    )
+                            );
+        }
+
+
+        CameraEntity camera =
+                CameraEntity.builder()
+                        .id(UUID.randomUUID())
+                        .cameraNumber(
+                                repository.nextCameraNumber()
+                        )
+                        .name(name)
+                        .lbsLocation(lbsLocation)
+                        .rtspUrl(rtspUrl)
+                        .autoStart(autoStart)
+                        .status(CameraStatus.OFFLINE)
+                        .createdAt(Instant.now())
+                        .build();
+
 
         repository.save(camera);
 
@@ -55,7 +78,7 @@ public class CameraService {
                 new CameraRegisteredEvent(
                         camera.getId(),
                         camera.getName(),
-                        camera.getLocation(),
+                        "",//camera.getLocation(),
                         camera.getRtspUrl(),
                         camera.isAutoStart(),
                         camera.getCreatedAt()
@@ -64,6 +87,7 @@ public class CameraService {
 
         return camera;
     }
+
 
     public Page<CameraEntity> findAll(Pageable pageable) {
 
@@ -85,7 +109,7 @@ public class CameraService {
     public CameraEntity update(
             UUID id,
             String name,
-            String location,
+            UUID lbsLocationId,
             String rtspUrl
     ) {
 
@@ -93,11 +117,30 @@ public class CameraService {
         CameraEntity camera =
                 findById(id);
 
+
+        LbsLocationEntity lbsLocation = null;
+
+
+        if (lbsLocationId != null) {
+
+            lbsLocation =
+                    lbsLocationRepository.findById(lbsLocationId)
+                            .orElseThrow(
+                                    () -> new RuntimeException(
+                                            "LBS location not found: "
+                                                    + lbsLocationId
+                                    )
+                            );
+        }
+
+
         camera.setName(name);
-        camera.setLocation(location);
+        camera.setLbsLocation(lbsLocation);
         camera.setRtspUrl(rtspUrl);
 
+
         repository.save(camera);
+
 
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_EVENTS,
@@ -105,15 +148,17 @@ public class CameraService {
                 new CameraUpdatedEvent(
                         camera.getId(),
                         camera.getName(),
-                        camera.getLocation(),
+                        lbsLocation != null
+                                ? lbsLocation.getName()
+                                : null,
                         camera.getRtspUrl(),
                         Instant.now()
                 )
         );
 
+
         return camera;
     }
-
 
     public void delete(UUID id) {
 

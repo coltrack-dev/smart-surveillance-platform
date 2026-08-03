@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 
@@ -58,5 +59,11 @@ public interface CameraRepository
             @Param("cameraId") UUID cameraId,
             @Param("status") CameraStatus status
     );
+
+    @Query(
+            value = "select nextval('camera_number_seq')",
+            nativeQuery = true
+    )
+    Integer nextCameraNumber();
 
 }
