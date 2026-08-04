@@ -17,9 +17,7 @@ public class StreamEventListener {
             topics = WebSocketTopics.STREAM_EVENTS,
             groupId = "websocket-service-stream"
     )
-    public void onStreamEvent(
-            StreamEventWs event
-    ) {
+    public void onStreamEvent(StreamEventWs event) {
 
         messagingTemplate.convertAndSend(
                 "/topic/streams",

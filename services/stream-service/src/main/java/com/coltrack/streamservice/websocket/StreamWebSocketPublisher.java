@@ -4,9 +4,11 @@ import com.coltrack.events.StreamEvent;
 import com.coltrack.events.StreamStartedEvent;
 import com.coltrack.events.StreamFailedEvent;
 import com.coltrack.events.StreamStoppedEvent;
+import com.coltrack.events.websocket.WebSocketTopics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
@@ -15,13 +17,15 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class StreamWebSocketPublisher {
 
-    private final SimpMessagingTemplate messagingTemplate;
+    //private final SimpMessagingTemplate messagingTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     //@EventListener
     public void onStreamStarted(StreamStartedEvent event) {
 
         log.info( "onStreamStarted" );
 
+/*
         messagingTemplate.convertAndSend(
                 "/topic/streams",
                 new StreamEvent(
@@ -31,6 +35,13 @@ public class StreamWebSocketPublisher {
                         null
                 )
         );
+*/
+
+        kafkaTemplate.send(
+                WebSocketTopics.STREAM_EVENTS,
+                event.cameraId().toString(),
+                event
+        );
     }
 
     //@EventListener
@@ -38,6 +49,7 @@ public class StreamWebSocketPublisher {
 
         log.info( "onStreamStopped" );
 
+/*
         messagingTemplate.convertAndSend(
                 "/topic/streams",
                 new StreamEvent(
@@ -47,6 +59,13 @@ public class StreamWebSocketPublisher {
                         null
                 )
         );
+*/
+
+        kafkaTemplate.send(
+                WebSocketTopics.STREAM_EVENTS,
+                event.cameraId().toString(),
+                event
+        );
     }
 
     //@EventListener
@@ -54,6 +73,7 @@ public class StreamWebSocketPublisher {
 
         log.info( "onStreamFailed" );
 
+/*
         messagingTemplate.convertAndSend(
                 "/topic/streams",
                 new StreamEvent(
@@ -62,6 +82,13 @@ public class StreamWebSocketPublisher {
                         null,
                         event.reason()
                 )
+        );
+*/
+
+        kafkaTemplate.send(
+                WebSocketTopics.STREAM_EVENTS,
+                event.cameraId().toString(),
+                event
         );
     }
 

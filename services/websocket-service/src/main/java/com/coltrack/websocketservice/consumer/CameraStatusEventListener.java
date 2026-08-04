@@ -17,9 +17,7 @@ public class CameraStatusEventListener {
             topics = WebSocketTopics.CAMERA_EVENTS,
             groupId = "websocket-service-camera"
     )
-    public void onCameraStatusEvent(
-            CameraStatusEventWs event
-    ) {
+    public void onCameraStatusEvent(CameraStatusEventWs event) {
 
         messagingTemplate.convertAndSend(
                 "/topic/cameras/status",
