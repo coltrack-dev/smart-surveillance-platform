@@ -7,6 +7,12 @@ spring:
       server:
         webflux:
           routes:
+
+            - id: websocket-service
+              uri: ws://localhost:8096
+              predicates:
+                - Path=/ws/**
+
             # HLS video stream
             #
             - id: hls-stream
