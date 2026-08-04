@@ -1,8 +1,9 @@
-import { defineStore } from "pinia";
-import { ref } from "vue";
+import {defineStore} from "pinia";
+import {ref} from "vue";
 
-import type { Camera } from "@/types/Сamera";
-import { findAllCameras } from "@/api/cameraApi";
+import type {Camera} from "@/types/Сamera";
+import {findAllCameras} from "@/api/cameraApi";
+import type {CameraStatusEvent} from "@/types/CameraStatusEvent.ts";
 
 export const useCameraStore = defineStore("camera", () => {
 
@@ -61,8 +62,33 @@ export const useCameraStore = defineStore("camera", () => {
             existing,
             camera
         );
-
     }
+
+    function updateCameraStatus(
+        event: CameraStatusEvent
+    ): void {
+
+        const camera =
+            cameras.value.find(
+                item =>
+                    item.id === event.cameraId
+            );
+
+        if (!camera) {
+            return;
+        }
+
+        camera.status =
+            event.status;
+
+        camera.lastError =
+            event.reason;
+
+        camera.lastStatusChangedAt =
+            event.changedAt;
+
+    };
+
 
     return {
 
@@ -76,7 +102,9 @@ export const useCameraStore = defineStore("camera", () => {
 
         load,
 
-        updateCamera
+        updateCamera,
+
+        updateCameraStatus
 
     };
 

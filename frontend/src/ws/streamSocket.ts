@@ -2,12 +2,14 @@ import { Client } from "@stomp/stompjs";
 
 import type { Camera } from "@/types/Сamera";
 import type { StreamEvent } from "@/types/StreamEvent";
+import type {CameraStatusEvent} from "@/types/CameraStatusEvent.ts";
 
 let client: Client | null = null;
 
 export function connectStreamSocket(
     onStreamEvent: (event: StreamEvent) => void,
-    onCameraEvent: (camera: Camera) => void
+    onCameraEvent: (camera: Camera) => void,
+    onCameraStatusEvent:(event: CameraStatusEvent) => void
 ): void {
 
     if (client?.active) {
@@ -36,13 +38,11 @@ export function connectStreamSocket(
                 "/topic/streams",
                 message => {
 
-                    const event: StreamEvent =
-                        JSON.parse(message.body);
+                    const event: StreamEvent = JSON.parse(message.body);
 
                     console.log("STREAM EVENT", event);
 
                     onStreamEvent(event);
-
                 }
             );
 
@@ -54,42 +54,40 @@ export function connectStreamSocket(
                         JSON.parse(message.body);
 
                     console.log("CAMERA EVENT", camera);
-
                     onCameraEvent(camera);
-
                 }
             );
 
+            client?.subscribe(
+                "/topic/cameras/status",
+                message => {
+
+                    const event: CameraStatusEvent =
+                        JSON.parse(message.body);
+
+                    console.log("CAMERA STATUS EVENT", event);
+
+                    onCameraStatusEvent(event);
+
+                }
+            );
         },
 
         onStompError(frame) {
 
-            console.error(
-                "Broker error:",
-                frame.headers["message"]
-            );
-
+            console.error("Broker error:", frame.headers["message"]);
             console.error(frame.body);
-
         },
 
         onWebSocketError(error) {
 
-            console.error(
-                "WebSocket error",
-                error
-            );
-
+            console.error("WebSocket error", error);
         },
 
         onDisconnect() {
 
-            console.log(
-                "WebSocket disconnected"
-            );
-
+            console.log("WebSocket disconnected");
         }
-
     });
 
     client.activate();

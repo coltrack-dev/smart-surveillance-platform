@@ -33,6 +33,11 @@ onMounted(async () => {
 
         store.updateCamera(camera);
 
+      },
+
+      cameraStatusEvent => {
+
+        store.updateCameraStatus(cameraStatusEvent)
       }
 
   );
