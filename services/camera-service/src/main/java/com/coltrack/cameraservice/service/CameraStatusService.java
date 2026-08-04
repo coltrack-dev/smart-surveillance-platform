@@ -20,7 +20,7 @@ public class CameraStatusService {
 
 
     private final CameraRepository cameraRepository;
-    private final KafkaTemplate<String, CameraStatusChangedEvent> kafkaTemplate;
+    //private final KafkaTemplate<String, CameraStatusChangedEvent> kafkaTemplate;
 
     @Transactional
     public void updateStatus(
@@ -40,6 +40,7 @@ public class CameraStatusService {
         );
 
 
+/*
         kafkaTemplate.send(
                 KafkaTopics.CAMERA_EVENTS,
                 cameraId.toString(),
@@ -49,6 +50,7 @@ public class CameraStatusService {
                         changedAt
                 )
         );
+*/
 
 
 

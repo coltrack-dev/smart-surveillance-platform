@@ -1,0 +1,30 @@
+server:
+  port: 8096
+
+spring:
+  application:
+    name: websocket-service
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    consumer:
+      auto-offset-reset: latest
+
+      key-deserializer:
+        org.apache.kafka.common.serialization.StringDeserializer
+
+      value-deserializer:
+        org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+        spring.json.trusted.packages: com.coltrack.events.websocket
+        spring.json.use.type.headers: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info

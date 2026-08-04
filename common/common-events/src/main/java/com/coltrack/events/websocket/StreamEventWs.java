@@ -1,17 +1,16 @@
 package com.coltrack.events.websocket;
 
-import java.time.Instant;
 import java.util.UUID;
 
-public record CameraStatusEventWs(
+public record StreamEventWs(
 
         UUID cameraId,
 
         String status,
 
-        String reason,
+        String hlsUrl,
 
-        Instant changedAt
+        String error
 
 ) {
 }
