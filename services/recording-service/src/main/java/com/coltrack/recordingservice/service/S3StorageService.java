@@ -46,9 +46,7 @@ public class S3StorageService
     public void uploadRecording(RecordingSession session) {
 
         if (!properties.isEnabled()) {
-
             log.debug("S3 upload disabled");
-
             return;
         }
 
@@ -183,10 +181,7 @@ public class S3StorageService
 
         try {
 
-            fileSize =
-                    Files.size(
-                            localFile
-                    );
+            fileSize = Files.size(localFile);
 
         } catch (IOException exception) {
 
@@ -195,34 +190,21 @@ public class S3StorageService
 
         RecordingObjectEntity entity =
                 RecordingObjectEntity.builder()
-                        .id(
-                                UUID.randomUUID()
-                        )
-                        .recordingId(
-                                session.getId()
-                        )
+                        .id(UUID.randomUUID())
+                        .recordingId(session.getId())
                         .s3Key(s3Key)
-                        .fileName(
-                                localFile
+                        .fileName(localFile
                                         .getFileName()
                                         .toString()
                         )
                         .sizeBytes(fileSize)
-                        .sequenceNumber(
-                                sequenceNumber
-                        )
-                        .uploadedAt(
-                                Instant.now()
-                        )
+                        .sequenceNumber(sequenceNumber)
+                        .uploadedAt(Instant.now())
                         .build();
 
-        recordingObjectRepository.save(
-                entity
-        );
+        recordingObjectRepository.save(entity);
 
-        session.getS3Keys().add(
-                s3Key
-        );
+        session.getS3Keys().add(s3Key);
 
         log.debug(
                 "Saved recording object recordingId={}, key={}, sequence={}",
@@ -297,11 +279,9 @@ public class S3StorageService
         }
 
         if (
-                !prefix.isBlank()
-                        &&
+                !prefix.isBlank() &&
                         !prefix.endsWith("/")
         ) {
-
             prefix += "/";
         }
 
