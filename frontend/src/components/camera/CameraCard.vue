@@ -13,6 +13,7 @@ import {
 } from "@/api/streamApi";
 import { HLS_URL } from "@/config";
 
+import RecordingArchiveModal from "@/components/recording/RecordingArchiveModal.vue";
 
 const props = defineProps<{
   camera: Camera;
@@ -154,6 +155,19 @@ async function stopStream() {
 
 }
 
+
+
+// модальное окно
+const archiveOpen = ref(false);
+
+function openArchive(): void {
+  archiveOpen.value = true;
+}
+
+function closeArchive(): void {
+  archiveOpen.value = false;
+}
+
 </script>
 
 <template>
@@ -187,44 +201,47 @@ async function stopStream() {
     />
 
     <div class="buttons">
-
-      <button
-          class="primary"
-          :disabled="streamLoading"
-          @click="startStream"
-      >
+      <button class="primary" :disabled="streamLoading" @click="startStream">
         Start Stream
       </button>
 
-      <button
-          :disabled="streamLoading"
-          @click="stopStream"
-      >
+      <button :disabled="streamLoading" @click="stopStream">
         Stop Stream
       </button>
-
     </div>
 
     <div class="buttons">
-
-      <button
-          class="danger"
-          :disabled="recordingLoading"
-          @click="startRecording"
-      >
+      <button class="danger" :disabled="recordingLoading" @click="startRecording">
         Start Recording
       </button>
 
-      <button
-          :disabled="recordingLoading"
-          @click="stopRecording"
-      >
+      <button :disabled="recordingLoading" @click="stopRecording">
         Stop Recording
       </button>
+
+    <div class="buttons">
+      <button type="button" class="archive-button" @click="openArchive">
+        Archive
+      </button>
+      <button type="button" class="archive-button" @click="closeArchive()">
+        Archive
+      </button>
+    </div>
 
     </div>
 
   </div>
+
+  <Teleport to="body">
+
+    <RecordingArchiveModal
+        v-if="archiveOpen"
+        :camera="camera"
+        @close="closeArchive"
+    />
+
+  </Teleport>
+
 </template>
 
 <style scoped>

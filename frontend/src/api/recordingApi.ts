@@ -1,7 +1,42 @@
-import http from "./http";
+import http from "@/api/http";
 
-export const startRecording = (id: string) =>
-    http.post(`/recordings/${id}/start`);
+import type {
+    Recording,
+    RecordingDate
+} from "@/types/Recording";
 
-export const stopRecording = (id: string) =>
-    http.post(`/recordings/${id}/stop`);
+/**
+ * Получить даты, за которые у камеры имеются записи.
+ */
+export async function findRecordingDates(
+    cameraId: string
+): Promise<RecordingDate[]> {
+
+    const response =
+        await http.get<RecordingDate[]>(
+            `/recordings/cameras/${cameraId}/dates`
+        );
+
+    return response.data;
+}
+
+/**
+ * Получить записи камеры за выбранную дату.
+ */
+export async function findRecordingsByDate(
+    cameraId: string,
+    date: string
+): Promise<Recording[]> {
+
+    const response =
+        await http.get<Recording[]>(
+            `/recordings/cameras/${cameraId}`,
+            {
+                params: {
+                    date
+                }
+            }
+        );
+
+    return response.data;
+}

@@ -1,11 +1,16 @@
 package com.coltrack.recordingservice.controller;
 
+import com.coltrack.recordingservice.dto.RecordingDateResponse;
+import com.coltrack.recordingservice.dto.RecordingResponse;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.service.RecordingManager;
+import com.coltrack.recordingservice.service.RecordingQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -15,6 +20,7 @@ public class RecordingController {
 
 
     private final RecordingManager recordingManager;
+    private final RecordingQueryService recordingQueryService;
 
 
     /**
@@ -56,5 +62,27 @@ public class RecordingController {
     ) {
 
         return recordingManager.find(cameraId);
+    }
+
+    @GetMapping("/cameras/{cameraId}/dates")
+    public List<RecordingDateResponse> findAvailableDates(
+            @PathVariable UUID cameraId
+    ) {
+
+        return recordingQueryService.findAvailableDates(
+                cameraId
+        );
+    }
+
+    @GetMapping("/cameras/{cameraId}")
+    public List<RecordingResponse> findByDate(
+            @PathVariable UUID cameraId,
+            @RequestParam LocalDate date
+    ) {
+
+        return recordingQueryService.findByDate(
+                cameraId,
+                date
+        );
     }
 }
