@@ -1,15 +1,13 @@
 package com.coltrack.streamservice.websocket;
 
-import com.coltrack.events.StreamEvent;
 import com.coltrack.events.StreamStartedEvent;
 import com.coltrack.events.StreamFailedEvent;
 import com.coltrack.events.StreamStoppedEvent;
+import com.coltrack.events.websocket.StreamEventWs;
 import com.coltrack.events.websocket.WebSocketTopics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -17,78 +15,65 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class StreamWebSocketPublisher {
 
-    //private final SimpMessagingTemplate messagingTemplate;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    //@EventListener
     public void onStreamStarted(StreamStartedEvent event) {
 
         log.info( "onStreamStarted" );
 
-/*
-        messagingTemplate.convertAndSend(
-                "/topic/streams",
-                new StreamEvent(
+
+        StreamEventWs eventWs =
+                new StreamEventWs(
                         event.cameraId(),
-                        "ONLINE",
+                        "RUNNING",
                         event.hlsUrl(),
                         null
-                )
-        );
-*/
+                );
 
         kafkaTemplate.send(
                 WebSocketTopics.STREAM_EVENTS,
                 event.cameraId().toString(),
-                event
+                eventWs
         );
+
     }
 
-    //@EventListener
     public void onStreamStopped(StreamStoppedEvent event) {
 
         log.info( "onStreamStopped" );
 
-/*
-        messagingTemplate.convertAndSend(
-                "/topic/streams",
-                new StreamEvent(
+
+        StreamEventWs eventWs =
+                new StreamEventWs(
                         event.cameraId(),
-                        "OFFLINE",
+                        "STOPPED",
                         null,
                         null
-                )
-        );
-*/
+                );
 
         kafkaTemplate.send(
                 WebSocketTopics.STREAM_EVENTS,
                 event.cameraId().toString(),
-                event
+                eventWs
         );
     }
 
-    //@EventListener
     public void onStreamFailed(StreamFailedEvent  event) {
 
         log.info( "onStreamFailed" );
 
-/*
-        messagingTemplate.convertAndSend(
-                "/topic/streams",
-                new StreamEvent(
+        StreamEventWs eventWs =
+                new StreamEventWs(
                         event.cameraId(),
-                        "OFFLINE",
+                        "ERROR",
                         null,
-                        event.reason()
-                )
-        );
-*/
+                        null
+                );
 
         kafkaTemplate.send(
                 WebSocketTopics.STREAM_EVENTS,
                 event.cameraId().toString(),
-                event
+                eventWs
         );
     }
 

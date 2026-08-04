@@ -5,15 +5,13 @@ import {
 } from "vue";
 
 import type { Camera } from "@/types/Сamera.ts";
-
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
-
 import { useStreamStore } from "@/stores/streamStore";
-
 import {
   startStream as apiStartStream,
   stopStream as apiStopStream
 } from "@/api/streamApi";
+import { HLS_URL } from "@/config";
 
 
 const props = defineProps<{
@@ -31,10 +29,12 @@ const streamStore = useStreamStore();
 
 
 // HLS URL сервера
-const hlsBaseUrl =
-    import.meta.env.VITE_HLS_URL ||
-    "http://localhost:8080";
+//const hlsBaseUrl =
+//    import.meta.env.VITE_HLS_URL ||
+//    "http://localhost:8080";
 
+
+const hlsBaseUrl = HLS_URL;
 
 /*
  * Получаем HLS URL из Pinia.

@@ -29,8 +29,6 @@ include(
         'services:analytics-service',
         'services:search-service',
         'services:stream-service',
-        ":services:websocket-service"
+        "services:websocket-service"
 )
 
-
-include 'services:websocket-service'

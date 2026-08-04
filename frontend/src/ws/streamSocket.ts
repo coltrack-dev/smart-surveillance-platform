@@ -16,7 +16,11 @@ export function connectStreamSocket(
 
     client = new Client({
 
-        brokerURL: "ws://localhost:8094/ws",
+        //brokerURL: "ws://localhost:8094/ws",
+        //brokerURL: "ws://localhost:8080/ws",
+        brokerURL:
+            import.meta.env.VITE_WS_URL ??
+            `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:8080/ws`,
 
         reconnectDelay: 5000,
 
