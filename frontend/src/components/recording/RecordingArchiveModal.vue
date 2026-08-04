@@ -16,6 +16,8 @@ import {
   findRecordingsByDate
 } from "@/api/recordingApi";
 
+import CameraPlayer from "@/components/camera/CameraPlayer.vue";
+
 const props = defineProps<{
   camera: Camera;
 }>();
@@ -407,19 +409,25 @@ onMounted(
 
             </div>
 
-            <video
-                v-if="playbackUrl"
-                :key="playbackUrl"
-                :src="playbackUrl"
-                class="archive-player"
-                controls
-                autoplay
-                playsinline
-            />
 
-            <div v-else class="empty">
-              Select a recording.
+            <div class="archive-video-panel">
+
+              <CameraPlayer
+                  v-if="playbackUrl"
+                  :key="playbackUrl"
+                  :url="playbackUrl"
+                  :connecting="false"
+              />
+
+              <div
+                  v-else
+                  class="archive-video-empty"
+              >
+                Select a recording to start playback.
+              </div>
+
             </div>
+
 
           </template>
 
