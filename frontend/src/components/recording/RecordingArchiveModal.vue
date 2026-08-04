@@ -325,6 +325,7 @@ onMounted(
 </template>
 
 <style scoped>
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -451,6 +452,60 @@ onMounted(
 
 .error-message {
   color: #b42318;
+}
+
+.date-button,
+.recording-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+
+  border: 1px solid #ddd;
+  border-radius: 6px;
+
+  background: #fff;
+  color: #222;
+
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.date-button > span:first-child {
+  flex: 1;
+  min-width: 0;
+
+  color: #222;
+  font-weight: 500;
+}
+
+.recording-count {
+  flex: 0 0 auto;
+
+  min-width: 28px;
+  padding: 2px 7px;
+
+  border-radius: 10px;
+  background: #eee;
+
+  color: #555;
+  font-size: 12px;
+  text-align: center;
+}
+
+.date-button.selected {
+  border-color: #3978ff;
+  background: #eef4ff;
+  color: #1649a5;
+}
+
+.date-button.selected > span:first-child {
+  color: #1649a5;
 }
 
 @media (max-width: 760px) {
