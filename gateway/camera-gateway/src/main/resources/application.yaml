@@ -45,14 +45,21 @@ spring:
             # Recording Service
             #
             - id: recording-service
-              uri: http://localhost:8082
+              uri: http://localhost:8095
               predicates:
                 - Path=/api/v1/recordings/**
               filters:
                 - RewritePath=/api/v1/recordings(?<segment>/?.*), /api/recordings${segment}
 
-  management:
-    endpoints:
-      web:
-        exposure:
-          include: health,info
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - gateway
+
+  endpoint:
+    gateway:
+      access: read-only
