@@ -170,86 +170,121 @@ public class StreamManager implements StreamListener {
      */
     @Override
     public void started(StreamSession session) {
+
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.RUNNING);
         sessions.put(cameraId, session);
+
         log.info("Stream started successfully camera={}", cameraId);
 
         StreamStartedEvent event =
                 new StreamStartedEvent(
                         UUID.randomUUID(),
-                        session.getCameraId(),
+                        cameraId,
                         session.getHlsUrl(),
                         Instant.now()
                 );
 
         publishEvent(
                 event,
-                session.getCameraId()
+                cameraId
         );
 
         streamWebSocketPublisher.onStreamStarted(event);
-
     }
+
 
     /**
      * Called when FFmpeg stopped normally.
      */
     @Override
     public void stopped(StreamSession session) {
+
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.STOPPED);
         sessions.remove(cameraId);
-        log.info("Stream stopped camera={}", cameraId);
 
-        publishEvent(
+        log.info("Stream stopped camera={}",cameraId);
+
+        StreamStoppedEvent event =
                 new StreamStoppedEvent(
                         UUID.randomUUID(),
-                        session.getCameraId(),
+                        cameraId,
                         Instant.now()
-                ),
-                session.getCameraId()
+                );
+
+        publishEvent(
+                event,
+                cameraId
         );
+
+        streamWebSocketPublisher.onStreamStopped(event);
     }
+
 
     /**
      * Called when stream failed.
      */
     @Override
     public void failed(StreamSession session) {
+
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.ERROR);
         sessions.remove(cameraId);
-        log.error("Stream failed camera={}", cameraId);
 
-        publishEvent(
+        log.error(
+                "Stream failed camera={}, error={}",
+                cameraId,
+                session.getLastError()
+        );
+
+        StreamFailedEvent event =
                 new StreamFailedEvent(
                         UUID.randomUUID(),
-                        session.getCameraId(),
+                        cameraId,
                         session.getLastError(),
                         Instant.now()
-                ),
-                session.getCameraId()
+                );
+
+        publishEvent(
+                event,
+                cameraId
         );
+
+        streamWebSocketPublisher.onStreamFailed(event);
     }
+
 
     /**
      * Called before reconnect attempt.
      */
     @Override
     public void reconnecting(StreamSession session) {
-        UUID cameraId = session.getCameraId();
-        session.setStatus(StreamStatus.RECONNECTING);
-        log.warn("Trying to reconnect stream camera={}", cameraId);
 
-        publishEvent(
+        UUID cameraId = session.getCameraId();
+
+        session.setStatus(
+                StreamStatus.RECONNECTING
+        );
+
+        log.warn(
+                "Trying to reconnect stream camera={}",
+                cameraId
+        );
+
+        StreamReconnectingEvent event =
                 new StreamReconnectingEvent(
                         UUID.randomUUID(),
-                        session.getCameraId(),
+                        cameraId,
                         Instant.now()
-                ),
-                session.getCameraId()
+                );
+
+        publishEvent(
+                event,
+                cameraId
         );
+
+        streamWebSocketPublisher.onStreamReconnecting(event);
     }
 
     /**

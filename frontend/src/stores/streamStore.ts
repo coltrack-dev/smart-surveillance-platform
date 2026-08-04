@@ -25,37 +25,34 @@ export const useStreamStore = defineStore(
 
         const streams = ref<Record<string, StreamInfo>>({});
 
-
         /**
          * Потоки, которые ожидают запуска.
          * После StreamStartedEvent снимаются.
          */
         const startingStreams = ref<Record<string, boolean>>({});
 
+        function updateStream(event: StreamEvent): void {
 
-        function updateStream(
-            event: StreamEvent
-        ): void {
+            if (event.status === "STOPPED") {
+
+                resetStream(
+                    event.cameraId
+                );
+
+                return;
+            }
 
             const old =
                 streams.value[event.cameraId];
 
-
             streams.value[event.cameraId] = {
 
                 cameraId: event.cameraId,
-
                 status: event.status,
-
                 hlsUrl: event.hlsUrl,
-
                 error: event.error,
-
-                startedAt:
-                    old?.startedAt ?? null
-
+                startedAt: old?.startedAt ?? null
             };
-
 
             console.log( event );
 
@@ -71,9 +68,7 @@ export const useStreamStore = defineStore(
                 );
 
             }
-
-
-            if (
+            else if (
                 event.status === "OFFLINE" ||
                 event.status === "ERROR"
             ) {
@@ -118,6 +113,14 @@ export const useStreamStore = defineStore(
 
         }
 
+        function resetStream(
+            cameraId: string
+        ): void {
+
+            delete streams.value[cameraId];
+            delete startingStreams.value[cameraId];
+
+        }
 
         return {
 
@@ -129,7 +132,9 @@ export const useStreamStore = defineStore(
 
             setStarting,
 
-            isStarting
+            isStarting,
+
+            resetStream
 
         };
 

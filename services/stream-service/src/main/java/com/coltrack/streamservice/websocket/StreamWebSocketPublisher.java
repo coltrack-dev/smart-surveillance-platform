@@ -1,8 +1,6 @@
 package com.coltrack.streamservice.websocket;
 
-import com.coltrack.events.StreamStartedEvent;
-import com.coltrack.events.StreamFailedEvent;
-import com.coltrack.events.StreamStoppedEvent;
+import com.coltrack.events.*;
 import com.coltrack.events.websocket.StreamEventWs;
 import com.coltrack.events.websocket.WebSocketTopics;
 import lombok.RequiredArgsConstructor;
@@ -65,7 +63,7 @@ public class StreamWebSocketPublisher {
         StreamEventWs eventWs =
                 new StreamEventWs(
                         event.cameraId(),
-                        "ERROR",
+                        "FAILED",
                         null,
                         null
                 );
@@ -77,4 +75,22 @@ public class StreamWebSocketPublisher {
         );
     }
 
+    public void onStreamReconnecting(StreamReconnectingEvent  event) {
+
+        log.info( "onStreamReconnecting" );
+
+        StreamEventWs eventWs =
+                new StreamEventWs(
+                        event.cameraId(),
+                        "RECONNECTING",
+                        null,
+                        null
+                );
+
+        kafkaTemplate.send(
+                WebSocketTopics.STREAM_EVENTS,
+                event.cameraId().toString(),
+                eventWs
+        );
+    }
 }
