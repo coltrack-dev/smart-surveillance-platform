@@ -384,44 +384,22 @@ onMounted(
                   </strong>
 
                   <span>
-        –
-        {{
-                      recording.finishedAt
-                          ? formatTime(recording.finishedAt)
-                          : "Now"
-                    }}
-      </span>
+                    – {{recording.finishedAt ? formatTime(recording.finishedAt) : "Now"}}
+                  </span>
 
                 </div>
 
                 <div class="recording-duration">
-
-      <span class="field-label">
-        Duration
-      </span>
-
-                  <span>
-        {{ formatDuration(recording.durationSeconds) }}
-      </span>
-
+                  <span class="field-label">Duration</span>
+                  <span>{{ formatDuration(recording.durationSeconds) }}</span>
                 </div>
 
                 <div class="recording-size">
-
-      <span class="field-label">
-        Size
-      </span>
-
-                  <span>
-        {{ formatSize(recording.sizeBytes) }}
-      </span>
-
+                  <span class="field-label">Size</span>
+                  <span>{{ formatSize(recording.sizeBytes) }}</span>
                 </div>
 
-                <div
-                    class="recording-status"
-                    :class="statusClass(recording.status)"
-                >
+                <div class="recording-status" :class="statusClass(recording.status)">
                   {{ formatStatus(recording.status) }}
                 </div>
 
@@ -439,10 +417,7 @@ onMounted(
                 playsinline
             />
 
-            <div
-                v-else
-                class="empty"
-            >
+            <div v-else class="empty">
               Select a recording.
             </div>
 
