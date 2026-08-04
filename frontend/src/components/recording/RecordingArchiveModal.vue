@@ -5,10 +5,10 @@ import {
   ref
 } from "vue";
 
-import type { Camera } from "@/types/Сamera";
+import type {Camera} from "@/types/Сamera";
 import type {
   Recording,
-  RecordingDate
+  RecordingDate, RecordingStatus
 } from "@/types/Recording";
 
 import {
@@ -142,6 +142,105 @@ function formatTime(
   );
 }
 
+function formatDuration(
+    seconds: number | null
+): string {
+
+  if (seconds == null) {
+    return "—";
+  }
+
+  const hours =
+      Math.floor(seconds / 3600);
+
+  const minutes =
+      Math.floor((seconds % 3600) / 60);
+
+  const remainingSeconds =
+      seconds % 60;
+
+  if (hours > 0) {
+
+    return [
+      hours,
+      minutes,
+      remainingSeconds
+    ]
+        .map(value =>
+            String(value).padStart(2, "0")
+        )
+        .join(":");
+  }
+
+  return [
+    minutes,
+    remainingSeconds
+  ]
+      .map(value =>
+          String(value).padStart(2, "0")
+      )
+      .join(":");
+}
+
+function formatSize(
+    bytes: number | null
+): string {
+
+  if (bytes == null) {
+    return "—";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kilobytes =
+      bytes / 1024;
+
+  if (kilobytes < 1024) {
+    return `${kilobytes.toFixed(1)} KB`;
+  }
+
+  const megabytes =
+      kilobytes / 1024;
+
+  if (megabytes < 1024) {
+    return `${megabytes.toFixed(1)} MB`;
+  }
+
+  const gigabytes =
+      megabytes / 1024;
+
+  return `${gigabytes.toFixed(2)} GB`;
+}
+
+function formatStatus(status?: RecordingStatus | null): string {
+
+  if (!status) {
+    return "Unknown";
+  }
+
+  const labels: Record<RecordingStatus, string> = {
+    RECORDING: "Recording",
+    COMPLETED: "Completed",
+    FAILED: "Failed",
+    STOPPED: "Stopped"
+  };
+
+  return labels[status] ?? status;
+
+}
+
+
+function statusClass(
+    status?: RecordingStatus | null
+): string {
+
+  return `status-${
+      (status ?? "UNKNOWN").toLowerCase()
+  }`;
+}
+
 function close(): void {
   emit("close");
 }
@@ -273,23 +372,58 @@ onMounted(
                   v-for="recording in recordings"
                   :key="recording.id"
                   type="button"
-                  class="recording-button"
-                  :class="{
-                    selected:
-                        selectedRecording?.id ===
-                        recording.id
-                  }"
-                  @click="
-                    selectedRecording = recording
-                  "
+                  class="recording-row"
+                  :class="{selected:selectedRecording?.id === recording.id}"
+                  @click="selectedRecording = recording"
               >
 
-                {{ formatTime(recording.startedAt) }}
+                <div class="recording-time">
 
-                <span v-if="recording.endedAt">
-                  –
-                  {{ formatTime(recording.endedAt) }}
-                </span>
+                  <strong>
+                    {{ formatTime(recording.startedAt) }}
+                  </strong>
+
+                  <span>
+        –
+        {{
+                      recording.finishedAt
+                          ? formatTime(recording.finishedAt)
+                          : "Now"
+                    }}
+      </span>
+
+                </div>
+
+                <div class="recording-duration">
+
+      <span class="field-label">
+        Duration
+      </span>
+
+                  <span>
+        {{ formatDuration(recording.durationSeconds) }}
+      </span>
+
+                </div>
+
+                <div class="recording-size">
+
+      <span class="field-label">
+        Size
+      </span>
+
+                  <span>
+        {{ formatSize(recording.sizeBytes) }}
+      </span>
+
+                </div>
+
+                <div
+                    class="recording-status"
+                    :class="statusClass(recording.status)"
+                >
+                  {{ formatStatus(recording.status) }}
+                </div>
 
               </button>
 

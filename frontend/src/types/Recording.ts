@@ -1,16 +1,24 @@
-export interface RecordingDate {
-    date: string;
-    recordingsCount: number;
-}
+export type RecordingStatus =
+    | "RECORDING"
+    | "COMPLETED"
+    | "FAILED"
+    | "STOPPED";
 
 export interface Recording {
+
     id: string;
+
     cameraId: string;
 
     startedAt: string;
-    endedAt: string | null;
+
+    finishedAt: string | null;
 
     durationSeconds: number | null;
+
+    sizeBytes: number | null;
+
+    status: RecordingStatus;
 
     playbackUrl: string;
 }
