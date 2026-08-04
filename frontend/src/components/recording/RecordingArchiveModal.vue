@@ -247,6 +247,13 @@ function close(): void {
   emit("close");
 }
 
+function selectRecording(
+    recording: Recording
+): void {
+
+  selectedRecording.value = recording;
+}
+
 onMounted(
     loadDates
 );
@@ -375,8 +382,11 @@ onMounted(
                   :key="recording.id"
                   type="button"
                   class="recording-row"
-                  :class="{selected:selectedRecording?.id === recording.id}"
-                  @click="selectedRecording = recording"
+                  :class="{
+      selected:
+        selectedRecording?.id === recording.id
+    }"
+                  @click="selectRecording(recording)"
               >
 
                 <div class="recording-time">

@@ -51,6 +51,14 @@ spring:
               filters:
                 - RewritePath=/api/v1/recordings(?<segment>/?.*), /api/recordings${segment}
 
+            #
+            # Recording playback
+            #
+            - id: recording-playback
+              uri: http://localhost:8095
+              predicates:
+                - Path=/recordings/**
+
 management:
   endpoints:
     web:
