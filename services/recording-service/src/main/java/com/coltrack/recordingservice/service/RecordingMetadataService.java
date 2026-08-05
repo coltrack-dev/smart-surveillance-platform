@@ -6,6 +6,7 @@ import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -17,42 +18,81 @@ public class RecordingMetadataService {
     private final RecordingRepository repository;
 
 
+    @Transactional
     public RecordingEntity create(
+            UUID recordingId,
             UUID cameraId,
-            String filePath
+            String filePath,
+            Instant startedAt
     ) {
 
         RecordingEntity entity =
                 RecordingEntity.builder()
-                        .id(UUID.randomUUID())
+                        .id(recordingId)
                         .cameraId(cameraId)
                         .filePath(filePath)
-                        .startedAt(Instant.now())
+                        .startedAt(startedAt)
                         .status(RecordingStatus.STARTING)
                         .build();
 
-        return repository.save(entity);
+        return repository.saveAndFlush(
+                entity
+        );
     }
 
-
+    @Transactional
     public void complete(
-            RecordingEntity entity,
+            RecordingEntity metadata,
             RecordingSession session
     ) {
 
-        entity.setFinishedAt(session.getFinishedAt());
+        metadata.setFinishedAt(
+                session.getFinishedAt()
+        );
 
-        entity.setDurationSeconds(session.getDurationSeconds());
+        metadata.setDurationSeconds(
+                session.getDurationSeconds()
+        );
 
-        entity.setSizeBytes(session.getSizeBytes());
+        metadata.setSizeBytes(
+                session.getSizeBytes()
+        );
 
-        entity.setExitCode(session.getExitCode());
+        metadata.setSegmentsCount(
+                session.getSegmentsCount()
+        );
 
-        entity.setSegmentsCount(session.getSegmentsCount());
+        metadata.setExitCode(
+                session.getExitCode()
+        );
 
-        entity.setStatus(RecordingStatus.STOPPED);
+        metadata.setWidth(
+                session.getWidth()
+        );
 
-        repository.save(entity);
+        metadata.setHeight(
+                session.getHeight()
+        );
+
+        metadata.setFps(
+                session.getFps()
+        );
+
+        metadata.setCodec(
+                session.getCodec()
+        );
+
+        metadata.setStatus(
+                session.getStatus()
+        );
+
+        metadata.setReason(
+                session.getLastError()
+        );
+
+        repository.saveAndFlush(
+                metadata
+        );
     }
 
     public void failed(
@@ -70,6 +110,6 @@ public class RecordingMetadataService {
 
         entity.setReason(reason);
 
-        repository.save(entity);
+        repository.saveAndFlush(entity);
     }
 }

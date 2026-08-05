@@ -100,11 +100,15 @@ public class RecordingWorker implements Runnable {
         return directory;
     }
 
-    private RecordingEntity createMetadata(Path directory) {
+    private RecordingEntity createMetadata(
+            Path directory
+    ) {
 
         return recordingMetadataService.create(
+                session.getId(),
                 session.getCameraId(),
-                directory.toString()
+                directory.toString(),
+                session.getStartedAt()
         );
     }
 
@@ -257,67 +261,125 @@ public class RecordingWorker implements Runnable {
             Path outputPattern
     ) throws Exception {
 
-        int exitCode = process.waitFor();
+        int exitCode =
+                process.waitFor();
 
-        session.setFinishedAt(Instant.now());
-        session.setExitCode(exitCode);
+        Instant finishedAt =
+                Instant.now();
+
+        session.setFinishedAt(
+                finishedAt
+        );
+
+        session.setExitCode(
+                exitCode
+        );
 
         session.setDurationSeconds(
                 Duration.between(
                         session.getStartedAt(),
-                        session.getFinishedAt()
+                        finishedAt
                 ).toSeconds()
         );
 
+        Path recordingDirectory =
+                outputPattern.getParent();
+
         session.setSizeBytes(
-                storageService.calculateDirectorySize(outputPattern.getParent())
+                storageService.calculateDirectorySize(
+                        recordingDirectory
+                )
         );
 
         session.setSegmentsCount(
-                storageService.countSegments(outputPattern.getParent())
+                storageService.countSegments(
+                        recordingDirectory
+                )
         );
 
         ffprobeService.fillMetadata(
                 session,
-                storageService.findFirstSegment(outputPattern.getParent())
+                storageService.findFirstSegment(
+                        recordingDirectory
+                )
         );
 
         if (session.isStopRequested()) {
 
-            session.setStatus(RecordingStatus.STOPPED);
+            session.setStatus(
+                    RecordingStatus.STOPPED
+            );
 
-            listener.stopped(session);
-
+            /*
+             * Сначала гарантированно сохраняем родительскую
+             * recording_sessions.
+             */
             recordingMetadataService.complete(
                     metadata,
                     session
             );
 
+            listener.stopped(
+                    session
+            );
+
+            if (!metadata.getId().equals(session.getId())) {
+
+                throw new IllegalStateException(
+                        "Recording ID mismatch: metadata="
+                                + metadata.getId()
+                                + ", session="
+                                + session.getId()
+                );
+            }
+
             Thread.startVirtualThread(() -> {
 
                 try {
 
-                    s3StorageService.uploadRecording(session);
-                    log.info("S3 upload completed camera={}", session.getCameraId());
+                    /*
+                     * Здесь metadata уже должна существовать
+                     * в recording_sessions с тем же UUID,
+                     * что и session.getId().
+                     */
+                    s3StorageService.uploadRecording(
+                            session
+                    );
 
-                } catch (Exception e) {
+                    log.info(
+                            "S3 upload completed recordingId={}, camera={}",
+                            session.getId(),
+                            session.getCameraId()
+                    );
 
-                    log.error("S3 upload failed camera={}", session.getCameraId(), e);
+                } catch (Exception exception) {
+
+                    log.error(
+                            "S3 upload failed recordingId={}, camera={}",
+                            session.getId(),
+                            session.getCameraId(),
+                            exception
+                    );
                 }
             });
 
-        } else {
-
-            session.setStatus(RecordingStatus.FAILED);
-
-            listener.failed(session);
-
-            recordingMetadataService.failed(
-                    metadata,
-                    buildLastError()
-            );
+            return;
         }
+
+        session.setStatus(
+                RecordingStatus.FAILED
+        );
+
+        recordingMetadataService.failed(
+                metadata,
+                buildLastError()
+        );
+
+        listener.failed(
+                session
+        );
     }
+
 
     private String buildLastError() {
 
