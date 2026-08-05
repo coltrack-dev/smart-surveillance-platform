@@ -1,8 +1,10 @@
 package com.coltrack.recordingservice.controller;
 
+import com.coltrack.recordingservice.dto.RecordingPlaybackResponse;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 
+import com.coltrack.recordingservice.service.RecordingPlaybackService;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.core.io.Resource;
@@ -12,10 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import org.springframework.web.server.ResponseStatusException;
 
@@ -32,6 +31,7 @@ import java.util.UUID;
 public class RecordingPlaybackController {
 
     private final RecordingRepository recordingRepository;
+    private final RecordingPlaybackService recordingPlaybackService;
 
     @GetMapping("/{recordingId}/{fileName:.+}")
     public ResponseEntity<Resource> getRecordingFile(
@@ -148,5 +148,22 @@ public class RecordingPlaybackController {
         }
 
         return MediaType.APPLICATION_OCTET_STREAM;
+    }
+
+    @PostMapping("/{recordingId}/playback")
+    public RecordingPlaybackResponse preparePlayback(
+            @PathVariable UUID recordingId
+    ) {
+
+        String playbackUrl =
+                recordingPlaybackService
+                        .preparePlayback(
+                                recordingId
+                        );
+
+        return new RecordingPlaybackResponse(
+                "READY",
+                playbackUrl
+        );
     }
 }

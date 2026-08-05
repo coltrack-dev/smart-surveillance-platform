@@ -40,3 +40,20 @@ export async function findRecordingsByDate(
 
     return response.data;
 }
+
+export interface RecordingPlaybackResponse {
+    status: "READY" | "PREPARING" | "FAILED";
+    playbackUrl: string | null;
+}
+
+export async function prepareRecordingPlayback(
+    recordingId: string
+): Promise<RecordingPlaybackResponse> {
+
+    const response =
+        await http.post<RecordingPlaybackResponse>(
+            `/v1/recordings/${recordingId}/playback`
+        );
+
+    return response.data;
+}

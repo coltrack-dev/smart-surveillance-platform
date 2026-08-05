@@ -13,4 +13,9 @@ public interface RecordingObjectRepository
     findByRecordingIdOrderBySequenceNumberAsc(
             UUID recordingId
     );
+
+    boolean existsByS3Key(
+            String s3Key
+    );
+
 }

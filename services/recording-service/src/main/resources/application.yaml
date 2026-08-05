@@ -60,6 +60,11 @@ recording:
     access-key: ${WASABI_ACCESS_KEY}
     secret-key: ${WASABI_SECRET_KEY}
     region: ${WASABI_REGION:us-central-1}
+  playback:
+    cache-directory: ./data/playback-cache
+    ttl: 1h
+    segment-duration-seconds: 4
+    ffmpeg-path: ffmpeg
 
 # FFmpeg settings
 ffmpeg:

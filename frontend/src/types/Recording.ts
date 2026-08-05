@@ -1,3 +1,7 @@
+export interface RecordingDate {
+    date: string;
+    recordingsCount: number;
+}
 export type RecordingStatus =
     | "RECORDING"
     | "COMPLETED"

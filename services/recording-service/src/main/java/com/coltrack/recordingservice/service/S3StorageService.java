@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -295,5 +297,47 @@ public class S3StorageService
                 + session.getId()
                 + "/"
                 + fileName;
+    }
+
+    public void downloadObject(
+            String s3Key,
+            Path destination
+    ) {
+
+        try {
+
+            Path parent =
+                    destination.getParent();
+
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+
+            GetObjectRequest request =
+                    GetObjectRequest.builder()
+                            .bucket(properties.getBucket())
+                            .key(s3Key)
+                            .build();
+
+            log.info(
+                    "Downloading s3://{}/{} -> {}",
+                    properties.getBucket(),
+                    s3Key,
+                    destination
+            );
+
+            s3Client.getObject(
+                    request,
+                    destination
+            );
+
+        } catch (IOException exception) {
+
+            throw new IllegalStateException(
+                    "Unable to prepare destination for S3 object: "
+                            + destination,
+                    exception
+            );
+        }
     }
 }

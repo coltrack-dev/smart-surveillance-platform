@@ -12,6 +12,11 @@ import type {
 } from "@/types/Recording";
 
 import {
+  prepareRecordingPlayback
+} from "@/api/recordingApi";
+
+
+import {
   findRecordingDates,
   findRecordingsByDate
 } from "@/api/recordingApi";
@@ -35,6 +40,10 @@ const selectedRecording = ref<Recording | null>(null);
 const datesLoading = ref(false);
 const recordingsLoading = ref(false);
 const errorMessage = ref<string | null>(null);
+
+const playbackLoading = ref(false);
+const playbackError = ref<string | null>(null);
+const preparedPlaybackUrl = ref<string | null>(null);
 
 const playbackBaseUrl =
     import.meta.env.VITE_RECORDING_URL ??
@@ -247,11 +256,66 @@ function close(): void {
   emit("close");
 }
 
-function selectRecording(
+//function selectRecording(
+//    recording: Recording
+//): void {
+//
+//  selectedRecording.value = recording;
+//}
+
+async function selectRecording(
     recording: Recording
-): void {
+): Promise<void> {
 
   selectedRecording.value = recording;
+
+  preparedPlaybackUrl.value = null;
+  playbackError.value = null;
+  playbackLoading.value = true;
+
+  try {
+
+    const result =
+        await prepareRecordingPlayback(
+            recording.id
+        );
+
+    if (
+        result.status !== "READY"
+        || !result.playbackUrl
+    ) {
+
+      throw new Error(
+          "Playback is not ready"
+      );
+    }
+
+    preparedPlaybackUrl.value =
+        result.playbackUrl.startsWith("http")
+            ? result.playbackUrl
+            : `${
+                window.location.protocol
+            }//${
+                window.location.hostname
+            }:8080${
+                result.playbackUrl
+            }`;
+
+  } catch (error) {
+
+    console.error(
+        "Unable to prepare playback",
+        error
+    );
+
+    playbackError.value =
+        "Unable to prepare recording playback.";
+
+  } finally {
+
+    playbackLoading.value = false;
+
+  }
 }
 
 onMounted(
