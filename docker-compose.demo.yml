@@ -2,23 +2,23 @@ name: surveillance-demo
 
 services:
 
-  postgres:
-    image: postgres:16.4-alpine
-    container_name: surveillance-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-surveillance_db}
-      POSTGRES_USER: ${POSTGRES_USER:-surveillance_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
+  #  postgres:
+  #    image: postgres:16.4-alpine
+  #    container_name: surveillance-postgres
+  #  environment:
+  #    POSTGRES_DB: ${POSTGRES_DB:-surveillance_db}
+  #    POSTGRES_USER: ${POSTGRES_USER:-surveillance_user}
+  #    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
+  #  volumes:
+  #    - postgres-data:/var/lib/postgresql/data
+  #  healthcheck:
+  #    test:
+  #      - CMD-SHELL
+  #      - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+  #    interval: 5s
+  #    timeout: 5s
+  #    retries: 20
+  #  restart: unless-stopped
 
   kafka:
     image: apache/kafka:3.9.1
@@ -93,14 +93,15 @@ services:
     image: surveillance/camera-service:demo
     container_name: surveillance-camera-service
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      #SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       JAVA_OPTS: ${CAMERA_JAVA_OPTS:--Xms128m -Xmx384m}
     depends_on:
-      postgres:
-        condition: service_healthy
+      #postgres:
+      #  condition: service_healthy
       kafka:
         condition: service_started
     restart: unless-stopped
@@ -136,7 +137,8 @@ services:
     image: surveillance/recording-service:demo
     container_name: surveillance-recording-service
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      #SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -159,8 +161,8 @@ services:
       - recording-data:/data/recordings
       - playback-cache:/data/playback-cache
     depends_on:
-      postgres:
-        condition: service_healthy
+      #postgres:
+      #  condition: service_healthy
       kafka:
         condition: service_started
       camera-service:
@@ -209,7 +211,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres-data:
+  #postgres-data:
   kafka-data:
   hls-data:
   recording-data:
