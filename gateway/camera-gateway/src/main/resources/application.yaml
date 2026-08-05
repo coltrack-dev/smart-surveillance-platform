@@ -9,14 +9,14 @@ spring:
           routes:
 
             - id: websocket-service
-              uri: ws://localhost:8096
+              uri: ${WEBSOCKET_SERVICE_URL:ws://localhost:8096}
               predicates:
                 - Path=/ws/**
 
             # HLS video stream
             #
             - id: hls-stream
-              uri: http://localhost:8094
+              uri: ${STREAM_SERVICE_URL:http://localhost:8094}
               predicates:
                 - Path=/hls/**
 
@@ -24,7 +24,7 @@ spring:
             # Camera Service
             #
             - id: camera-service
-              uri: http://localhost:8091
+              uri: ${CAMERA_SERVICE_URL:http://localhost:8091}
               predicates:
                 - Path=/api/v1/cameras/**
               filters:
@@ -34,7 +34,7 @@ spring:
             # Stream Service
             #
             - id: stream-service
-              uri: http://localhost:8094
+              uri: ${STREAM_SERVICE_URL:http://localhost:8094}
               predicates:
                 - Path=/api/v1/streams/**
               filters:
@@ -45,7 +45,7 @@ spring:
             # Recording Service
             #
             - id: recording-service
-              uri: http://localhost:8095
+              uri: ${RECORDING_SERVICE_URL:http://localhost:8095}
               predicates:
                 - Path=/api/v1/recordings/**
               filters:
@@ -55,7 +55,7 @@ spring:
             # Recording playback
             #
             - id: recording-playback
-              uri: http://localhost:8095
+              uri: ${RECORDING_SERVICE_URL:http://localhost:8095}
               predicates:
                 - Path=/recordings/**
 

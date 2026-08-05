@@ -1,0 +1,54 @@
+FROM gradle:8.14.2-jdk21 AS builder
+
+WORKDIR /workspace
+
+COPY gradlew settings.gradle build.gradle gradle.properties ./
+COPY gradle ./gradle
+
+COPY common ./common
+COPY gateway ./gateway
+COPY services ./services
+
+RUN chmod +x gradlew
+
+ARG GRADLE_MODULE
+ARG MODULE_DIR
+
+RUN ./gradlew ":${GRADLE_MODULE}:bootJar" \
+    --no-daemon \
+    --stacktrace
+
+RUN JAR_FILE="$(find "/workspace/${MODULE_DIR}/build/libs" \
+        -maxdepth 1 \
+        -type f \
+        -name '*.jar' \
+        ! -name '*-plain.jar' \
+        | head -n 1)" \
+    && test -n "$JAR_FILE" \
+    && cp "$JAR_FILE" /workspace/application.jar
+
+
+FROM eclipse-temurin:21-jre-jammy
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg \
+       curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/application.jar /app/application.jar
+
+RUN groupadd --system surveillance \
+    && useradd --system \
+       --gid surveillance \
+       --home-dir /app \
+       surveillance \
+    && chown -R surveillance:surveillance /app
+
+USER surveillance
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/application.jar"]

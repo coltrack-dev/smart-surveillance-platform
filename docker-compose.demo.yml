@@ -1,0 +1,216 @@
+name: surveillance-demo
+
+services:
+
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: surveillance-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-surveillance_db}
+      POSTGRES_USER: ${POSTGRES_USER:-surveillance_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: surveillance-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.13.1
+    container_name: surveillance-mediamtx
+    volumes:
+      - ./docker/mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
+  rtsp-publisher:
+    image: linuxserver/ffmpeg:7.1.1
+    container_name: surveillance-rtsp-publisher
+    depends_on:
+      - mediamtx
+    command:
+      - -re
+      - -f
+      - lavfi
+      - -i
+      - testsrc=size=1280x720:rate=25
+      - -f
+      - lavfi
+      - -i
+      - sine=frequency=1000
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -pix_fmt
+      - yuv420p
+      - -c:a
+      - aac
+      - -f
+      - rtsp
+      - rtsp://mediamtx:8554/test
+    restart: unless-stopped
+
+  camera-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:camera-service
+        MODULE_DIR: services/camera-service
+    image: surveillance/camera-service:demo
+    container_name: surveillance-camera-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      JAVA_OPTS: ${CAMERA_JAVA_OPTS:--Xms128m -Xmx384m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    restart: unless-stopped
+
+  stream-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:stream-service
+        MODULE_DIR: services/stream-service
+    image: surveillance/stream-service:demo
+    container_name: surveillance-stream-service
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CAMERA_SERVICE_URL: http://camera-service:8091
+      STREAM_HLS_PATH: /data/hls
+      JAVA_OPTS: ${STREAM_JAVA_OPTS:--Xms128m -Xmx384m}
+    volumes:
+      - hls-data:/data/hls
+    depends_on:
+      - kafka
+      - camera-service
+    restart: unless-stopped
+
+  recording-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:recording-service
+        MODULE_DIR: services/recording-service
+    image: surveillance/recording-service:demo
+    container_name: surveillance-recording-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+      CAMERA_SERVICE_URL: http://camera-service:8091
+
+      RECORDING_STORAGE_PATH: /data/recordings
+      RECORDING_PLAYBACK_CACHE_DIRECTORY: /data/playback-cache
+      RECORDING_EXPORT_ENABLED: "false"
+      RECORDING_S3_ENABLED: "false"
+
+      WASABI_ENDPOINT: ${WASABI_ENDPOINT:-http://unused.invalid}
+      WASABI_BUCKET: ${WASABI_BUCKET:-unused}
+      WASABI_ACCESS_KEY: ${WASABI_ACCESS_KEY:-unused}
+      WASABI_SECRET_KEY: ${WASABI_SECRET_KEY:-unused}
+      WASABI_REGION: ${WASABI_REGION:-us-central-1}
+
+      JAVA_OPTS: ${RECORDING_JAVA_OPTS:--Xms128m -Xmx512m}
+    volumes:
+      - recording-data:/data/recordings
+      - playback-cache:/data/playback-cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      camera-service:
+        condition: service_started
+    restart: unless-stopped
+
+  websocket-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:websocket-service
+        MODULE_DIR: services/websocket-service
+    image: surveillance/websocket-service:demo
+    container_name: surveillance-websocket-service
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      JAVA_OPTS: ${WEBSOCKET_JAVA_OPTS:--Xms96m -Xmx256m}
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  camera-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: gateway:camera-gateway
+        MODULE_DIR: gateway/camera-gateway
+    image: surveillance/camera-gateway:demo
+    container_name: surveillance-camera-gateway
+    environment:
+      JAVA_OPTS: ${GATEWAY_JAVA_OPTS:--Xms96m -Xmx256m}
+      CAMERA_SERVICE_URL: http://camera-service:8091
+      STREAM_SERVICE_URL: http://stream-service:8094
+      RECORDING_SERVICE_URL: http://recording-service:8095
+      WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
+
+    ports:
+      - "${DEMO_PORT:-8080}:8080"
+    depends_on:
+      - camera-service
+      - stream-service
+      - recording-service
+      - websocket-service
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  kafka-data:
+  hls-data:
+  recording-data:
+  playback-cache:
