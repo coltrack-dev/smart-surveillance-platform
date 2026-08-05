@@ -26,7 +26,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/recordings")
+@RequestMapping("/api/recordings")
 @RequiredArgsConstructor
 public class RecordingPlaybackController {
 

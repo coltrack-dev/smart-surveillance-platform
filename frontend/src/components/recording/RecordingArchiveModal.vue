@@ -486,10 +486,24 @@ onMounted(
 
             <div class="archive-video-panel">
 
+              <div
+                  v-if="playbackLoading"
+                  class="archive-video-empty"
+              >
+                Preparing playback...
+              </div>
+
+              <div
+                  v-else-if="playbackError"
+                  class="archive-video-empty error-message"
+              >
+                {{ playbackError }}
+              </div>
+
               <CameraPlayer
-                  v-if="playbackUrl"
-                  :key="playbackUrl"
-                  :url="playbackUrl"
+                  v-else-if="preparedPlaybackUrl"
+                  :key="preparedPlaybackUrl"
+                  :url="preparedPlaybackUrl"
                   :connecting="false"
               />
 
@@ -501,7 +515,6 @@ onMounted(
               </div>
 
             </div>
-
 
           </template>
 
