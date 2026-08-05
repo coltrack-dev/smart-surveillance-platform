@@ -52,7 +52,7 @@ export async function prepareRecordingPlayback(
 
     const response =
         await http.post<RecordingPlaybackResponse>(
-            `/v1/recordings/${recordingId}/playback`
+            `/recordings/${recordingId}/playback`
         );
 
     return response.data;
