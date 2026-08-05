@@ -137,10 +137,17 @@ public class RecordingPlaybackService {
                             localFiles
                     );
 
+            Path combinedFile =
+                    concatenateMkvFiles(
+                            concatFile,
+                            cacheDirectory
+                    );
+
             createHls(
-                    concatFile,
+                    combinedFile,
                     cacheDirectory
             );
+
 
             if (!isReadyPlaylist(playlist)) {
 
@@ -152,6 +159,7 @@ public class RecordingPlaybackService {
             /*
              * Исходные MKV больше не нужны после подготовки HLS.
              */
+/*
             for (Path localFile : localFiles) {
 
                 Files.deleteIfExists(
@@ -162,6 +170,7 @@ public class RecordingPlaybackService {
             Files.deleteIfExists(
                     concatFile
             );
+*/
 
             touchCache(
                     cacheDirectory
@@ -349,7 +358,7 @@ public class RecordingPlaybackService {
         return concatFile;
     }
 
-    private void createHls(
+    private void createHls2(
             Path concatFile,
             Path outputDirectory
     ) throws IOException {
@@ -650,6 +659,213 @@ public class RecordingPlaybackService {
         @Override
         public synchronized IOException getCause() {
             return cause;
+        }
+    }
+
+    private Path concatenateMkvFiles(
+            Path concatFile,
+            Path outputDirectory
+    ) throws IOException {
+
+        Path combinedFile =
+                outputDirectory.resolve(
+                        "combined.mkv"
+                );
+
+        List<String> command =
+                List.of(
+                        properties.getFfmpegPath(),
+
+                        "-hide_banner",
+                        "-loglevel",
+                        "warning",
+                        "-y",
+
+                        "-analyzeduration",
+                        "100M",
+
+                        "-probesize",
+                        "100M",
+
+                        "-fflags",
+                        "+genpts",
+
+                        "-f",
+                        "concat",
+
+                        "-safe",
+                        "0",
+
+                        "-i",
+                        concatFile.toString(),
+
+                        "-map",
+                        "0:v:0",
+
+                        "-map",
+                        "0:a?",
+
+                        "-c",
+                        "copy",
+
+                        "-avoid_negative_ts",
+                        "make_zero",
+
+                        combinedFile.toString()
+                );
+
+        executeFfmpeg(
+                command,
+                outputDirectory.resolve(
+                        "ffmpeg-concat.log"
+                )
+        );
+
+        return combinedFile;
+    }
+
+    private void createHls(
+            Path sourceFile,
+            Path outputDirectory
+    ) throws IOException {
+
+        Path playlist =
+                outputDirectory.resolve(
+                        "index.m3u8"
+                );
+
+        Path segments =
+                outputDirectory.resolve(
+                        "segment-%05d.ts"
+                );
+
+        List<String> command =
+                List.of(
+                        properties.getFfmpegPath(),
+
+                        "-hide_banner",
+                        "-loglevel",
+                        "warning",
+                        "-y",
+
+                        "-analyzeduration",
+                        "100M",
+
+                        "-probesize",
+                        "100M",
+
+                        "-fflags",
+                        "+genpts",
+
+                        "-i",
+                        sourceFile.toString(),
+
+                        "-map",
+                        "0:v:0",
+
+                        "-map",
+                        "0:a?",
+
+                        "-c:v",
+                        "libx264",
+
+                        "-preset",
+                        "veryfast",
+
+                        "-pix_fmt",
+                        "yuv420p",
+
+                        "-c:a",
+                        "aac",
+
+                        "-b:a",
+                        "128k",
+
+                        "-force_key_frames",
+                        "expr:gte(t,n_forced*4)",
+
+                        "-avoid_negative_ts",
+                        "make_zero",
+
+                        "-f",
+                        "hls",
+
+                        "-hls_time",
+                        String.valueOf(
+                                properties.getSegmentDurationSeconds()
+                        ),
+
+                        "-hls_list_size",
+                        "0",
+
+                        "-hls_playlist_type",
+                        "vod",
+
+                        "-hls_flags",
+                        "independent_segments",
+
+                        "-hls_segment_filename",
+                        segments.toString(),
+
+                        playlist.toString()
+                );
+
+        executeFfmpeg(
+                command,
+                outputDirectory.resolve(
+                        "ffmpeg-hls.log"
+                )
+        );
+    }
+
+    private void executeFfmpeg(
+            List<String> command,
+            Path logFile
+    ) throws IOException {
+
+        log.info(
+                "Executing FFmpeg command={}",
+                command
+        );
+
+        Process process =
+                new ProcessBuilder(command)
+                        .redirectErrorStream(true)
+                        .redirectOutput(
+                                logFile.toFile()
+                        )
+                        .start();
+
+        try {
+
+            int exitCode =
+                    process.waitFor();
+
+            if (exitCode != 0) {
+
+                String output =
+                        Files.exists(logFile)
+                                ? Files.readString(logFile)
+                                : "";
+
+                throw new IllegalStateException(
+                        "FFmpeg failed with exit code "
+                                + exitCode
+                                + ": "
+                                + output
+                );
+            }
+
+        } catch (InterruptedException exception) {
+
+            Thread.currentThread().interrupt();
+
+            process.destroyForcibly();
+
+            throw new IllegalStateException(
+                    "FFmpeg interrupted",
+                    exception
+            );
         }
     }
 }
