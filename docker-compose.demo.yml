@@ -49,6 +49,9 @@ services:
   mediamtx:
     image: bluenviron/mediamtx:1.13.1
     container_name: surveillance-mediamtx
+    ports:
+      - "8554:8554"
+      - "8888:8888"
     volumes:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     restart: unless-stopped
@@ -58,12 +61,13 @@ services:
     container_name: surveillance-rtsp-publisher
     depends_on:
       - mediamtx
+    cpus: "0.75"
     command:
       - -re
       - -f
       - lavfi
       - -i
-      - testsrc=size=1280x720:rate=25
+      - testsrc=size=640x360:rate=15
       - -f
       - lavfi
       - -i

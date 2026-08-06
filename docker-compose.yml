@@ -76,7 +76,7 @@ services:
   # На этапе MVP используется как тестовый RTSP сервер.
   #
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.13.1
     container_name: mediamtx
 
     ports:
