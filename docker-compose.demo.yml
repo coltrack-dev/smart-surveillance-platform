@@ -2,6 +2,24 @@ name: surveillance-demo
 
 services:
 
+  volume-permissions:
+    image: alpine:3.22
+    container_name: surveillance-volume-permissions
+    user: "0:0"
+    volumes:
+      - hls-data:/data/hls
+      - recording-data:/data/recordings
+      - playback-cache:/data/playback-cache
+    command:
+      - sh
+      - -c
+      - |
+        chown -R 999:999 \
+          /data/hls \
+          /data/recordings \
+          /data/playback-cache
+    restart: "no"
+
   #  postgres:
   #    image: postgres:16.4-alpine
   #    container_name: surveillance-postgres
@@ -127,8 +145,14 @@ services:
     volumes:
       - hls-data:/data/hls
     depends_on:
-      - kafka
-      - camera-service
+      volume-permissions:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_started
+      camera-service:
+        condition: service_started
+      mediamtx:
+        condition: service_started
     restart: unless-stopped
 
   recording-service:
@@ -165,6 +189,8 @@ services:
       - recording-data:/data/recordings
       - playback-cache:/data/playback-cache
     depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
       #postgres:
       #  condition: service_healthy
       kafka:
@@ -220,3 +246,4 @@ volumes:
   hls-data:
   recording-data:
   playback-cache:
+
