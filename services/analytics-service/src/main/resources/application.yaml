@@ -2,7 +2,24 @@ spring:
   application:
     name: analytics-service
 
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: analytics-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.value.default.type: com.coltrack.events.analytics.AnalyticsEvent
+        spring.json.trusted.packages: com.coltrack.events.analytics
+        spring.json.use.type.headers: false
+    listener:
+      ack-mode: record
+
 analytics:
+  kafka:
+    topic: ${ANALYTICS_KAFKA_TOPIC:analytics.events}
+
   input:
     file: ${ANALYTICS_INPUT_FILE:./data/analytics/input/people.mp4}
-

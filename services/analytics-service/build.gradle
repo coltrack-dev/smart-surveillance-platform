@@ -19,8 +19,21 @@ repositories {
 }
 
 dependencies {
+    implementation project(":common:common-events")
+    implementation project(":common:common-kafka")
+    implementation project(":common:common-logging")
+
     implementation 'org.springframework.boot:spring-boot-starter'
+    //implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.kafka:spring-kafka'
+
+    //runtimeOnly 'org.postgresql:postgresql'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
