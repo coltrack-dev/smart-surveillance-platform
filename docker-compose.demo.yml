@@ -246,6 +246,32 @@ services:
       - websocket-service
     restart: unless-stopped
 
+  analytics-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:analytics-service
+        MODULE_DIR: services/analytics-service
+    image: surveillance/analytics-service:demo
+    container_name: surveillance-analytics-service
+
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
+
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      JAVA_OPTS: ${ANALYTICS_JAVA_OPTS:--Xms128m -Xmx384m}
+
+    depends_on:
+      kafka:
+        condition: service_started
+      camera-service:
+        condition: service_started
+
+    restart: unless-stopped
+
 volumes:
   #postgres-data:
   kafka-data:
