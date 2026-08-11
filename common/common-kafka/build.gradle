@@ -5,6 +5,7 @@ plugins {
 dependencies {
 
     api 'org.springframework.kafka:spring-kafka'
+ё    implementation 'org.springframework.boot:spring-boot-autoconfigure'
 
     implementation project(':common:common-events')
 
