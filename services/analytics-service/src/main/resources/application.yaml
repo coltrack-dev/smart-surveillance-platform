@@ -44,3 +44,5 @@ analytics:
 
   input:
     file: ${ANALYTICS_INPUT_FILE:./data/analytics/input/people.mp4}
+  snapshots:
+    path: ${ANALYTICS_SNAPSHOTS_PATH:./data/analytics/snapshots}
