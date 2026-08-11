@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/analytics/snapshots")
+@RequestMapping("/api/analytics/snapshots")
 public class AnalyticsSnapshotController {
 
     private final Path snapshotsDirectory;
