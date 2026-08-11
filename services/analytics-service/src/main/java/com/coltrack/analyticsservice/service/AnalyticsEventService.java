@@ -1,5 +1,6 @@
 package com.coltrack.analyticsservice.service;
 
+import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
 import com.coltrack.analyticsservice.mapper.AnalyticsEventMapper;
 import com.coltrack.analyticsservice.repository.AnalyticsEventRepository;
@@ -7,9 +8,17 @@ import com.coltrack.events.analytics.AnalyticsEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.time.OffsetDateTime;
 import java.util.Objects;
+import java.util.UUID;
+
+import static com.coltrack.analyticsservice.repository.AnalyticsEventSpecifications.withFilters;
 
 @Service
 @RequiredArgsConstructor
@@ -50,5 +59,41 @@ public class AnalyticsEventService {
 
             throw exception;
         }
+    }
+
+    public Page<AnalyticsEventResponse> findEvents(
+            String cameraId,
+            String eventType,
+            String objectType,
+            OffsetDateTime from,
+            OffsetDateTime to,
+            Pageable pageable
+    ) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Parameter 'from' must not be after 'to'"
+            );
+        }
+
+        return repository.findAll(
+                withFilters(
+                        cameraId,
+                        eventType,
+                        objectType,
+                        from,
+                        to
+                ),
+                pageable
+        ).map(AnalyticsEventResponse::fromEntity);
+    }
+
+    public AnalyticsEventResponse findById(UUID eventId) {
+        return repository.findById(eventId)
+                .map(AnalyticsEventResponse::fromEntity)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Analytics event not found: " + eventId
+                ));
     }
 }

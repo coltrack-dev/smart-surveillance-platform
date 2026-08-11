@@ -59,6 +59,16 @@ spring:
               predicates:
                 - Path=/recordings/**
 
+            #
+            # Analytics service
+            #
+            - id: analytics-service
+              uri: ${ANALYTICS_SERVICE_URL:http://localhost:8097}
+              predicates:
+                - Path=/api/v1/analytics/**
+              filters:
+                - RewritePath=/api/v1/analytics/(?<segment>.*), /api/analytics/$\{segment}
+
 management:
   endpoints:
     web:

@@ -23,6 +23,10 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
+
+environment:
+  ANALYTICS_SERVICE_URL: http://analytics-service:8097
+
 server:
   port: 8091
 

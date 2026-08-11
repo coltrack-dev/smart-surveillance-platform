@@ -2,8 +2,11 @@ package com.coltrack.analyticsservice.repository;
 
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.UUID;
 
-public interface AnalyticsEventRepository extends JpaRepository<AnalyticsEventEntity, UUID> {
+public interface AnalyticsEventRepository
+        extends JpaRepository<AnalyticsEventEntity, UUID>,
+        JpaSpecificationExecutor<AnalyticsEventEntity> {
 }
