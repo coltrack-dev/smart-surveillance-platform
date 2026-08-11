@@ -2,9 +2,6 @@ spring:
   application:
     name: analytics-service
 
-server:
-  port: 8097
-
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.168.13.128:5432/surveillance_db}
     username: ${SPRING_DATASOURCE_USERNAME:surveillance_user}
@@ -22,18 +19,24 @@ server:
 
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
     consumer:
       group-id: analytics-service
       auto-offset-reset: earliest
       enable-auto-commit: false
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
       properties:
         spring.json.value.default.type: com.coltrack.events.analytics.AnalyticsEvent
         spring.json.trusted.packages: com.coltrack.events.analytics
         spring.json.use.type.headers: false
+
     listener:
       ack-mode: record
+
+server:
+  port: 8097
 
 analytics:
   kafka:
