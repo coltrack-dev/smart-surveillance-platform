@@ -35,6 +35,18 @@ OUTPUT_EVENTS_FILE = Path(
     )
 )
 
+SNAPSHOTS_DIRECTORY = Path(
+    os.getenv(
+        "ANALYTICS_SNAPSHOTS_DIRECTORY",
+        "data/analytics/snapshots",
+    )
+)
+
+SNAPSHOTS_PUBLIC_PATH = os.getenv(
+    "ANALYTICS_SNAPSHOTS_PUBLIC_PATH",
+    "/api/v1/analytics/snapshots",
+).rstrip("/")
+
 MODEL_FILE = os.getenv(
     "YOLO_MODEL",
     "yolo11n.pt",
@@ -186,6 +198,12 @@ def main() -> None:
         parents=True,
         exist_ok=True,
     )
+
+    SNAPSHOTS_DIRECTORY.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
 
     logging.info(
         "Loading model: %s",
@@ -435,6 +453,32 @@ def main() -> None:
                                     ),
                                 )
                             )
+
+                            snapshot_name = f"{event['eventId']}.jpg"
+                            snapshot_file = SNAPSHOTS_DIRECTORY / snapshot_name
+
+                            if not cv2.imwrite(
+                                str(snapshot_file),
+                                annotated_frame,
+                            ):
+                                logging.warning(
+                                    "Cannot save snapshot: %s",
+                                    snapshot_file.resolve(),
+                                )
+                            else:
+                                event["attributes"]["snapshotUrl"] = (
+                                    f"{SNAPSHOTS_PUBLIC_PATH}/{snapshot_name}"
+                                )
+
+                            # Сохранять и публиковать событие нужно только
+                            # после добавления snapshotUrl.
+                            write_event(
+                                event,
+                                events_file,
+                            )
+
+                            if event_producer is not None:
+                                event_producer.publish(event)
 
                             # Сначала сохраняем локально.
                             write_event(
