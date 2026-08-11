@@ -2,6 +2,21 @@ spring:
   application:
     name: analytics-service
 
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/surveillance_db}
+    username: ${SPRING_DATASOURCE_USERNAME:surveillance_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:surveillance_password}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
