@@ -91,11 +91,11 @@ onMounted(() => search());
       </label>
       <label>
         От
-        <input v-model="filters.from" type="datetime-local">
+        <input v-model="filters.from" type="date">
       </label>
       <label>
         До
-        <input v-model="filters.to" type="datetime-local">
+        <input v-model="filters.to" type="date">
       </label>
       <div class="filter-actions">
         <button type="submit" :disabled="store.loading">Найти</button>
