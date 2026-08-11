@@ -95,11 +95,11 @@ def create_line_crossing_event(
 ) -> dict[str, Any]:
     return {
         "eventId": str(uuid4()),
+        "schemaVersion": 1,
         "eventType": "LINE_CROSSED",
         "cameraId": CAMERA_ID,
         "trackId": track_id,
         "objectType": "PERSON",
-        "direction": direction,
         "confidence": round(confidence, 4),
         "frameNumber": frame_number,
         "videoTimeSeconds": round(
@@ -109,6 +109,10 @@ def create_line_crossing_event(
         "occurredAt": datetime.now(
             timezone.utc
         ).isoformat(),
+        "attributes": {
+            "direction": direction,
+            "lineId": "main-line",
+        },
     }
 
 
