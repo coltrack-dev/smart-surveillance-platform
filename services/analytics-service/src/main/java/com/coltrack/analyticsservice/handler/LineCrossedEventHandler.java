@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 public class LineCrossedEventHandler implements AnalyticsEventHandler {
 
     @Override
-    public boolean supports(String eventType) {
-        return "LINE_CROSSED".equals(eventType);
+    public String eventType() {
+        return "LINE_CROSSED";
     }
 
     @Override

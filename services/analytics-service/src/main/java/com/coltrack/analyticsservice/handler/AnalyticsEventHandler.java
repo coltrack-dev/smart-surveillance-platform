@@ -4,7 +4,7 @@ import com.coltrack.events.analytics.AnalyticsEvent;
 
 public interface AnalyticsEventHandler {
 
-    boolean supports(String eventType);
+    String eventType();
 
     void handle(AnalyticsEvent event);
 }
