@@ -4,8 +4,7 @@ import {
 } from 'vue-router';
 
 
-import Dashboard from '@/views/Dashboard.vue';
-import Analytics from "@/views/Analytics.vue";
+import Dashboard from '../views/Dashboard.vue';
 
 
 export default createRouter({
@@ -19,7 +18,8 @@ export default createRouter({
         },
         {
             path:'/analytics',
-            component:Analytics
+            name: 'analytics',
+            component: () => import('../views/Analytics.vue')
         }
     ]
 

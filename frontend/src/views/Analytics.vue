@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import {computed, onMounted, reactive, ref} from "vue";
-import {useAnalyticsStore} from "@/stores/analytics";
-import type {AnalyticsEvent, AnalyticsEventFilters} from "@/types/AnalyticsEvent";
+import { computed, onMounted, reactive, ref } from "vue";
+
+import { useAnalyticsStore } from "@/stores/analytics";
+import type {
+  AnalyticsEvent,
+  AnalyticsEventFilters
+} from "@/types/AnalyticsEvent";
 
 const store = useAnalyticsStore();
+
 const selectedEvent = ref<AnalyticsEvent | null>(null);
+const failedSnapshots = ref<Set<string>>(new Set());
+
 const filters = reactive({
   cameraId: "",
   eventType: "",
@@ -13,13 +20,16 @@ const filters = reactive({
   to: ""
 });
 
-const pageLabel = computed(() => store.totalPages === 0
-    ? "0 / 0"
-    : `${store.currentPage + 1} / ${store.totalPages}`
+const pageLabel = computed(() =>
+    store.totalPages === 0
+        ? "0 / 0"
+        : `${store.currentPage + 1} / ${store.totalPages}`
 );
 
 function toIso(value: string): string | undefined {
-  return value ? new Date(value).toISOString() : undefined;
+  return value
+      ? new Date(value).toISOString()
+      : undefined;
 }
 
 function requestFilters(page = 0): AnalyticsEventFilters {
@@ -36,6 +46,8 @@ function requestFilters(page = 0): AnalyticsEventFilters {
 
 async function search(page = 0): Promise<void> {
   selectedEvent.value = null;
+  failedSnapshots.value = new Set();
+
   await store.load(requestFilters(page));
 }
 
@@ -45,6 +57,7 @@ function resetFilters(): void {
   filters.objectType = "";
   filters.from = "";
   filters.to = "";
+
   void search();
 }
 
@@ -56,10 +69,86 @@ function formatDate(value: string): string {
 }
 
 function formatConfidence(value: number | null): string {
-  return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+  return value == null
+      ? "—"
+      : `${(value * 100).toFixed(1)}%`;
 }
 
-onMounted(() => search());
+/**
+ * Преобразует snapshotUrl, полученный от backend,
+ * в URL, доступный через gateway.
+ *
+ * Примеры:
+ *
+ * snapshotUrl:
+ * /api/v1/analytics/snapshots/{eventId}.jpg
+ *
+ * VITE_API_URL:
+ * http://localhost:8080
+ *
+ * Результат:
+ * http://localhost:8080/api/v1/analytics/snapshots/{eventId}.jpg
+ */
+function getSnapshotUrl(event: AnalyticsEvent): string | undefined {
+  const path = event.snapshotUrl;
+
+  if (!path) {
+    return undefined;
+  }
+
+  if (
+      path.startsWith("http://") ||
+      path.startsWith("https://")
+  ) {
+    return path;
+  }
+
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+
+  /*
+   * Если VITE_API_URL не задан или является относительным
+   * адресом, возвращаем snapshotUrl как есть.
+   *
+   * В режиме разработки запрос сможет пройти через Vite proxy.
+   */
+  if (!apiUrl || !apiUrl.startsWith("http")) {
+    return path.startsWith("/")
+        ? path
+        : `/${path}`;
+  }
+
+  /*
+   * Если VITE_API_URL равен, например:
+   *
+   * http://localhost:8080
+   * http://localhost:8080/api/v1
+   *
+   * берём только origin, чтобы не получить:
+   * /api/v1/api/v1/analytics/...
+   */
+  const gatewayOrigin = new URL(apiUrl).origin;
+  const normalizedPath = path.startsWith("/")
+      ? path
+      : `/${path}`;
+
+  return `${gatewayOrigin}${normalizedPath}`;
+}
+
+function snapshotAvailable(event: AnalyticsEvent): boolean {
+  return Boolean(event.snapshotUrl) &&
+      !failedSnapshots.value.has(event.eventId);
+}
+
+function handleSnapshotError(event: AnalyticsEvent): void {
+  failedSnapshots.value = new Set([
+    ...failedSnapshots.value,
+    event.eventId
+  ]);
+}
+
+onMounted(() => {
+  void search();
+});
 </script>
 
 <template>
@@ -69,51 +158,116 @@ onMounted(() => search());
         <h1>Аналитика</h1>
         <p>События, обнаруженные камерами</p>
       </div>
-      <span class="event-total">Всего: {{ store.totalElements }}</span>
+
+      <span class="event-total">
+        Всего: {{ store.totalElements }}
+      </span>
     </div>
 
-    <form class="filters" @submit.prevent="search()">
+    <form
+        class="filters"
+        @submit.prevent="search()"
+    >
       <label>
         Камера
-        <input v-model="filters.cameraId" placeholder="ID камеры">
+        <input
+            v-model="filters.cameraId"
+            placeholder="ID камеры"
+        >
       </label>
+
       <label>
         Тип события
         <select v-model="filters.eventType">
           <option value="">Все</option>
-          <option value="OBJECT_DETECTED">Объект обнаружен</option>
-          <option value="LINE_CROSSED">Пересечение линии</option>
+          <option value="OBJECT_DETECTED">
+            Объект обнаружен
+          </option>
+          <option value="LINE_CROSSED">
+            Пересечение линии
+          </option>
         </select>
       </label>
+
       <label>
         Тип объекта
-        <input v-model="filters.objectType" placeholder="PERSON, CAR…">
+        <input
+            v-model="filters.objectType"
+            placeholder="PERSON, CAR…"
+        >
       </label>
+
       <label>
         От
-        <input v-model="filters.from" type="date">
+        <input
+            v-model="filters.from"
+            type="datetime-local"
+        >
       </label>
+
       <label>
         До
-        <input v-model="filters.to" type="date">
+        <input
+            v-model="filters.to"
+            type="datetime-local"
+        >
       </label>
+
       <div class="filter-actions">
-        <button type="submit" :disabled="store.loading">Найти</button>
-        <button type="button" class="secondary" @click="resetFilters">Сбросить</button>
+        <button
+            type="submit"
+            :disabled="store.loading"
+        >
+          Найти
+        </button>
+
+        <button
+            type="button"
+            class="secondary"
+            :disabled="store.loading"
+            @click="resetFilters"
+        >
+          Сбросить
+        </button>
       </div>
     </form>
 
-    <div v-if="store.error" class="message error-message">
+    <div
+        v-if="store.error"
+        class="message error-message"
+    >
       {{ store.error }}
-      <button class="link-button" @click="search(store.currentPage)">Повторить</button>
-    </div>
-    <div v-else-if="store.loading" class="message">Загрузка событий…</div>
-    <div v-else-if="store.events.length === 0" class="message">События не найдены</div>
 
-    <div v-else class="table-card">
+      <button
+          class="link-button"
+          @click="search(store.currentPage)"
+      >
+        Повторить
+      </button>
+    </div>
+
+    <div
+        v-else-if="store.loading"
+        class="message"
+    >
+      Загрузка событий…
+    </div>
+
+    <div
+        v-else-if="store.events.length === 0"
+        class="message"
+    >
+      События не найдены
+    </div>
+
+    <div
+        v-else
+        class="table-card"
+    >
       <table>
         <thead>
         <tr>
+          <th>Снимок</th>
           <th>Время</th>
           <th>Камера</th>
           <th>Событие</th>
@@ -122,6 +276,7 @@ onMounted(() => search());
           <th>Track ID</th>
         </tr>
         </thead>
+
         <tbody>
         <tr
             v-for="event in store.events"
@@ -130,9 +285,33 @@ onMounted(() => search());
             @click="selectedEvent = event"
             @keydown.enter="selectedEvent = event"
         >
+          <td class="snapshot-cell">
+            <img
+                v-if="snapshotAvailable(event)"
+                :src="getSnapshotUrl(event)"
+                :alt="`Снимок события ${event.eventId}`"
+                class="snapshot-thumbnail"
+                loading="lazy"
+                @error="handleSnapshotError(event)"
+            >
+
+            <span
+                v-else
+                class="snapshot-placeholder"
+            >
+                Нет снимка
+              </span>
+          </td>
+
           <td>{{ formatDate(event.occurredAt) }}</td>
           <td>{{ event.cameraId }}</td>
-          <td><span class="event-badge">{{ event.eventType }}</span></td>
+
+          <td>
+              <span class="event-badge">
+                {{ event.eventType }}
+              </span>
+          </td>
+
           <td>{{ event.objectType || "—" }}</td>
           <td>{{ formatConfidence(event.confidence) }}</td>
           <td>{{ event.trackId ?? "—" }}</td>
@@ -141,53 +320,112 @@ onMounted(() => search());
       </table>
     </div>
 
-    <div v-if="!store.loading && store.totalPages > 0" class="pagination">
+    <div
+        v-if="!store.loading && store.totalPages > 0"
+        class="pagination"
+    >
       <button
           class="secondary"
           :disabled="store.currentPage === 0"
           @click="search(store.currentPage - 1)"
-      >Назад
+      >
+        Назад
       </button>
+
       <span>Страница {{ pageLabel }}</span>
+
       <button
           class="secondary"
           :disabled="store.currentPage + 1 >= store.totalPages"
           @click="search(store.currentPage + 1)"
-      >Вперёд
+      >
+        Вперёд
       </button>
     </div>
 
-    <div v-if="selectedEvent" class="drawer-backdrop" @click.self="selectedEvent = null">
+    <div
+        v-if="selectedEvent"
+        class="drawer-backdrop"
+        @click.self="selectedEvent = null"
+    >
       <aside class="event-drawer">
         <div class="drawer-header">
           <h2>Событие</h2>
-          <button class="close-button" aria-label="Закрыть" @click="selectedEvent = null">×</button>
+
+          <button
+              class="close-button"
+              aria-label="Закрыть"
+              @click="selectedEvent = null"
+          >
+            ×
+          </button>
         </div>
+
+        <div class="drawer-snapshot">
+          <img
+              v-if="snapshotAvailable(selectedEvent)"
+              :src="getSnapshotUrl(selectedEvent)"
+              :alt="`Снимок события ${selectedEvent.eventId}`"
+              @error="handleSnapshotError(selectedEvent)"
+          >
+
+          <div
+              v-else
+              class="drawer-snapshot-placeholder"
+          >
+            Снимок отсутствует или недоступен
+          </div>
+        </div>
+
         <dl>
           <dt>ID</dt>
           <dd>{{ selectedEvent.eventId }}</dd>
+
           <dt>Время</dt>
           <dd>{{ formatDate(selectedEvent.occurredAt) }}</dd>
+
           <dt>Камера</dt>
           <dd>{{ selectedEvent.cameraId }}</dd>
+
           <dt>Тип</dt>
           <dd>{{ selectedEvent.eventType }}</dd>
+
           <dt>Объект</dt>
           <dd>{{ selectedEvent.objectType || "—" }}</dd>
+
           <dt>Точность</dt>
           <dd>{{ formatConfidence(selectedEvent.confidence) }}</dd>
+
           <dt>Track ID</dt>
           <dd>{{ selectedEvent.trackId ?? "—" }}</dd>
+
           <dt>Кадр</dt>
           <dd>{{ selectedEvent.frameNumber ?? "—" }}</dd>
+
           <dt>Время видео</dt>
-          <dd>{{ selectedEvent.videoTimeSeconds ?? "—" }} с</dd>
+          <dd>
+            {{
+              selectedEvent.videoTimeSeconds == null
+                  ? "—"
+                  : `${selectedEvent.videoTimeSeconds} с`
+            }}
+          </dd>
+
           <dt>Recording ID</dt>
           <dd>{{ selectedEvent.recordingId || "—" }}</dd>
         </dl>
-        <details v-if="Object.keys(selectedEvent.attributes).length">
+
+        <details
+            v-if="
+            selectedEvent.attributes &&
+            Object.keys(selectedEvent.attributes).length
+          "
+        >
           <summary>Дополнительные атрибуты</summary>
-          <pre>{{ JSON.stringify(selectedEvent.attributes, null, 2) }}</pre>
+
+          <pre>{{
+              JSON.stringify(selectedEvent.attributes, null, 2)
+            }}</pre>
         </details>
       </aside>
     </div>
@@ -240,7 +478,8 @@ onMounted(() => search());
   font-weight: 600;
 }
 
-input, select {
+input,
+select {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
@@ -254,11 +493,12 @@ input, select {
   display: flex;
   align-items: end;
   grid-column: 1 / -1;
+  gap: 10px;
 }
 
 button:disabled {
   cursor: not-allowed;
-  opacity: .5;
+  opacity: 0.5;
 }
 
 .secondary {
@@ -301,7 +541,8 @@ table {
   border-collapse: collapse;
 }
 
-th, td {
+th,
+td {
   padding: 14px 16px;
   border-bottom: 1px solid #e2e8f0;
   text-align: left;
@@ -311,7 +552,7 @@ th, td {
 th {
   color: #64748b;
   font-size: 12px;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -319,7 +560,8 @@ tbody tr {
   cursor: pointer;
 }
 
-tbody tr:hover, tbody tr:focus {
+tbody tr:hover,
+tbody tr:focus {
   background: #f8fafc;
   outline: none;
 }
@@ -332,6 +574,31 @@ tbody tr:hover, tbody tr:focus {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.snapshot-cell {
+  width: 140px;
+}
+
+.snapshot-thumbnail {
+  display: block;
+  width: 120px;
+  height: 68px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: #e2e8f0;
+}
+
+.snapshot-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 68px;
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .pagination {
@@ -352,7 +619,7 @@ tbody tr:hover, tbody tr:focus {
 }
 
 .event-drawer {
-  width: min(480px, 100%);
+  width: min(560px, 100%);
   height: 100%;
   overflow-y: auto;
   padding: 24px;
@@ -376,6 +643,30 @@ tbody tr:hover, tbody tr:focus {
   background: transparent;
   color: #475569;
   font-size: 30px;
+}
+
+.drawer-snapshot {
+  margin-top: 22px;
+  overflow: hidden;
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.drawer-snapshot img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+
+.drawer-snapshot-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  padding: 20px;
+  color: #94a3b8;
+  text-align: center;
 }
 
 dl {
@@ -424,6 +715,15 @@ pre {
     align-items: flex-start;
     gap: 12px;
   }
+
+  .snapshot-thumbnail,
+  .snapshot-placeholder {
+    width: 96px;
+    height: 54px;
+  }
+
+  dl {
+    grid-template-columns: 105px minmax(0, 1fr);
+  }
 }
 </style>
-
