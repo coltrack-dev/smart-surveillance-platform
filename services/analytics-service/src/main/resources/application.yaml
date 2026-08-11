@@ -3,7 +3,7 @@ spring:
     name: analytics-service
 
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/surveillance_db}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.168.13.128:5432/surveillance_db}
     username: ${SPRING_DATASOURCE_USERNAME:surveillance_user}
     password: ${SPRING_DATASOURCE_PASSWORD:surveillance_password}
 
