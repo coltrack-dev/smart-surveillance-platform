@@ -7,6 +7,9 @@ import type {
   AnalyticsEventFilters
 } from "@/types/AnalyticsEvent";
 
+import CameraPlayer from "@/components/camera/CameraPlayer.vue";
+import { prepareRecordingPlayback } from "@/api/recordingApi";
+
 const store = useAnalyticsStore();
 
 const selectedEvent = ref<AnalyticsEvent | null>(null);
@@ -25,6 +28,26 @@ const pageLabel = computed(() =>
         ? "0 / 0"
         : `${store.currentPage + 1} / ${store.totalPages}`
 );
+
+const playbackUrl = ref<string | undefined>();
+const playbackLoading = ref(false);
+const playbackError = ref<string | null>(null);
+
+const playbackStartTime = computed(() => {
+  const eventTime = selectedEvent.value?.videoTimeSeconds;
+
+  return eventTime == null
+      ? 0
+      : Math.max(eventTime - 10, 0);
+});
+
+const playbackEndTime = computed(() => {
+  const eventTime = selectedEvent.value?.videoTimeSeconds;
+
+  return eventTime == null
+      ? undefined
+      : eventTime + 30;
+});
 
 function toIso(value: string): string | undefined {
   return value
@@ -144,6 +167,86 @@ function handleSnapshotError(event: AnalyticsEvent): void {
     ...failedSnapshots.value,
     event.eventId
   ]);
+}
+
+function selectEvent(event: AnalyticsEvent): void {
+  selectedEvent.value = event;
+  playbackUrl.value = undefined;
+  playbackError.value = null;
+  playbackLoading.value = false;
+}
+
+function closeEvent(): void {
+  selectedEvent.value = null;
+  playbackUrl.value = undefined;
+  playbackError.value = null;
+  playbackLoading.value = false;
+}
+
+function resolvePlaybackUrl(path: string): string {
+  if (
+      path.startsWith("http://") ||
+      path.startsWith("https://")
+  ) {
+    return path;
+  }
+
+  const apiUrl =
+      import.meta.env.VITE_API_URL as string | undefined;
+
+  if (!apiUrl || !apiUrl.startsWith("http")) {
+    return path.startsWith("/")
+        ? path
+        : `/${path}`;
+  }
+
+  const gatewayOrigin = new URL(apiUrl).origin;
+  const normalizedPath = path.startsWith("/")
+      ? path
+      : `/${path}`;
+
+  return `${gatewayOrigin}${normalizedPath}`;
+}
+
+async function openEventPlayback(): Promise<void> {
+  const event = selectedEvent.value;
+
+  if (!event?.recordingId) {
+    playbackError.value =
+        "Для события отсутствует Recording ID.";
+    return;
+  }
+
+  playbackLoading.value = true;
+  playbackError.value = null;
+  playbackUrl.value = undefined;
+
+  try {
+    const playback =
+        await prepareRecordingPlayback(event.recordingId);
+
+    if (
+        playback.status === "FAILED" ||
+        !playback.playbackUrl
+    ) {
+      playbackError.value =
+          "Backend не смог подготовить запись.";
+      return;
+    }
+
+    playbackUrl.value =
+        resolvePlaybackUrl(playback.playbackUrl);
+  } catch (error) {
+    console.error(
+        "Failed to prepare event playback",
+        error
+    );
+
+    playbackError.value =
+        "Не удалось загрузить видео события.";
+  } finally {
+    playbackLoading.value = false;
+  }
 }
 
 onMounted(() => {
@@ -282,8 +385,8 @@ onMounted(() => {
             v-for="event in store.events"
             :key="event.eventId"
             tabindex="0"
-            @click="selectedEvent = event"
-            @keydown.enter="selectedEvent = event"
+            @click="selectEvent(event)"
+            @keydown.enter="selectEvent(event)"
         >
           <td class="snapshot-cell">
             <img
@@ -346,16 +449,64 @@ onMounted(() => {
     <div
         v-if="selectedEvent"
         class="drawer-backdrop"
-        @click.self="selectedEvent = null"
+        @click.self="closeEvent"
     >
       <aside class="event-drawer">
+        <div class="playback-section">
+          <button
+              type="button"
+              class="playback-button"
+              :disabled="
+        playbackLoading ||
+        !selectedEvent.recordingId
+      "
+              @click="openEventPlayback"
+          >
+            {{
+              playbackLoading
+                  ? "Подготовка видео…"
+                  : "Открыть видео события"
+            }}
+          </button>
+
+          <p
+              v-if="!selectedEvent.recordingId"
+              class="playback-hint"
+          >
+            Для этого события Recording ID отсутствует
+          </p>
+
+          <p
+              v-if="playbackError"
+              class="playback-error"
+          >
+            {{ playbackError }}
+          </p>
+
+          <div
+              v-if="playbackUrl"
+              class="event-playback"
+          >
+            <CameraPlayer
+                :url="playbackUrl"
+                :start-time="playbackStartTime"
+                :end-time="playbackEndTime"
+            />
+
+            <p class="playback-hint">
+              Начало за 10 секунд до события,
+              окончание через 30 секунд после события.
+            </p>
+          </div>
+        </div>
+
         <div class="drawer-header">
           <h2>Событие</h2>
 
           <button
               class="close-button"
               aria-label="Закрыть"
-              @click="selectedEvent = null"
+              @click="closeEvent"
           >
             ×
           </button>
@@ -694,6 +845,41 @@ pre {
   padding: 12px;
   background: #f1f5f9;
   border-radius: 8px;
+}
+
+.playback-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.playback-button {
+  width: 100%;
+  min-height: 42px;
+}
+
+.playback-hint {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.playback-error {
+  margin: 10px 0 0;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.event-playback {
+  margin-top: 16px;
+  overflow: hidden;
+  background: #0f172a;
+  border-radius: 10px;
+}
+
+.event-playback .playback-hint {
+  padding: 0 12px 12px;
+  color: #cbd5e1;
 }
 
 @media (max-width: 900px) {

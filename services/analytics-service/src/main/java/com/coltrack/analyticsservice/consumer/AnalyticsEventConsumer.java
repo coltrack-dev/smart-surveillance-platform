@@ -25,8 +25,15 @@ public class AnalyticsEventConsumer {
 
         AnalyticsEventHandler handler = handlerRegistry.handlerFor(event);
 
+        log.info(
+                "Received analytics event eventId={}, recordingId={}",
+                event.eventId(),
+                event.recordingId()
+        );
+
         boolean saved =
                 analyticsEventService.saveIfAbsent(event);
+
 
         if (saved) {
             handler.handle(event);

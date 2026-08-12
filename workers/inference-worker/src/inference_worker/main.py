@@ -97,6 +97,7 @@ KAFKA_ENABLED = os.getenv(
     "yes",
 }
 
+recording_id = os.getenv("RECORDING_ID")
 
 def create_line_crossing_event(
     track_id: int,
@@ -104,6 +105,7 @@ def create_line_crossing_event(
     confidence: float,
     frame_number: int,
     video_time_seconds: float,
+    recording_id: str
 ) -> dict[str, Any]:
     return {
         "eventId": str(uuid4()),
@@ -111,6 +113,7 @@ def create_line_crossing_event(
         "eventType": "LINE_CROSSED",
         "cameraId": CAMERA_ID,
         "trackId": track_id,
+        "recordingId": recording_id,
         "objectType": "PERSON",
         "confidence": round(confidence, 4),
         "frameNumber": frame_number,
@@ -451,6 +454,7 @@ def main() -> None:
                                     video_time_seconds=(
                                         video_time_seconds
                                     ),
+                                    recording_id=recording_id
                                 )
                             )
 

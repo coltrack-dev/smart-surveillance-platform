@@ -26,6 +26,7 @@ public class AnalyticsEventMapper {
                 .eventType(event.eventType())
                 .cameraId(event.cameraId())
                 .trackId(event.trackId())
+                .recordingId(event.recordingId())
                 .objectType(event.objectType())
                 .confidence(event.confidence())
                 .frameNumber(event.frameNumber())

@@ -10,6 +10,7 @@ public record AnalyticsEvent(
         Integer schemaVersion,
         String eventType,
         String cameraId,
+        UUID recordingId,
 
         Long trackId,
         String objectType,
