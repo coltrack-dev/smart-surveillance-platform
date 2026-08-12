@@ -80,12 +80,13 @@ services:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     restart: unless-stopped
 
-  rtsp-publisher:
+  # Источник №1: настроечная таблица
+  rtsp-test-publisher:
     image: linuxserver/ffmpeg:7.1.1
-    container_name: surveillance-rtsp-publisher
+    container_name: surveillance-rtsp-test-publisher
     depends_on:
       - mediamtx
-    cpus: "0.75"
+    cpus: "0.50"
     command:
       - -re
       - -f
@@ -108,7 +109,40 @@ services:
       - aac
       - -f
       - rtsp
+      - -rtsp_transport
+      - tcp
       - rtsp://mediamtx:8554/test
+    restart: unless-stopped
+
+  # Источник №2: зацикленное видео people.mp4
+  rtsp-file-publisher:
+    image: linuxserver/ffmpeg:7.1.1
+    container_name: surveillance-rtsp-file-publisher
+    depends_on:
+      - mediamtx
+    cpus: "1.00"
+    volumes:
+      - ./data/analytics/input:/videos:ro
+    command:
+      - -re
+      - -stream_loop
+      - "-1"
+      - -i
+      - /videos/people.mp4
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -pix_fmt
+      - yuv420p
+      - -an
+      - -f
+      - rtsp
+      - -rtsp_transport
+      - tcp
+      - rtsp://mediamtx:8554/people
     restart: unless-stopped
 
   camera-service:

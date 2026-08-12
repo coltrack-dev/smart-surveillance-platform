@@ -6,9 +6,8 @@
 logLevel: info
 
 rtsp: yes
-
 hls: yes
 
 paths:
-
   test: {}
+  people: {}
