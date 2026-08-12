@@ -215,8 +215,8 @@ services:
 
       RECORDING_STORAGE_PATH: /data/recordings
       RECORDING_PLAYBACK_CACHE_DIRECTORY: /data/playback-cache
-      RECORDING_EXPORT_ENABLED: "false"
-      RECORDING_S3_ENABLED: "false"
+      RECORDING_EXPORT_ENABLED: "true"
+      RECORDING_S3_ENABLED: "true"
 
       WASABI_ENDPOINT: ${WASABI_ENDPOINT:-http://unused.invalid}
       WASABI_BUCKET: ${WASABI_BUCKET:-unused}
