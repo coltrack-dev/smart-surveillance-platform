@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import com.coltrack.recordingservice.kafka.RecordingEventPublisher;
+
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
@@ -38,6 +40,7 @@ public class RecordingManager implements RecordingListener {
     private final RecordingStatisticsService recordingStatisticsService;
     private final FfprobeService ffprobeService;
     private final S3StorageService s3StorageService;
+    private final RecordingEventPublisher recordingEventPublisher;
 
     /**
      * Active recording sessions.
@@ -102,6 +105,7 @@ public class RecordingManager implements RecordingListener {
                                         ffprobeService,
                                         recordingStatisticsService,
                                         s3StorageService,
+                                        recordingEventPublisher,
                                         session.getRtspUrl(),
                                         this
                                 );

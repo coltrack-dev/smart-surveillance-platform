@@ -17,6 +17,8 @@ import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import com.coltrack.recordingservice.kafka.RecordingEventPublisher;
+
 @Slf4j
 public class RecordingWorker implements Runnable {
 
@@ -29,6 +31,8 @@ public class RecordingWorker implements Runnable {
     private final RecordingStatisticsService recordingStatisticsService;
     private final S3StorageService s3StorageService;
 
+    private final RecordingEventPublisher recordingEventPublisher;
+
     private final Deque<String> errorLines = new ArrayDeque<>(30);
 
     public RecordingWorker(
@@ -38,15 +42,18 @@ public class RecordingWorker implements Runnable {
             FfprobeService ffprobeService,
             RecordingStatisticsService recordingStatisticsService,
             S3StorageService s3StorageService,
+            RecordingEventPublisher recordingEventPublisher,
             String rtspUrl,
             RecordingListener listener
     ) {
+
         this.session = session;
         this.storageService = storageService;
         this.recordingMetadataService = recordingMetadataService;
         this.ffprobeService = ffprobeService;
         this.recordingStatisticsService = recordingStatisticsService;
         this.s3StorageService = s3StorageService;
+        this.recordingEventPublisher = recordingEventPublisher;
         this.rtspUrl = rtspUrl;
         this.listener = listener;
     }
@@ -342,15 +349,16 @@ public class RecordingWorker implements Runnable {
                      * в recording_sessions с тем же UUID,
                      * что и session.getId().
                      */
-                    s3StorageService.uploadRecording(
-                            session
-                    );
+                    s3StorageService.uploadRecording(session);
 
-                    log.info(
-                            "S3 upload completed recordingId={}, camera={}",
-                            session.getId(),
-                            session.getCameraId()
-                    );
+                    log.info("S3 upload completed recordingId={}, camera={}", session.getId(), session.getCameraId());
+
+                    if (session.isUploaded()) {
+
+                        recordingEventPublisher.publishReady(session);
+                    } else {
+                        log.info("RecordingReadyEvent not published because " + "S3 upload is disabled recordingId={}", session.getId());
+                    }
 
                 } catch (Exception exception) {
 

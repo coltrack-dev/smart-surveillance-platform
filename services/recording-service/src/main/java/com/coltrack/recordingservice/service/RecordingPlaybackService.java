@@ -84,6 +84,10 @@ public class RecordingPlaybackService {
                             PLAYLIST_FILE
                     );
 
+            /*
+             * HLS уже подготовлен — ничего повторно
+             * скачивать и конвертировать не нужно.
+             */
             if (isReadyPlaylist(playlist)) {
 
                 touchCache(
@@ -101,7 +105,50 @@ public class RecordingPlaybackService {
             }
 
             /*
-             * Удаляем остатки предыдущей неудачной сборки.
+             * combined.mkv мог быть подготовлен раньше
+             * для inference-worker.
+             *
+             * В этом случае повторное скачивание из S3
+             * и объединение сегментов не требуется.
+             */
+            Path cachedSource =
+                    cacheDirectory.resolve(
+                            "combined.mkv"
+                    );
+
+            if (isReadySource(cachedSource)) {
+
+                log.info(
+                        "Using cached combined source "
+                                + "for playback recordingId={}",
+                        recordingId
+                );
+
+                createHls(
+                        cachedSource,
+                        cacheDirectory
+                );
+
+                if (!isReadyPlaylist(playlist)) {
+
+                    throw new IllegalStateException(
+                            "FFmpeg completed but HLS "
+                                    + "playlist was not created"
+                    );
+                }
+
+                touchCache(
+                        cacheDirectory
+                );
+
+                return buildPlaybackUrl(
+                        recordingId
+                );
+            }
+
+            /*
+             * Удаляем остатки предыдущей неудачной
+             * подготовки playback.
              */
             deleteDirectoryRecursively(
                     cacheDirectory
@@ -111,6 +158,10 @@ public class RecordingPlaybackService {
                     cacheDirectory
             );
 
+            /*
+             * Получаем список частей записи,
+             * загруженных в S3.
+             */
             List<RecordingObjectEntity> objects =
                     recordingObjectRepository
                             .findByRecordingIdOrderBySequenceNumberAsc(
@@ -121,63 +172,92 @@ public class RecordingPlaybackService {
 
                 throw new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "Recording contains no uploaded S3 objects"
+                        "Recording contains no uploaded "
+                                + "S3 objects"
                 );
             }
 
+            /*
+             * Скачиваем части записи из S3:
+             *
+             * source-00000.mkv
+             * source-00001.mkv
+             * ...
+             */
             List<Path> localFiles =
                     downloadObjects(
                             cacheDirectory,
                             objects
                     );
 
+            /*
+             * Создаём concat.txt для FFmpeg.
+             */
             Path concatFile =
                     createConcatFile(
                             cacheDirectory,
                             localFiles
                     );
 
+            /*
+             * Объединяем сегменты записи в один MKV.
+             *
+             * Этот же combined.mkv используется
+             * inference-worker.
+             */
             Path combinedFile =
                     concatenateMkvFiles(
                             concatFile,
                             cacheDirectory
                     );
 
+            if (!isReadySource(combinedFile)) {
+
+                throw new IllegalStateException(
+                        "FFmpeg completed but combined "
+                                + "recording was not created"
+                );
+            }
+
+            /*
+             * Преобразуем combined.mkv в HLS VOD:
+             *
+             * index.m3u8
+             * segment-00000.ts
+             * segment-00001.ts
+             * ...
+             */
             createHls(
                     combinedFile,
                     cacheDirectory
             );
 
-
             if (!isReadyPlaylist(playlist)) {
 
                 throw new IllegalStateException(
-                        "FFmpeg completed but HLS playlist was not created"
+                        "FFmpeg completed but HLS "
+                                + "playlist was not created"
                 );
             }
 
             /*
-             * Исходные MKV больше не нужны после подготовки HLS.
+             * Пока не удаляем исходные файлы и combined.mkv.
+             *
+             * combined.mkv нужен inference-worker,
+             * а source-файлы могут быть полезны для
+             * диагностики.
+             *
+             * Позднее их удалит RecordingPlaybackCacheCleaner
+             * после истечения TTL.
              */
-/*
-            for (Path localFile : localFiles) {
-
-                Files.deleteIfExists(
-                        localFile
-                );
-            }
-
-            Files.deleteIfExists(
-                    concatFile
-            );
-*/
 
             touchCache(
                     cacheDirectory
             );
 
             log.info(
-                    "Playback cache prepared recordingId={}, objects={}",
+                    "Playback cache prepared "
+                            + "recordingId={}, objects={}",
                     recordingId,
                     objects.size()
             );
@@ -189,7 +269,8 @@ public class RecordingPlaybackService {
         } catch (IOException exception) {
 
             throw new IllegalStateException(
-                    "Unable to prepare playback for recording "
+                    "Unable to prepare playback "
+                            + "for recording "
                             + recordingId,
                     exception
             );
@@ -199,7 +280,8 @@ public class RecordingPlaybackService {
             lock.unlock();
 
             /*
-             * Удаляем lock, если за ним уже никто не ожидает.
+             * Удаляем объект блокировки, только если
+             * другие потоки его уже не ожидают.
              */
             if (!lock.hasQueuedThreads()) {
 
@@ -211,10 +293,7 @@ public class RecordingPlaybackService {
         }
     }
 
-    public Path resolvePlaybackFile(
-            UUID recordingId,
-            String fileName
-    ) {
+    public Path resolvePlaybackFile(UUID recordingId, String fileName) {
 
         if (
                 fileName.contains("/")
@@ -222,10 +301,7 @@ public class RecordingPlaybackService {
                         || fileName.contains("..")
         ) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Invalid playback file name"
-            );
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid playback file name");
         }
 
         Path directory =
@@ -244,15 +320,10 @@ public class RecordingPlaybackService {
                         || !Files.isReadable(file)
         ) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "Playback file not found"
-            );
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Playback file not found");
         }
 
-        touchCache(
-                directory
-        );
+        touchCache(directory);
 
         return file;
     }
@@ -363,15 +434,9 @@ public class RecordingPlaybackService {
             Path outputDirectory
     ) throws IOException {
 
-        Path playlist =
-                outputDirectory.resolve(
-                        PLAYLIST_FILE
-                );
+        Path playlist = outputDirectory.resolve(PLAYLIST_FILE);
 
-        Path segments =
-                outputDirectory.resolve(
-                        "segment-%05d.ts"
-                );
+        Path segments = outputDirectory.resolve("segment-%05d.ts");
 
         List<String> command =
                 List.of(
@@ -483,10 +548,7 @@ public class RecordingPlaybackService {
             Path directory
     ) {
 
-        Path logFile =
-                directory.resolve(
-                        "ffmpeg.log"
-                );
+        Path logFile = directory.resolve("ffmpeg.log");
 
         try {
 
@@ -866,6 +928,140 @@ public class RecordingPlaybackService {
                     "FFmpeg interrupted",
                     exception
             );
+        }
+    }
+
+    public Path prepareCombinedSource(
+            UUID recordingId
+    ) {
+
+        verifyRecordingExists(
+                recordingId
+        );
+
+        ReentrantLock lock =
+                locks.computeIfAbsent(
+                        recordingId,
+                        ignored -> new ReentrantLock()
+                );
+
+        lock.lock();
+
+        try {
+
+            Path cacheDirectory =
+                    resolveCacheDirectory(
+                            recordingId
+                    );
+
+            Path source =
+                    cacheDirectory.resolve(
+                            "combined.mkv"
+                    );
+
+            if (isReadySource(source)) {
+
+                touchCache(
+                        cacheDirectory
+                );
+
+                return source;
+            }
+
+            deleteDirectoryRecursively(
+                    cacheDirectory
+            );
+
+            Files.createDirectories(
+                    cacheDirectory
+            );
+
+            List<RecordingObjectEntity> objects =
+                    recordingObjectRepository
+                            .findByRecordingIdOrderBySequenceNumberAsc(
+                                    recordingId
+                            );
+
+            if (objects.isEmpty()) {
+
+                throw new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Recording contains no uploaded S3 objects"
+                );
+            }
+
+            List<Path> localFiles =
+                    downloadObjects(
+                            cacheDirectory,
+                            objects
+                    );
+
+            Path concatFile =
+                    createConcatFile(
+                            cacheDirectory,
+                            localFiles
+                    );
+
+            source =
+                    concatenateMkvFiles(
+                            concatFile,
+                            cacheDirectory
+                    );
+
+            if (!isReadySource(source)) {
+
+                throw new IllegalStateException(
+                        "Combined recording source was not created"
+                );
+            }
+
+            touchCache(
+                    cacheDirectory
+            );
+
+            log.info(
+                    "Inference source prepared recordingId={}, objects={}",
+                    recordingId,
+                    objects.size()
+            );
+
+            return source;
+
+        } catch (IOException exception) {
+
+            throw new IllegalStateException(
+                    "Unable to prepare source for recording "
+                            + recordingId,
+                    exception
+            );
+
+        } finally {
+
+            lock.unlock();
+
+            if (!lock.hasQueuedThreads()) {
+
+                locks.remove(
+                        recordingId,
+                        lock
+                );
+            }
+        }
+    }
+
+    private boolean isReadySource(
+            Path source
+    ) {
+
+        try {
+
+            return Files.isRegularFile(source)
+                    && Files.isReadable(source)
+                    && Files.size(source) > 0;
+
+        } catch (IOException exception) {
+
+            return false;
         }
     }
 }

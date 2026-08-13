@@ -309,6 +309,30 @@ services:
 
     restart: unless-stopped
 
+  inference-worker:
+    build:
+      context: .
+      dockerfile: workers/inference-worker/Dockerfile
+    image: surveillance/inference-worker:demo
+    container_name: surveillance-inference-worker
+    environment:
+      VIDEO_SOURCE: /data/playback-cache/${RECORDING_ID}/combined.mkv
+      RECORDING_ID: ${RECORDING_ID}
+      CAMERA_ID: ${CAMERA_ID}
+      KAFKA_ENABLED: "true"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: analytics.events
+    volumes:
+      - playback-cache:/data/playback-cache:ro
+      - ./data/analytics/models:/models:ro
+      - ./data/analytics/snapshots:/data/analytics/snapshots
+    depends_on:
+      kafka:
+        condition: service_started
+      recording-service:
+        condition: service_started
+    restart: "no"
+
 volumes:
   #postgres-data:
   kafka-data:
