@@ -215,8 +215,8 @@ services:
 
       RECORDING_STORAGE_PATH: /data/recordings
       RECORDING_PLAYBACK_CACHE_DIRECTORY: /data/playback-cache
-      RECORDING_EXPORT_ENABLED: "true"
-      RECORDING_S3_ENABLED: "true"
+      RECORDING_EXPORT_ENABLED: ${RECORDING_EXPORT_ENABLED:-true}
+      RECORDING_S3_ENABLED: ${RECORDING_S3_ENABLED:-true}
 
       WASABI_ENDPOINT: ${WASABI_ENDPOINT:-http://unused.invalid}
       WASABI_BUCKET: ${WASABI_BUCKET:-unused}
@@ -313,25 +313,46 @@ services:
     build:
       context: .
       dockerfile: workers/inference-worker/Dockerfile
+
     image: surveillance/inference-worker:demo
     container_name: surveillance-inference-worker
+
     environment:
-      VIDEO_SOURCE: /data/playback-cache/${RECORDING_ID}/combined.mkv
-      RECORDING_ID: ${RECORDING_ID}
-      CAMERA_ID: ${CAMERA_ID}
-      KAFKA_ENABLED: "true"
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_INPUT_TOPIC: recording.events
       KAFKA_TOPIC: analytics.events
+      KAFKA_CONSUMER_GROUP: inference-workers
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_MAX_POLL_INTERVAL_MS: "86400000"
+
+      RECORDING_SERVICE_URL: http://recording-service:8095
+      INFERENCE_WORK_DIRECTORY: /data/work
+
+      ANALYTICS_SNAPSHOTS_DIRECTORY: /data/analytics/snapshots
+      ANALYTICS_SNAPSHOTS_PUBLIC_PATH: /api/v1/analytics/snapshots
+
+      YOLO_MODEL: ${YOLO_MODEL:-/models/yolo11n.pt}
+      YOLO_CONFIDENCE: ${YOLO_CONFIDENCE:-0.5}
+      LINE_POSITION: ${LINE_POSITION:-0.5}
+
+      KAFKA_ENABLED: "true"
+
     volumes:
-      - playback-cache:/data/playback-cache:ro
-      - ./data/analytics/models:/models:ro
-      - ./data/analytics/snapshots:/data/analytics/snapshots
+      - analytics-snapshots:/data/analytics/snapshots
+      - inference-work:/data/work
+      - inference-models:/models
+
     depends_on:
       kafka:
         condition: service_started
+
       recording-service:
         condition: service_started
-    restart: "no"
+
+    cpus: "2.0"
+    mem_limit: 4g
+
+    restart: unless-stopped
 
 volumes:
   #postgres-data:
@@ -339,4 +360,6 @@ volumes:
   hls-data:
   recording-data:
   playback-cache:
-
+  analytics-snapshots:
+  inference-work:
+  inference-models:
