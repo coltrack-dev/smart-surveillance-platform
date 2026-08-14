@@ -290,6 +290,7 @@ services:
       args:
         GRADLE_MODULE: services:analytics-service
         MODULE_DIR: services/analytics-service
+
     image: surveillance/analytics-service:demo
     container_name: surveillance-analytics-service
 
@@ -299,11 +300,21 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
 
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+      WASABI_ENDPOINT: ${WASABI_ENDPOINT}
+      WASABI_BUCKET: ${WASABI_BUCKET}
+      WASABI_ACCESS_KEY: ${WASABI_ACCESS_KEY}
+      WASABI_SECRET_KEY: ${WASABI_SECRET_KEY}
+      WASABI_REGION: ${WASABI_REGION:-us-central-1}
+
+      ANALYTICS_SNAPSHOTS_S3_PREFIX: ${ANALYTICS_SNAPSHOTS_S3_PREFIX:-analytics/snapshots}
+
       JAVA_OPTS: ${ANALYTICS_JAVA_OPTS:--Xms128m -Xmx384m}
 
     depends_on:
       kafka:
         condition: service_started
+
       camera-service:
         condition: service_started
 
@@ -325,6 +336,13 @@ services:
       KAFKA_AUTO_OFFSET_RESET: earliest
       KAFKA_MAX_POLL_INTERVAL_MS: "86400000"
 
+      WASABI_ENDPOINT: ${WASABI_ENDPOINT}
+      WASABI_BUCKET: ${WASABI_BUCKET}
+      WASABI_ACCESS_KEY: ${WASABI_ACCESS_KEY}
+      WASABI_SECRET_KEY: ${WASABI_SECRET_KEY}
+      WASABI_REGION: ${WASABI_REGION:-us-central-1}
+      ANALYTICS_SNAPSHOTS_S3_PREFIX: ${ANALYTICS_SNAPSHOTS_S3_PREFIX:-analytics/snapshots}
+
       RECORDING_SERVICE_URL: http://recording-service:8095
       INFERENCE_WORK_DIRECTORY: /data/work
 
@@ -338,7 +356,7 @@ services:
       KAFKA_ENABLED: "true"
 
     volumes:
-      - analytics-snapshots:/data/analytics/snapshots
+    #  - analytics-snapshots:/data/analytics/snapshots
       - inference-work:/data/work
       - inference-models:/models
 
@@ -360,6 +378,6 @@ volumes:
   hls-data:
   recording-data:
   playback-cache:
-  analytics-snapshots:
+  #analytics-snapshots:
   inference-work:
   inference-models:
