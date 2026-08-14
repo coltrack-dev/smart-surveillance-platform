@@ -69,6 +69,7 @@ application-dev.yaml
 
 .env
 .env.*
+!.env.example
 
 # ==========================================================
 # Docker

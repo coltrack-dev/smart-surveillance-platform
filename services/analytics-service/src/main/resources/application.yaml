@@ -44,5 +44,12 @@ analytics:
 
   input:
     file: ${ANALYTICS_INPUT_FILE:./data/analytics/input/people.mp4}
+
   snapshots:
-    path: ${ANALYTICS_SNAPSHOTS_PATH:./data/analytics/snapshots}
+    s3:
+      endpoint: ${WASABI_ENDPOINT}
+      region: ${WASABI_REGION:us-central-1}
+      bucket: ${WASABI_BUCKET}
+      access-key: ${WASABI_ACCESS_KEY}
+      secret-key: ${WASABI_SECRET_KEY}
+      prefix: ${ANALYTICS_SNAPSHOTS_S3_PREFIX:analytics/snapshots}

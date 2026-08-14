@@ -4,11 +4,9 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
-from uuid import uuid4
-
-import cv2
+from uuid import NAMESPACE_URL, uuid5
+from inference_worker.snapshot_storage import SnapshotStorage
 from ultralytics import YOLO
-
 from inference_worker.event_producer import (
     AnalyticsEventProducer,
 )
@@ -101,14 +99,22 @@ recording_id = os.getenv("RECORDING_ID")
 
 def create_line_crossing_event(
     track_id: int,
-    direction: str,
     confidence: float,
+    direction: str,
     frame_number: int,
     video_time_seconds: float,
-    recording_id: str
+    recording_id: str,
 ) -> dict[str, Any]:
+    event_id = uuid5(
+        NAMESPACE_URL,
+        (
+            f"{recording_id}:LINE_CROSSED:"
+            f"{track_id}:{frame_number}"
+        ),
+    )
+
     return {
-        "eventId": str(uuid4()),
+        "eventId": str(event_id),
         "schemaVersion": 1,
         "eventType": "LINE_CROSSED",
         "cameraId": CAMERA_ID,
@@ -117,19 +123,13 @@ def create_line_crossing_event(
         "objectType": "PERSON",
         "confidence": round(confidence, 4),
         "frameNumber": frame_number,
-        "videoTimeSeconds": round(
-            video_time_seconds,
-            3,
-        ),
-        "occurredAt": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "videoTimeSeconds": round(video_time_seconds, 3),
+        "occurredAt": datetime.now(timezone.utc).isoformat(),
         "attributes": {
             "direction": direction,
             "lineId": "main-line",
         },
     }
-
 
 def write_event(
     event: dict[str, Any],
