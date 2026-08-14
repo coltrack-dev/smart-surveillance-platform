@@ -145,6 +145,54 @@ services:
       - rtsp://mediamtx:8554/people
     restart: unless-stopped
 
+  # I-287 Just East of Interchange 5 (Route 119)
+  rtsp-i287-publisher:
+    image: linuxserver/ffmpeg:7.1.1
+    container_name: surveillance-rtsp-i287-publisher
+
+    depends_on:
+      - mediamtx
+
+    command:
+      - -hide_banner
+      - -loglevel
+      - warning
+      - -rw_timeout
+      - "15000000"
+      - -user_agent
+      - Mozilla/5.0
+      - -i
+      - https://s58.nysdot.skyvdn.com:443/rtplive/TA_006/playlist.m3u8
+      - -map
+      - 0:v:0
+      - -an
+      - -vf
+      - fps=15,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -pix_fmt
+      - yuv420p
+      - -g
+      - "30"
+      - -keyint_min
+      - "30"
+      - -sc_threshold
+      - "0"
+      - -f
+      - rtsp
+      - -rtsp_transport
+      - tcp
+      - rtsp://mediamtx:8554/i287
+    cpus: "1.5"
+    mem_limit: 1g
+
+    restart: unless-stopped
+
+
   camera-service:
     build:
       context: .
@@ -311,7 +359,6 @@ services:
       WASABI_REGION: ${WASABI_REGION:-us-central-1}
 
       ANALYTICS_SNAPSHOTS_S3_PREFIX: ${ANALYTICS_SNAPSHOTS_S3_PREFIX:-analytics/snapshots}
-      ANALYTICS_SNAPSHOT_JPEG_QUALITY: ${ANALYTICS_SNAPSHOT_JPEG_QUALITY:-75}
 
       JAVA_OPTS: ${ANALYTICS_JAVA_OPTS:--Xms128m -Xmx384m}
 
@@ -352,6 +399,7 @@ services:
 
       ANALYTICS_SNAPSHOTS_DIRECTORY: /data/analytics/snapshots
       ANALYTICS_SNAPSHOTS_PUBLIC_PATH: /api/v1/analytics/snapshots
+      ANALYTICS_SNAPSHOT_JPEG_QUALITY: ${ANALYTICS_SNAPSHOT_JPEG_QUALITY:-75}
 
       YOLO_MODEL: ${YOLO_MODEL:-/models/yolo11n.pt}
       YOLO_CONFIDENCE: ${YOLO_CONFIDENCE:-0.5}
