@@ -34,7 +34,11 @@ class SnapshotStorage:
         event_id: str,
         snapshot: Path,
     ) -> str:
-        key = f"{self.prefix}/{event_id}.jpg"
+        key = (
+            f"{self.prefix}/{event_id}.jpg"
+            if self.prefix
+            else f"{event_id}.jpg"
+        )
 
         self.client.upload_file(
             str(snapshot),
@@ -46,8 +50,15 @@ class SnapshotStorage:
         )
 
         log.info(
-            "Snapshot uploaded eventId=%s s3://%s/%s",
+            "Snapshot uploaded "
+            "eventId=%s quality=%s "
+            "sizeBytes=%s s3://%s/%s",
             event_id,
+            os.getenv(
+                "ANALYTICS_SNAPSHOT_JPEG_QUALITY",
+                "75",
+            ),
+            snapshot.stat().st_size,
             self.bucket,
             key,
         )

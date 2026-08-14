@@ -52,6 +52,14 @@ SNAPSHOTS_PUBLIC_PATH = os.getenv(
     "/api/v1/analytics/snapshots",
 ).rstrip("/")
 
+SNAPSHOT_JPEG_QUALITY = int(
+    os.getenv(
+        "ANALYTICS_SNAPSHOT_JPEG_QUALITY",
+        "75",
+    )
+)
+
+
 MODEL_FILE = os.getenv(
     "YOLO_MODEL",
     "yolo11n.pt",
@@ -262,6 +270,12 @@ def main() -> None:
     model = YOLO(
         MODEL_FILE
     )
+
+    if not 1 <= SNAPSHOT_JPEG_QUALITY <= 100:
+        raise ValueError(
+            "ANALYTICS_SNAPSHOT_JPEG_QUALITY "
+            "must be between 1 and 100"
+        )
 
     capture = cv2.VideoCapture(
         str(INPUT_FILE)
@@ -563,11 +577,13 @@ def main() -> None:
                             )
 
                             # Сначала создаём снимок локально.
-                            snapshot_saved = (
-                                cv2.imwrite(
-                                    str(snapshot_file),
-                                    annotated_frame,
-                                )
+                            snapshot_saved = cv2.imwrite(
+                                str(snapshot_file),
+                                annotated_frame,
+                                [
+                                    cv2.IMWRITE_JPEG_QUALITY,
+                                    SNAPSHOT_JPEG_QUALITY,
+                                ],
                             )
 
                             if not snapshot_saved:
