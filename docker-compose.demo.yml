@@ -284,6 +284,9 @@ services:
     restart: unless-stopped
 
   analytics-service:
+    profiles:
+      # пока что запускать и gradle
+      - container-analytics
     build:
       context: .
       dockerfile: Dockerfile.service
