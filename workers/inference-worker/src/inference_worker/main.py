@@ -5,10 +5,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 from uuid import NAMESPACE_URL, uuid5
-from inference_worker.snapshot_storage import SnapshotStorage
+
+import cv2
 from ultralytics import YOLO
+
 from inference_worker.event_producer import (
     AnalyticsEventProducer,
+)
+from inference_worker.snapshot_storage import (
+    SnapshotStorage,
 )
 
 
@@ -33,6 +38,8 @@ OUTPUT_EVENTS_FILE = Path(
     )
 )
 
+# В этой директории снимок хранится только временно,
+# до успешной загрузки в S3.
 SNAPSHOTS_DIRECTORY = Path(
     os.getenv(
         "ANALYTICS_SNAPSHOTS_DIRECTORY",
@@ -95,16 +102,26 @@ KAFKA_ENABLED = os.getenv(
     "yes",
 }
 
-recording_id = os.getenv("RECORDING_ID")
+RECORDING_ID = os.getenv(
+    "RECORDING_ID",
+)
+
 
 def create_line_crossing_event(
     track_id: int,
-    confidence: float,
     direction: str,
+    confidence: float,
     frame_number: int,
     video_time_seconds: float,
     recording_id: str,
 ) -> dict[str, Any]:
+    """
+    Создаёт событие пересечения линии.
+
+    UUID генерируется детерминированно. При повторной обработке
+    той же записи, трека и кадра получится тот же eventId.
+    Это позволяет безопасно повторять обработку после ошибки.
+    """
     event_id = uuid5(
         NAMESPACE_URL,
         (
@@ -121,26 +138,44 @@ def create_line_crossing_event(
         "trackId": track_id,
         "recordingId": recording_id,
         "objectType": "PERSON",
-        "confidence": round(confidence, 4),
+        "confidence": round(
+            confidence,
+            4,
+        ),
         "frameNumber": frame_number,
-        "videoTimeSeconds": round(video_time_seconds, 3),
-        "occurredAt": datetime.now(timezone.utc).isoformat(),
+        "videoTimeSeconds": round(
+            video_time_seconds,
+            3,
+        ),
+        "occurredAt": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "attributes": {
             "direction": direction,
             "lineId": "main-line",
         },
     }
 
+
 def write_event(
     event: dict[str, Any],
     events_file: TextIO,
 ) -> None:
+    """
+    Записывает событие в локальный JSONL-файл.
+
+    Файл находится во временной рабочей директории задачи
+    и используется для диагностики.
+    """
     json_line = json.dumps(
         event,
         ensure_ascii=False,
     )
 
-    events_file.write(json_line + "\n")
+    events_file.write(
+        json_line + "\n"
+    )
+
     events_file.flush()
 
     logging.info(
@@ -153,17 +188,22 @@ def create_event_producer() -> (
     AnalyticsEventProducer | None
 ):
     if not KAFKA_ENABLED:
-        logging.info("Kafka publishing disabled")
+        logging.info(
+            "Kafka publishing disabled"
+        )
         return None
 
     logging.info(
-        "Kafka enabled: bootstrapServers=%s topic=%s",
+        "Kafka enabled: "
+        "bootstrapServers=%s topic=%s",
         KAFKA_BOOTSTRAP_SERVERS,
         KAFKA_TOPIC,
     )
 
     return AnalyticsEventProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        bootstrap_servers=(
+            KAFKA_BOOTSTRAP_SERVERS
+        ),
         topic=KAFKA_TOPIC,
     )
 
@@ -187,9 +227,16 @@ def main() -> None:
             "YOLO_CONFIDENCE must be between 0 and 1"
         )
 
+    if not RECORDING_ID:
+        raise ValueError(
+            "RECORDING_ID environment variable "
+            "is required"
+        )
+
     if not INPUT_FILE.is_file():
         raise FileNotFoundError(
-            f"Video not found: {INPUT_FILE.resolve()}"
+            "Video not found: "
+            f"{INPUT_FILE.resolve()}"
         )
 
     OUTPUT_VIDEO_FILE.parent.mkdir(
@@ -207,13 +254,14 @@ def main() -> None:
         exist_ok=True,
     )
 
-
     logging.info(
         "Loading model: %s",
         MODEL_FILE,
     )
 
-    model = YOLO(MODEL_FILE)
+    model = YOLO(
+        MODEL_FILE
+    )
 
     capture = cv2.VideoCapture(
         str(INPUT_FILE)
@@ -221,7 +269,8 @@ def main() -> None:
 
     if not capture.isOpened():
         raise RuntimeError(
-            f"Cannot open video: {INPUT_FILE.resolve()}"
+            "Cannot open video: "
+            f"{INPUT_FILE.resolve()}"
         )
 
     fps = capture.get(
@@ -253,9 +302,14 @@ def main() -> None:
 
     writer = cv2.VideoWriter(
         str(OUTPUT_VIDEO_FILE),
-        cv2.VideoWriter_fourcc(*"mp4v"),
+        cv2.VideoWriter_fourcc(
+            *"mp4v"
+        ),
         fps,
-        (width, height),
+        (
+            width,
+            height,
+        ),
     )
 
     if not writer.isOpened():
@@ -273,11 +327,15 @@ def main() -> None:
     crossing_cooldown_frames = max(
         1,
         int(
-            fps * CROSSING_COOLDOWN_SECONDS
+            fps
+            * CROSSING_COOLDOWN_SECONDS
         ),
     )
 
-    previous_y_by_track: dict[int, int] = {}
+    previous_y_by_track: dict[
+        int,
+        int,
+    ] = {}
 
     last_crossing_frame_by_track: dict[
         int,
@@ -287,15 +345,24 @@ def main() -> None:
     frame_number = 0
     crossing_count = 0
 
-    event_producer = create_event_producer()
+    event_producer = (
+        create_event_producer()
+    )
 
-    events_file = OUTPUT_EVENTS_FILE.open(
-        mode="w",
-        encoding="utf-8",
+    snapshot_storage = (
+        SnapshotStorage()
+    )
+
+    events_file = (
+        OUTPUT_EVENTS_FILE.open(
+            mode="w",
+            encoding="utf-8",
+        )
     )
 
     logging.info(
-        "Processing video=%s fps=%.2f size=%sx%s lineY=%s",
+        "Processing video=%s "
+        "fps=%.2f size=%sx%s lineY=%s",
         INPUT_FILE.resolve(),
         fps,
         width,
@@ -305,7 +372,9 @@ def main() -> None:
 
     try:
         while True:
-            success, frame = capture.read()
+            success, frame = (
+                capture.read()
+            )
 
             if not success:
                 break
@@ -322,13 +391,26 @@ def main() -> None:
             )
 
             result = results[0]
-            annotated_frame = result.plot()
+
+            annotated_frame = (
+                result.plot()
+            )
 
             cv2.line(
                 annotated_frame,
-                (0, line_y),
-                (width, line_y),
-                (0, 0, 255),
+                (
+                    0,
+                    line_y,
+                ),
+                (
+                    width,
+                    line_y,
+                ),
+                (
+                    0,
+                    0,
+                    255,
+                ),
                 2,
             )
 
@@ -344,7 +426,11 @@ def main() -> None:
                 ),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 0, 255),
+                (
+                    0,
+                    0,
+                    255,
+                ),
                 2,
                 cv2.LINE_AA,
             )
@@ -385,13 +471,19 @@ def main() -> None:
                     coordinates,
                     confidences,
                 ):
-                    x1, _y1, x2, y2 = (
-                        coordinates_for_track
-                    )
+                    (
+                        x1,
+                        _y1,
+                        x2,
+                        y2,
+                    ) = coordinates_for_track
 
                     # Нижняя центральная точка рамки:
                     # приблизительное положение ног.
-                    point_x = (x1 + x2) // 2
+                    point_x = (
+                        x1 + x2
+                    ) // 2
+
                     point_y = y2
 
                     previous_y = (
@@ -440,7 +532,8 @@ def main() -> None:
                             )
 
                             video_time_seconds = (
-                                frame_number / fps
+                                frame_number
+                                / fps
                             )
 
                             event = (
@@ -454,44 +547,75 @@ def main() -> None:
                                     video_time_seconds=(
                                         video_time_seconds
                                     ),
-                                    recording_id=recording_id
+                                    recording_id=(
+                                        RECORDING_ID
+                                    ),
                                 )
                             )
 
-                            snapshot_name = f"{event['eventId']}.jpg"
-                            snapshot_file = SNAPSHOTS_DIRECTORY / snapshot_name
+                            snapshot_name = (
+                                f"{event['eventId']}.jpg"
+                            )
 
-                            if not cv2.imwrite(
-                                str(snapshot_file),
-                                annotated_frame,
+                            snapshot_file = (
+                                SNAPSHOTS_DIRECTORY
+                                / snapshot_name
+                            )
+
+                            # Сначала создаём снимок локально.
+                            snapshot_saved = (
+                                cv2.imwrite(
+                                    str(snapshot_file),
+                                    annotated_frame,
+                                )
+                            )
+
+                            if not snapshot_saved:
+                                raise RuntimeError(
+                                    "Cannot save snapshot: "
+                                    f"{snapshot_file.resolve()}"
+                                )
+
+                            # После этого загружаем его в Wasabi.
+                            # Если загрузка завершится ошибкой,
+                            # исключение дойдёт до recording_consumer,
+                            # Kafka offset не будет подтверждён,
+                            # и запись будет обработана повторно.
+                            snapshot_key = (
+                                snapshot_storage.upload(
+                                    event["eventId"],
+                                    snapshot_file,
+                                )
+                            )
+
+                            # Удаляем локальный JPEG только после
+                            # успешной загрузки в S3.
+                            snapshot_file.unlink(
+                                missing_ok=True
+                            )
+
+                            event["attributes"][
+                                "snapshotUrl"
+                            ] = (
+                                f"{SNAPSHOTS_PUBLIC_PATH}/"
+                                f"{snapshot_name}"
+                            )
+
+                            event["attributes"][
+                                "snapshotKey"
+                            ] = snapshot_key
+
+                            # Событие публикуется только после
+                            # успешной загрузки снимка в S3.
+                            write_event(
+                                event,
+                                events_file,
+                            )
+
+                            if (
+                                event_producer
+                                is not None
                             ):
-                                logging.warning(
-                                    "Cannot save snapshot: %s",
-                                    snapshot_file.resolve(),
-                                )
-                            else:
-                                event["attributes"]["snapshotUrl"] = (
-                                    f"{SNAPSHOTS_PUBLIC_PATH}/{snapshot_name}"
-                                )
-
-                            # Сохранять и публиковать событие нужно только
-                            # после добавления snapshotUrl.
-                            write_event(
-                                event,
-                                events_file,
-                            )
-
-                            if event_producer is not None:
-                                event_producer.publish(event)
-
-                            # Сначала сохраняем локально.
-                            write_event(
-                                event,
-                                events_file,
-                            )
-
-                            # Затем публикуем в Kafka.
-                            if event_producer is not None:
                                 event_producer.publish(
                                     event
                                 )
@@ -508,19 +632,33 @@ def main() -> None:
 
                     cv2.circle(
                         annotated_frame,
-                        (point_x, point_y),
+                        (
+                            point_x,
+                            point_y,
+                        ),
                         5,
-                        (255, 0, 0),
+                        (
+                            255,
+                            0,
+                            0,
+                        ),
                         -1,
                     )
 
             cv2.putText(
                 annotated_frame,
                 f"Crossed: {crossing_count}",
-                (20, 40),
+                (
+                    20,
+                    40,
+                ),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1.0,
-                (0, 255, 0),
+                (
+                    0,
+                    255,
+                    0,
+                ),
                 2,
                 cv2.LINE_AA,
             )
@@ -531,7 +669,8 @@ def main() -> None:
 
             if frame_number % 100 == 0:
                 logging.info(
-                    "Processed frames=%s crossings=%s",
+                    "Processed frames=%s "
+                    "crossings=%s",
                     frame_number,
                     crossing_count,
                 )
@@ -545,7 +684,8 @@ def main() -> None:
         writer.release()
 
     logging.info(
-        "Processing completed frames=%s crossings=%s",
+        "Processing completed "
+        "frames=%s crossings=%s",
         frame_number,
         crossing_count,
     )
