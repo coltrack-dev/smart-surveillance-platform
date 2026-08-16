@@ -8,7 +8,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import cv2
 import torch
-
 from ultralytics import YOLO
 
 from inference_worker.event_producer import (
@@ -61,7 +60,6 @@ SNAPSHOT_JPEG_QUALITY = int(
     )
 )
 
-
 MODEL_FILE = os.getenv(
     "YOLO_MODEL",
     "yolo11n.pt",
@@ -72,6 +70,11 @@ CONFIDENCE = float(
         "YOLO_CONFIDENCE",
         "0.5",
     )
+)
+
+YOLO_DEVICE = os.getenv(
+    "YOLO_DEVICE",
+    "auto",
 )
 
 CAMERA_ID = os.getenv(
@@ -117,35 +120,113 @@ RECORDING_ID = os.getenv(
 )
 
 
-YOLO_DEVICE = os.getenv(
-    "YOLO_DEVICE",
-    "auto",
-)
-
-
 def resolve_device() -> str:
-    if YOLO_DEVICE != "auto":
-        return YOLO_DEVICE
+    """
+    Возвращает устройство для Ultralytics.
 
-    return (
-        "cuda:0"
-        if torch.cuda.is_available()
-        else "cpu"
+    YOLO_DEVICE может иметь значения:
+    - auto
+    - cpu
+    - cuda:0
+    - cuda:1
+    - 0
+    - 1
+    """
+    configured_device = (
+        YOLO_DEVICE.strip().lower()
     )
 
-DEVICE = resolve_device()
+    if configured_device != "auto":
+        return configured_device
 
-if DEVICE.startswith("cuda"):
-    gpu_name = torch.cuda.get_device_name(0)
-else:
-    gpu_name = "none"
+    if torch.cuda.is_available():
+        return "cuda:0"
 
-logging.info(
-    "YOLO device=%s cudaAvailable=%s gpu=%s",
-    DEVICE,
-    cuda_available,
-    gpu_name,
-)
+    return "cpu"
+
+
+def is_cuda_device(
+    device: str,
+) -> bool:
+    return (
+        device.startswith("cuda")
+        or device.isdigit()
+    )
+
+
+def get_cuda_device_index(
+    device: str,
+) -> int:
+    if device.isdigit():
+        return int(device)
+
+    if ":" in device:
+        return int(
+            device.split(
+                ":",
+                maxsplit=1,
+            )[1]
+        )
+
+    return 0
+
+
+def log_inference_device(
+    device: str,
+) -> None:
+    cuda_available = (
+        torch.cuda.is_available()
+    )
+
+    if (
+        is_cuda_device(device)
+        and not cuda_available
+    ):
+        raise RuntimeError(
+            "CUDA device was requested "
+            f"({device}), but CUDA is not available. "
+            "Check the NVIDIA Windows driver, WSL2 "
+            "configuration and CUDA-enabled PyTorch."
+        )
+
+    if is_cuda_device(device):
+        device_index = (
+            get_cuda_device_index(
+                device
+            )
+        )
+
+        device_count = (
+            torch.cuda.device_count()
+        )
+
+        if device_index >= device_count:
+            raise RuntimeError(
+                "Requested CUDA device index "
+                f"{device_index}, but only "
+                f"{device_count} CUDA device(s) "
+                "are available"
+            )
+
+        gpu_name = (
+            torch.cuda.get_device_name(
+                device_index
+            )
+        )
+    else:
+        gpu_name = "none"
+
+    logging.info(
+        "YOLO device=%s "
+        "cudaAvailable=%s "
+        "cudaDeviceCount=%s "
+        "gpu=%s",
+        device,
+        cuda_available,
+        torch.cuda.device_count(),
+        gpu_name,
+    )
+
 
 def create_line_crossing_event(
     track_id: int,
@@ -158,9 +239,9 @@ def create_line_crossing_event(
     """
     Создаёт событие пересечения линии.
 
-    UUID генерируется детерминированно. При повторной обработке
-    той же записи, трека и кадра получится тот же eventId.
-    Это позволяет безопасно повторять обработку после ошибки.
+    UUID генерируется детерминированно.
+    При повторной обработке той же записи,
+    трека и кадра получится тот же eventId.
     """
     event_id = uuid5(
         NAMESPACE_URL,
@@ -204,8 +285,8 @@ def write_event(
     """
     Записывает событие в локальный JSONL-файл.
 
-    Файл находится во временной рабочей директории задачи
-    и используется для диагностики.
+    Файл находится во временной рабочей директории
+    задачи и используется для диагностики.
     """
     json_line = json.dumps(
         event,
@@ -248,15 +329,7 @@ def create_event_producer() -> (
     )
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format=(
-            "%(asctime)s %(levelname)s "
-            "%(name)s - %(message)s"
-        ),
-    )
-
+def validate_configuration() -> None:
     if not 0.0 < LINE_POSITION < 1.0:
         raise ValueError(
             "LINE_POSITION must be between 0 and 1"
@@ -265,6 +338,12 @@ def main() -> None:
     if not 0.0 <= CONFIDENCE <= 1.0:
         raise ValueError(
             "YOLO_CONFIDENCE must be between 0 and 1"
+        )
+
+    if not 1 <= SNAPSHOT_JPEG_QUALITY <= 100:
+        raise ValueError(
+            "ANALYTICS_SNAPSHOT_JPEG_QUALITY "
+            "must be between 1 and 100"
         )
 
     if not RECORDING_ID:
@@ -278,6 +357,24 @@ def main() -> None:
             "Video not found: "
             f"{INPUT_FILE.resolve()}"
         )
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format=(
+            "%(asctime)s %(levelname)s "
+            "%(name)s - %(message)s"
+        ),
+    )
+
+    validate_configuration()
+
+    device = resolve_device()
+
+    log_inference_device(
+        device
+    )
 
     OUTPUT_VIDEO_FILE.parent.mkdir(
         parents=True,
@@ -302,12 +399,6 @@ def main() -> None:
     model = YOLO(
         MODEL_FILE
     )
-
-    if not 1 <= SNAPSHOT_JPEG_QUALITY <= 100:
-        raise ValueError(
-            "ANALYTICS_SNAPSHOT_JPEG_QUALITY "
-            "must be between 1 and 100"
-        )
 
     capture = cv2.VideoCapture(
         str(INPUT_FILE)
@@ -408,12 +499,14 @@ def main() -> None:
 
     logging.info(
         "Processing video=%s "
-        "fps=%.2f size=%sx%s lineY=%s",
+        "fps=%.2f size=%sx%s "
+        "lineY=%s device=%s",
         INPUT_FILE.resolve(),
         fps,
         width,
         height,
         line_y,
+        device,
     )
 
     try:
@@ -433,7 +526,7 @@ def main() -> None:
                 tracker="bytetrack.yaml",
                 classes=[0],
                 conf=CONFIDENCE,
-                device=DEVICE,
+                device=device,
                 verbose=False,
             )
 
@@ -609,7 +702,6 @@ def main() -> None:
                                 / snapshot_name
                             )
 
-                            # Сначала создаём снимок локально.
                             snapshot_saved = cv2.imwrite(
                                 str(snapshot_file),
                                 annotated_frame,
@@ -625,11 +717,6 @@ def main() -> None:
                                     f"{snapshot_file.resolve()}"
                                 )
 
-                            # После этого загружаем его в Wasabi.
-                            # Если загрузка завершится ошибкой,
-                            # исключение дойдёт до recording_consumer,
-                            # Kafka offset не будет подтверждён,
-                            # и запись будет обработана повторно.
                             snapshot_key = (
                                 snapshot_storage.upload(
                                     event["eventId"],
@@ -637,8 +724,6 @@ def main() -> None:
                                 )
                             )
 
-                            # Удаляем локальный JPEG только после
-                            # успешной загрузки в S3.
                             snapshot_file.unlink(
                                 missing_ok=True
                             )
@@ -654,8 +739,6 @@ def main() -> None:
                                 "snapshotKey"
                             ] = snapshot_key
 
-                            # Событие публикуется только после
-                            # успешной загрузки снимка в S3.
                             write_event(
                                 event,
                                 events_file,
