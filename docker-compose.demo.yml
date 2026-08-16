@@ -245,6 +245,8 @@ services:
     restart: unless-stopped
 
   recording-service:
+ё    ports:
+      - "8095:8095"
     build:
       context: .
       dockerfile: Dockerfile.service
