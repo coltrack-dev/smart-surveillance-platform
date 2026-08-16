@@ -386,11 +386,18 @@ services:
 
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_INPUT_TOPIC: recording.events
+      # A remote GPU node can consume both legacy recording events and
+      # explicitly scheduled analytics jobs.
+      KAFKA_INPUT_TOPICS: ${KAFKA_INPUT_TOPICS:-recording.events,analytics.jobs}
       KAFKA_TOPIC: analytics.events
       KAFKA_CONSUMER_GROUP: inference-workers
       KAFKA_AUTO_OFFSET_RESET: earliest
       KAFKA_MAX_POLL_INTERVAL_MS: "86400000"
+      ANALYTICS_JOB_STATUS_TOPIC: ${ANALYTICS_JOB_STATUS_TOPIC:-analytics.job-status}
+      ANALYTICS_WORKER_HEARTBEAT_TOPIC: ${ANALYTICS_WORKER_HEARTBEAT_TOPIC:-analytics.worker-heartbeat}
+      INFERENCE_WORKER_ID: ${INFERENCE_WORKER_ID:-demo-inference-worker}
+      INFERENCE_HEARTBEAT_SECONDS: ${INFERENCE_HEARTBEAT_SECONDS:-15}
+      INFERENCE_MAX_CONCURRENT_JOBS: ${INFERENCE_MAX_CONCURRENT_JOBS:-1}
 
       WASABI_ENDPOINT: ${WASABI_ENDPOINT}
       WASABI_BUCKET: ${WASABI_BUCKET}

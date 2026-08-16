@@ -72,6 +72,15 @@ CONFIDENCE = float(
     )
 )
 
+OBJECT_CLASSES = tuple(
+    int(value.strip())
+    for value in os.getenv(
+        "YOLO_CLASSES",
+        "0",
+    ).split(",")
+    if value.strip()
+)
+
 YOLO_DEVICE = os.getenv(
     "YOLO_DEVICE",
     "auto",
@@ -330,6 +339,11 @@ def create_event_producer() -> (
 
 
 def validate_configuration() -> None:
+    if not OBJECT_CLASSES:
+        raise ValueError(
+            "YOLO_CLASSES must contain at least one class id"
+        )
+
     if not 0.0 < LINE_POSITION < 1.0:
         raise ValueError(
             "LINE_POSITION must be between 0 and 1"
@@ -392,8 +406,9 @@ def main() -> None:
     )
 
     logging.info(
-        "Loading model: %s",
+        "Loading model: %s classes=%s",
         MODEL_FILE,
+        OBJECT_CLASSES,
     )
 
     model = YOLO(
@@ -524,7 +539,7 @@ def main() -> None:
                 frame,
                 persist=True,
                 tracker="bytetrack.yaml",
-                classes=[0],
+                classes=list(OBJECT_CLASSES),
                 conf=CONFIDENCE,
                 device=device,
                 verbose=False,
