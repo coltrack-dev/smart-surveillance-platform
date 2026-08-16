@@ -140,10 +140,10 @@ if DEVICE.startswith("cuda"):
 else:
     gpu_name = "none"
 
-logger.info(
+logging.info(
     "YOLO device=%s cudaAvailable=%s gpu=%s",
     DEVICE,
-    torch.cuda.is_available(),
+    cuda_available,
     gpu_name,
 )
 
