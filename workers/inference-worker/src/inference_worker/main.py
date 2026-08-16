@@ -7,6 +7,8 @@ from typing import Any, TextIO
 from uuid import NAMESPACE_URL, uuid5
 
 import cv2
+import torch
+
 from ultralytics import YOLO
 
 from inference_worker.event_producer import (
@@ -130,7 +132,6 @@ def resolve_device() -> str:
         if torch.cuda.is_available()
         else "cpu"
     )
-
 
 DEVICE = resolve_device()
 
