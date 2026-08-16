@@ -115,6 +115,37 @@ RECORDING_ID = os.getenv(
 )
 
 
+YOLO_DEVICE = os.getenv(
+    "YOLO_DEVICE",
+    "auto",
+)
+
+
+def resolve_device() -> str:
+    if YOLO_DEVICE != "auto":
+        return YOLO_DEVICE
+
+    return (
+        "cuda:0"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+
+DEVICE = resolve_device()
+
+if DEVICE.startswith("cuda"):
+    gpu_name = torch.cuda.get_device_name(0)
+else:
+    gpu_name = "none"
+
+logger.info(
+    "YOLO device=%s cudaAvailable=%s gpu=%s",
+    DEVICE,
+    torch.cuda.is_available(),
+    gpu_name,
+)
+
 def create_line_crossing_event(
     track_id: int,
     direction: str,
@@ -401,6 +432,7 @@ def main() -> None:
                 tracker="bytetrack.yaml",
                 classes=[0],
                 conf=CONFIDENCE,
+                device=DEVICE,
                 verbose=False,
             )
 

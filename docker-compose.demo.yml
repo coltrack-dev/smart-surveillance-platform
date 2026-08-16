@@ -245,7 +245,7 @@ services:
     restart: unless-stopped
 
   recording-service:
-ё    ports:
+    ports:
       - "8095:8095"
     build:
       context: .
