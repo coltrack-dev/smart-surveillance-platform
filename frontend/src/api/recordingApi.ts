@@ -57,3 +57,19 @@ export async function prepareRecordingPlayback(
 
     return response.data;
 }
+
+export async function startRecording(
+    cameraId: string
+): Promise<void> {
+    await http.post(
+        `/recordings/${cameraId}/start`
+    );
+}
+
+export async function stopRecording(
+    cameraId: string
+): Promise<void> {
+    await http.post(
+        `/recordings/${cameraId}/stop`
+    );
+}
