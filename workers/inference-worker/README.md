@@ -48,10 +48,56 @@ The worker accepts a comma-separated list through `KAFKA_INPUT_TOPICS`.
 The URL must be reachable from the GPU node. If it is omitted, the worker
 builds it from `RECORDING_SERVICE_URL` and `recordingId`.
 
-`REALTIME` is reserved by the contract but is currently returned as
-`REJECTED` with `errorCode=UNSUPPORTED_JOB_TYPE`. The streaming runner should
-be introduced separately so it can have cancellation, reconnect, and stream
-ownership semantics.
+## Real-time job
+
+The consumer starts `inference_worker.realtime_main` as a child process, keeps
+polling Kafka, and can therefore receive a stop command while inference is
+running. The runner reconnects when RTSP is temporarily unavailable and limits
+inference with `profile.targetFps`.
+
+Start:
+
+```json
+{
+  "eventType": "ANALYTICS_JOB",
+  "schemaVersion": 1,
+  "jobId": "bbed268f-e5ef-40f0-a61e-d34a659f24ca",
+  "jobType": "REALTIME",
+  "action": "START",
+  "cameraId": "29b88ec8-2c36-4879-a7d8-f8e1a4ee4443",
+  "source": {
+    "type": "RTSP",
+    "url": "rtsp://192.168.13.128:8554/people",
+    "transport": "tcp"
+  },
+  "profile": {
+    "model": "/models/yolo11n.pt",
+    "classes": [0],
+    "confidence": 0.5,
+    "devicePreference": "cuda:0",
+    "linePosition": 0.5,
+    "targetFps": 10
+  }
+}
+```
+
+Stop (use the same `cameraId`; key Kafka messages by `cameraId`):
+
+```json
+{
+  "eventType": "ANALYTICS_JOB",
+  "schemaVersion": 1,
+  "jobId": "d8430bbb-7d25-459c-8ab3-e6729ad53496",
+  "jobType": "REALTIME",
+  "action": "STOP",
+  "cameraId": "29b88ec8-2c36-4879-a7d8-f8e1a4ee4443"
+}
+```
+
+For multiple workers, `START` and `STOP` messages for a camera must have the
+same Kafka key so they are assigned to the same partition. Production stream
+ownership should additionally be stored outside a worker process so it can be
+recovered after a consumer-group rebalance.
 
 ## Remote WSL node
 

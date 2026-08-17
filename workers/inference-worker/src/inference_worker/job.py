@@ -68,6 +68,7 @@ class AnalyticsSource:
 class AnalyticsJob:
     job_id: str
     job_type: str
+    action: str
     camera_id: str
     recording_id: str | None
     source: AnalyticsSource
@@ -93,6 +94,7 @@ class AnalyticsJob:
                     or recording_id
                 ),
                 job_type="RECORDING",
+                action="START",
                 camera_id=_required_string(message, "cameraId"),
                 recording_id=recording_id,
                 source=AnalyticsSource(
@@ -113,10 +115,17 @@ class AnalyticsJob:
                 f"Unsupported analytics jobType={job_type!r}"
             )
 
+        action = str(message.get("action", "START")).upper()
+        if action not in {"START", "STOP"}:
+            raise UnsupportedAnalyticsJob(
+                f"Unsupported analytics action={action!r}"
+            )
+
         recording_id = message.get("recordingId")
         return cls(
             job_id=_required_string(message, "jobId"),
             job_type=job_type,
+            action=action,
             camera_id=_required_string(message, "cameraId"),
             recording_id=(
                 str(recording_id)

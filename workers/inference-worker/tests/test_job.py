@@ -19,6 +19,7 @@ class AnalyticsJobTest(unittest.TestCase):
 
         self.assertEqual("event-1", job.job_id)
         self.assertEqual("RECORDING", job.job_type)
+        self.assertEqual("START", job.action)
         self.assertEqual("camera-1", job.camera_id)
         self.assertEqual("recording-1", job.recording_id)
         self.assertEqual("RECORDING_SERVICE", job.source.type)
@@ -65,6 +66,7 @@ class AnalyticsJobTest(unittest.TestCase):
                 "eventType": "ANALYTICS_JOB",
                 "jobId": "job-live-1",
                 "jobType": "REALTIME",
+                "action": "START",
                 "cameraId": "camera-1",
                 "source": {
                     "type": "RTSP",
@@ -79,6 +81,7 @@ class AnalyticsJobTest(unittest.TestCase):
         )
 
         self.assertEqual("REALTIME", job.job_type)
+        self.assertEqual("START", job.action)
         self.assertIsNone(job.recording_id)
         self.assertEqual("RTSP", job.source.type)
         self.assertEqual("TCP", job.source.transport)
@@ -91,6 +94,20 @@ class AnalyticsJobTest(unittest.TestCase):
                     "cameraId": "camera-1",
                 }
             )
+
+    def test_parses_realtime_stop(self) -> None:
+        job = AnalyticsJob.from_message(
+            {
+                "eventType": "ANALYTICS_JOB",
+                "jobId": "stop-live-1",
+                "jobType": "REALTIME",
+                "action": "STOP",
+                "cameraId": "camera-1",
+            }
+        )
+
+        self.assertEqual("STOP", job.action)
+        self.assertEqual("REALTIME", job.job_type)
 
 
 if __name__ == "__main__":

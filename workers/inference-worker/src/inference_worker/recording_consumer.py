@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -27,6 +28,13 @@ from inference_worker.worker_events import (
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class RealtimeProcess:
+    job: AnalyticsJob
+    process: subprocess.Popen
+    stop_requested: bool = False
 
 
 def download_recording(
@@ -178,6 +186,59 @@ def run_inference(
         )
 
 
+def realtime_environment(job: AnalyticsJob) -> dict[str, str]:
+    if not job.source.url:
+        raise ValueError("source.url is required for REALTIME jobs")
+    if job.source.type != "RTSP":
+        raise ValueError(
+            f"REALTIME source.type must be RTSP, got {job.source.type}"
+        )
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ANALYTICS_RTSP_URL": job.source.url,
+            "ANALYTICS_JOB_ID": job.job_id,
+            "CAMERA_ID": job.camera_id,
+            "RTSP_TRANSPORT": job.source.transport or "tcp",
+            "YOLO_CLASSES": ",".join(str(value) for value in job.profile.classes),
+        }
+    )
+    optional_environment = {
+        "YOLO_MODEL": job.profile.model,
+        "YOLO_CONFIDENCE": job.profile.confidence,
+        "YOLO_DEVICE": job.profile.device_preference,
+        "LINE_POSITION": job.profile.line_position,
+        "ANALYTICS_TARGET_FPS": job.profile.target_fps,
+    }
+    for key, value in optional_environment.items():
+        if value is not None:
+            environment[key] = str(value)
+    return environment
+
+
+def start_realtime(job: AnalyticsJob) -> RealtimeProcess:
+    process = subprocess.Popen(
+        [sys.executable, "-m", "inference_worker.realtime_main"],
+        env=realtime_environment(job),
+    )
+    return RealtimeProcess(job=job, process=process)
+
+
+def stop_realtime(running: RealtimeProcess, timeout: float = 15.0) -> None:
+    running.stop_requested = True
+    running.process.terminate()
+    try:
+        running.process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log.warning(
+            "Realtime process did not stop gracefully jobId=%s; killing",
+            running.job.job_id,
+        )
+        running.process.kill()
+        running.process.wait(timeout=5)
+
+
 def main() -> None:
 
     logging.basicConfig(
@@ -203,6 +264,7 @@ def main() -> None:
     worker_events = WorkerEventPublisher()
     heartbeat = WorkerHeartbeat(worker_events)
     heartbeat.start()
+    realtime_by_camera: dict[str, RealtimeProcess] = {}
 
     consumer = Consumer(
         {
@@ -241,6 +303,31 @@ def main() -> None:
     try:
 
         while True:
+
+            for camera_id, running in list(realtime_by_camera.items()):
+                exit_code = running.process.poll()
+                if exit_code is None:
+                    continue
+                realtime_by_camera.pop(camera_id)
+                heartbeat.set_active_jobs(len(realtime_by_camera))
+                worker_events.publish_status(
+                    job_id=running.job.job_id,
+                    camera_id=running.job.camera_id,
+                    recording_id=None,
+                    job_type="REALTIME",
+                    status=(
+                        "STOPPED"
+                        if running.stop_requested and exit_code == 0
+                        else "FAILED"
+                    ),
+                    details={"exitCode": exit_code},
+                )
+                log.info(
+                    "Realtime process exited jobId=%s cameraId=%s exitCode=%s",
+                    running.job.job_id,
+                    camera_id,
+                    exit_code,
+                )
 
             message = consumer.poll(
                 1.0
@@ -283,27 +370,104 @@ def main() -> None:
 
                 continue
 
-            if job.job_type != "RECORDING":
-                log.warning(
-                    "Skipping jobType=%s; real-time runner "
-                    "is not enabled yet jobId=%s",
-                    job.job_type,
-                    job.job_id,
-                )
-                worker_events.publish_status(
-                    job_id=job.job_id,
-                    camera_id=job.camera_id,
-                    recording_id=job.recording_id,
-                    job_type=job.job_type,
-                    status="REJECTED",
-                    details={
-                        "errorCode": "UNSUPPORTED_JOB_TYPE",
-                    },
-                )
-                consumer.commit(
-                    message=message,
-                    asynchronous=False,
-                )
+            if job.job_type == "REALTIME":
+                running = realtime_by_camera.get(job.camera_id)
+
+                if job.action == "STOP":
+                    if running is None:
+                        worker_events.publish_status(
+                            job_id=job.job_id,
+                            camera_id=job.camera_id,
+                            recording_id=None,
+                            job_type="REALTIME",
+                            status="REJECTED",
+                            details={"errorCode": "JOB_NOT_RUNNING"},
+                        )
+                    else:
+                        stop_realtime(running)
+                        realtime_by_camera.pop(job.camera_id, None)
+                        heartbeat.set_active_jobs(len(realtime_by_camera))
+                        worker_events.publish_status(
+                            job_id=running.job.job_id,
+                            camera_id=running.job.camera_id,
+                            recording_id=None,
+                            job_type="REALTIME",
+                            status="STOPPED",
+                            details={"stoppedByJobId": job.job_id},
+                        )
+                    consumer.commit(message=message, asynchronous=False)
+                    continue
+
+                if running is not None:
+                    status = (
+                        "RUNNING"
+                        if running.job.job_id == job.job_id
+                        else "REJECTED"
+                    )
+                    details = (
+                        {"idempotent": True}
+                        if status == "RUNNING"
+                        else {
+                            "errorCode": "CAMERA_ALREADY_RUNNING",
+                            "runningJobId": running.job.job_id,
+                        }
+                    )
+                    worker_events.publish_status(
+                        job_id=job.job_id,
+                        camera_id=job.camera_id,
+                        recording_id=None,
+                        job_type="REALTIME",
+                        status=status,
+                        details=details,
+                    )
+                    consumer.commit(message=message, asynchronous=False)
+                    continue
+
+                if len(realtime_by_camera) >= heartbeat.max_jobs:
+                    worker_events.publish_status(
+                        job_id=job.job_id,
+                        camera_id=job.camera_id,
+                        recording_id=None,
+                        job_type="REALTIME",
+                        status="REJECTED",
+                        details={"errorCode": "WORKER_BUSY"},
+                    )
+                    consumer.commit(message=message, asynchronous=False)
+                    continue
+
+                try:
+                    running = start_realtime(job)
+                except Exception as error:
+                    log.exception("Cannot start realtime job jobId=%s", job.job_id)
+                    worker_events.publish_status(
+                        job_id=job.job_id,
+                        camera_id=job.camera_id,
+                        recording_id=None,
+                        job_type="REALTIME",
+                        status="REJECTED",
+                        details={
+                            "errorCode": "INVALID_REALTIME_JOB",
+                            "message": str(error),
+                        },
+                    )
+                else:
+                    realtime_by_camera[job.camera_id] = running
+                    heartbeat.set_active_jobs(len(realtime_by_camera))
+                    worker_events.publish_status(
+                        job_id=job.job_id,
+                        camera_id=job.camera_id,
+                        recording_id=None,
+                        job_type="REALTIME",
+                        status="RUNNING",
+                        details={"pid": running.process.pid},
+                    )
+                    log.info(
+                        "Realtime inference started jobId=%s cameraId=%s pid=%s",
+                        job.job_id,
+                        job.camera_id,
+                        running.process.pid,
+                    )
+                consumer.commit(message=message, asynchronous=False)
                 continue
 
             log.info(
@@ -314,6 +478,18 @@ def main() -> None:
                 job.camera_id,
             )
 
+            if len(realtime_by_camera) >= heartbeat.max_jobs:
+                worker_events.publish_status(
+                    job_id=job.job_id,
+                    camera_id=job.camera_id,
+                    recording_id=job.recording_id,
+                    job_type=job.job_type,
+                    status="REJECTED",
+                    details={"errorCode": "WORKER_BUSY"},
+                )
+                consumer.commit(message=message, asynchronous=False)
+                continue
+
             worker_events.publish_status(
                 job_id=job.job_id,
                 camera_id=job.camera_id,
@@ -321,7 +497,7 @@ def main() -> None:
                 job_type=job.job_type,
                 status="RUNNING",
             )
-            heartbeat.set_active_jobs(1)
+            heartbeat.set_active_jobs(len(realtime_by_camera) + 1)
 
             retry_delay = 10
 
@@ -371,7 +547,7 @@ def main() -> None:
                 asynchronous=False,
             )
 
-            heartbeat.set_active_jobs(0)
+            heartbeat.set_active_jobs(len(realtime_by_camera))
 
             worker_events.publish_status(
                 job_id=job.job_id,
@@ -388,6 +564,8 @@ def main() -> None:
             )
 
     finally:
+        for running in list(realtime_by_camera.values()):
+            stop_realtime(running)
         heartbeat.stop()
         consumer.close()
         worker_events.close()

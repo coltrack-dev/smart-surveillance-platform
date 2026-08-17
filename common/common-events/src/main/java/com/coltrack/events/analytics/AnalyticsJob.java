@@ -8,6 +8,7 @@ public record AnalyticsJob(
         Integer schemaVersion,
         String eventType,
         String jobType,
+        String action,
         UUID cameraId,
         UUID recordingId,
         AnalyticsSource source,
