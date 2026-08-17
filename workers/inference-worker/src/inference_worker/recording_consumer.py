@@ -265,6 +265,18 @@ def main() -> None:
     heartbeat = WorkerHeartbeat(worker_events)
     heartbeat.start()
     realtime_by_camera: dict[str, RealtimeProcess] = {}
+    execution_mode = os.getenv(
+        "INFERENCE_EXECUTION_MODE", "process"
+    ).strip().lower()
+    if execution_mode not in {"process", "batched"}:
+        raise ValueError(
+            "INFERENCE_EXECUTION_MODE must be process or batched"
+        )
+    multistream = None
+    if execution_mode == "batched":
+        from inference_worker.multistream import MultistreamManager
+
+        multistream = MultistreamManager()
 
     consumer = Consumer(
         {
@@ -295,14 +307,18 @@ def main() -> None:
     )
 
     log.info(
-        "Waiting for analytics jobs topics=%s workerId=%s",
+        "Waiting for analytics jobs topics=%s workerId=%s executionMode=%s",
         topics,
         worker_events.worker_id,
+        execution_mode,
     )
 
     try:
 
         while True:
+
+            if multistream is not None:
+                multistream.check_health()
 
             for camera_id, running in list(realtime_by_camera.items()):
                 exit_code = running.process.poll()
@@ -372,9 +388,15 @@ def main() -> None:
 
             if job.job_type == "REALTIME":
                 running = realtime_by_camera.get(job.camera_id)
+                batched_job = (
+                    multistream.job_for(job.camera_id)
+                    if multistream is not None
+                    else None
+                )
+                current_job = running.job if running is not None else batched_job
 
                 if job.action == "STOP":
-                    if running is None:
+                    if current_job is None:
                         worker_events.publish_status(
                             job_id=job.job_id,
                             camera_id=job.camera_id,
@@ -384,12 +406,21 @@ def main() -> None:
                             details={"errorCode": "JOB_NOT_RUNNING"},
                         )
                     else:
-                        stop_realtime(running)
-                        realtime_by_camera.pop(job.camera_id, None)
-                        heartbeat.set_active_jobs(len(realtime_by_camera))
+                        if multistream is not None:
+                            multistream.stop(job.camera_id)
+                        else:
+                            assert running is not None
+                            stop_realtime(running)
+                            realtime_by_camera.pop(job.camera_id, None)
+                        active_jobs = (
+                            multistream.active_jobs
+                            if multistream is not None
+                            else len(realtime_by_camera)
+                        )
+                        heartbeat.set_active_jobs(active_jobs)
                         worker_events.publish_status(
-                            job_id=running.job.job_id,
-                            camera_id=running.job.camera_id,
+                            job_id=current_job.job_id,
+                            camera_id=current_job.camera_id,
                             recording_id=None,
                             job_type="REALTIME",
                             status="STOPPED",
@@ -398,10 +429,10 @@ def main() -> None:
                     consumer.commit(message=message, asynchronous=False)
                     continue
 
-                if running is not None:
+                if current_job is not None:
                     status = (
                         "RUNNING"
-                        if running.job.job_id == job.job_id
+                        if current_job.job_id == job.job_id
                         else "REJECTED"
                     )
                     details = (
@@ -409,7 +440,7 @@ def main() -> None:
                         if status == "RUNNING"
                         else {
                             "errorCode": "CAMERA_ALREADY_RUNNING",
-                            "runningJobId": running.job.job_id,
+                            "runningJobId": current_job.job_id,
                         }
                     )
                     worker_events.publish_status(
@@ -423,7 +454,12 @@ def main() -> None:
                     consumer.commit(message=message, asynchronous=False)
                     continue
 
-                if len(realtime_by_camera) >= heartbeat.max_jobs:
+                active_jobs = (
+                    multistream.active_jobs
+                    if multistream is not None
+                    else len(realtime_by_camera)
+                )
+                if active_jobs >= heartbeat.max_jobs:
                     worker_events.publish_status(
                         job_id=job.job_id,
                         camera_id=job.camera_id,
@@ -436,7 +472,10 @@ def main() -> None:
                     continue
 
                 try:
-                    running = start_realtime(job)
+                    if multistream is not None:
+                        multistream.start(job)
+                    else:
+                        running = start_realtime(job)
                 except Exception as error:
                     log.exception("Cannot start realtime job jobId=%s", job.job_id)
                     worker_events.publish_status(
@@ -451,21 +490,29 @@ def main() -> None:
                         },
                     )
                 else:
-                    realtime_by_camera[job.camera_id] = running
-                    heartbeat.set_active_jobs(len(realtime_by_camera))
+                    details = {"executionMode": execution_mode}
+                    if multistream is None:
+                        realtime_by_camera[job.camera_id] = running
+                        details["pid"] = running.process.pid
+                    active_jobs = (
+                        multistream.active_jobs
+                        if multistream is not None
+                        else len(realtime_by_camera)
+                    )
+                    heartbeat.set_active_jobs(active_jobs)
                     worker_events.publish_status(
                         job_id=job.job_id,
                         camera_id=job.camera_id,
                         recording_id=None,
                         job_type="REALTIME",
                         status="RUNNING",
-                        details={"pid": running.process.pid},
+                        details=details,
                     )
                     log.info(
-                        "Realtime inference started jobId=%s cameraId=%s pid=%s",
+                        "Realtime inference started jobId=%s cameraId=%s mode=%s",
                         job.job_id,
                         job.camera_id,
-                        running.process.pid,
+                        execution_mode,
                     )
                 consumer.commit(message=message, asynchronous=False)
                 continue
@@ -478,14 +525,22 @@ def main() -> None:
                 job.camera_id,
             )
 
-            if len(realtime_by_camera) >= heartbeat.max_jobs:
+            active_realtime_jobs = (
+                multistream.active_jobs
+                if multistream is not None
+                else len(realtime_by_camera)
+            )
+            if active_realtime_jobs > 0:
                 worker_events.publish_status(
                     job_id=job.job_id,
                     camera_id=job.camera_id,
                     recording_id=job.recording_id,
                     job_type=job.job_type,
                     status="REJECTED",
-                    details={"errorCode": "WORKER_BUSY"},
+                    details={
+                        "errorCode": "WORKER_BUSY",
+                        "message": "Recording jobs cannot share a worker with realtime jobs",
+                    },
                 )
                 consumer.commit(message=message, asynchronous=False)
                 continue
@@ -566,6 +621,8 @@ def main() -> None:
     finally:
         for running in list(realtime_by_camera.values()):
             stop_realtime(running)
+        if multistream is not None:
+            multistream.close()
         heartbeat.stop()
         consumer.close()
         worker_events.close()

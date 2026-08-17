@@ -172,9 +172,12 @@ class WorkerHeartbeat:
         self.interval_seconds = float(
             os.getenv("INFERENCE_HEARTBEAT_SECONDS", "15")
         )
-        self.max_jobs = int(
-            os.getenv("INFERENCE_MAX_CONCURRENT_JOBS", "1")
-        )
+        if os.getenv("INFERENCE_EXECUTION_MODE", "process").lower() == "batched":
+            self.max_jobs = int(os.getenv("INFERENCE_MAX_CAMERAS", "8"))
+        else:
+            self.max_jobs = int(
+                os.getenv("INFERENCE_MAX_CONCURRENT_JOBS", "1")
+            )
         self._active_jobs = 0
         self._lock = threading.Lock()
         self._stop = threading.Event()

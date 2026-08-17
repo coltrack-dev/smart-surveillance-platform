@@ -50,9 +50,16 @@ builds it from `RECORDING_SERVICE_URL` and `recordingId`.
 
 ## Real-time job
 
-The consumer starts `inference_worker.realtime_main` as a child process, keeps
-polling Kafka, and can therefore receive a stop command while inference is
-running. The runner reconnects when RTSP is temporarily unavailable and limits
+The worker has two real-time execution modes:
+
+- `process` (default and rollback mode) starts one `realtime_main` process and
+  one YOLO model per camera;
+- `batched` keeps one YOLO model on the GPU, reads every RTSP source in a
+  separate capture thread, forms micro-batches and keeps an independent
+  ByteTrack instance for every camera.
+
+Both modes keep polling Kafka and can receive STOP while inference is running.
+RTSP readers reconnect when a source is temporarily unavailable and limit
 inference with `profile.targetFps`.
 
 Start:
@@ -110,6 +117,11 @@ export KAFKA_CONSUMER_GROUP=inference-workers
 export RECORDING_SERVICE_URL=http://192.168.13.128:8095
 export INFERENCE_WORKER_ID=wsl-rtx5080-01
 export INFERENCE_WORK_DIRECTORY="$PWD/data/work"
+export INFERENCE_EXECUTION_MODE=batched
+export INFERENCE_MAX_CAMERAS=8
+export INFERENCE_BATCH_SIZE=4
+export INFERENCE_BATCH_MAX_WAIT_MS=20
+export INFERENCE_SNAPSHOT_WORKERS=2
 export YOLO_MODEL=/models/yolo11n.pt
 export YOLO_DEVICE=cuda:0
 export KAFKA_ENABLED=true
@@ -123,3 +135,24 @@ python -m inference_worker.recording_consumer
 
 All GPU nodes must use the same consumer group when each job should be claimed
 by exactly one node. Give every node a unique `INFERENCE_WORKER_ID`.
+
+## Batched mode constraints
+
+All simultaneously active cameras on one worker must use the same model,
+device, classes and confidence threshold. `linePosition` and `targetFps` may be
+different per camera. A conflicting START is rejected instead of silently
+changing the profile of already running cameras.
+
+The latest-frame buffer contains one frame per camera. If inference is slower
+than a source, an old frame is replaced rather than queued. This intentionally
+keeps real-time latency bounded. Snapshot uploads run outside the CUDA thread.
+
+Start with `INFERENCE_BATCH_SIZE=4` and `INFERENCE_MAX_CAMERAS=8`, then tune
+them using GPU memory, inference latency and dropped-frame metrics. To roll
+back without changing code:
+
+```bash
+export INFERENCE_EXECUTION_MODE=process
+export INFERENCE_MAX_CONCURRENT_JOBS=1
+python -m inference_worker.recording_consumer
+```
