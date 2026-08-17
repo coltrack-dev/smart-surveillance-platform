@@ -58,7 +58,7 @@ class AnalyticsEventHandlerRegistryTest {
     private AnalyticsEvent event(String eventType) {
         return new AnalyticsEvent(
                 UUID.randomUUID(), 1, eventType, "camera-1",
-                10L, "PERSON", null, 25L, null,
+                null, 10L, "PERSON", null, 25L, null,
                 OffsetDateTime.now(), Map.of("direction", "UP")
         );
     }

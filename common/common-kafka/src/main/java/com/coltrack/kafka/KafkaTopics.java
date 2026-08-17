@@ -31,6 +31,15 @@ public final class KafkaTopics {
     public static final String ANALYTICS_EVENTS =
             "analytics.events";
 
+    public static final String ANALYTICS_JOBS =
+            "analytics.jobs";
+
+    public static final String ANALYTICS_JOB_STATUS =
+            "analytics.job-status";
+
+    public static final String ANALYTICS_WORKER_HEARTBEAT =
+            "analytics.worker-heartbeat";
+
     public static final String CAMERA_HEARTBEAT =
             "camera.heartbeat";
 

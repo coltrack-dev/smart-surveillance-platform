@@ -4,6 +4,10 @@ import type {
     AnalyticsEventFilters,
     AnalyticsEventsPage
 } from "@/types/AnalyticsEvent";
+import type {
+    AnalyticsJob,
+    RealtimeAnalyticsStartRequest
+} from "@/types/AnalyticsControl";
 
 interface AnalyticsEventsApiPage {
     content: AnalyticsEvent[];
@@ -41,4 +45,43 @@ export async function findAnalyticsEvents(
 export async function findAnalyticsEvent(eventId: string): Promise<AnalyticsEvent> {
     const response = await http.get<AnalyticsEvent>(`/analytics/events/${eventId}`);
     return response.data;
+}
+
+export async function startRealtimeAnalytics(
+    cameraId: string,
+    request: RealtimeAnalyticsStartRequest
+): Promise<AnalyticsJob> {
+    const response = await http.post<AnalyticsJob>(
+        `/analytics/realtime/${cameraId}/start`,
+        request
+    );
+    return response.data;
+}
+
+export async function stopRealtimeAnalytics(cameraId: string): Promise<AnalyticsJob> {
+    const response = await http.post<AnalyticsJob>(
+        `/analytics/realtime/${cameraId}/stop`
+    );
+    return response.data;
+}
+
+export async function findLatestRealtimeAnalyticsJob(
+    cameraId: string
+): Promise<AnalyticsJob | null> {
+    try {
+        const response = await http.get<AnalyticsJob>(
+            `/analytics/realtime/${cameraId}`
+        );
+        return response.data;
+    } catch (error: unknown) {
+        if (
+            typeof error === "object"
+            && error !== null
+            && "response" in error
+            && (error as { response?: { status?: number } }).response?.status === 404
+        ) {
+            return null;
+        }
+        throw error;
+    }
 }

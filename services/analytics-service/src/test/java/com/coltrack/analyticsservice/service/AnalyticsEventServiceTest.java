@@ -70,7 +70,7 @@ class AnalyticsEventServiceTest {
     private AnalyticsEvent event() {
         return new AnalyticsEvent(
                 UUID.randomUUID(), 1, "LINE_CROSSED", "camera-1",
-                10L, "PERSON", null, 25L, null,
+                null, 10L, "PERSON", null, 25L, null,
                 OffsetDateTime.now(), Map.of("direction", "UP")
         );
     }

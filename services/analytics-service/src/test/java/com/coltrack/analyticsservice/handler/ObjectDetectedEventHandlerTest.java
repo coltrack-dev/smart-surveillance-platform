@@ -27,6 +27,7 @@ class ObjectDetectedEventHandlerTest {
                 1,
                 "OBJECT_DETECTED",
                 "camera-1",
+                null,
                 42L,
                 "PERSON",
                 new BigDecimal("0.92345"),
