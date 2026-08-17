@@ -423,7 +423,21 @@ class MultistreamManager:
         config = IterableSimpleNamespace(
             **YAML.load(check_yaml("bytetrack.yaml"))
         )
-        return BYTETracker(args=config, frame_rate=max(1, int(frame_rate)))
+
+        try:
+            return BYTETracker(
+                args=config,
+                frame_rate=max(1, int(frame_rate))
+            )
+        except TypeError as error:
+            if "unexpected keyword argument 'frame_rate'" not in str(error):
+                raise
+
+            log.warning(
+                "BYTETracker does not support frame_rate; "
+                "using installed Ultralytics API"
+            )
+            return BYTETracker(args=config)
 
     @staticmethod
     def _device(job: AnalyticsJob) -> str:

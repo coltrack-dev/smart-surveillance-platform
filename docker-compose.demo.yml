@@ -146,6 +146,39 @@ services:
       - rtsp://mediamtx:8554/people
     restart: unless-stopped
 
+  # Тестовый источник №3: второй RTSP-поток из того же people.mp4
+  rtsp-file-publisher-2:
+    image: linuxserver/ffmpeg:7.1.1
+    container_name: surveillance-rtsp-file-publisher-2
+    depends_on:
+      - mediamtx
+    cpus: "1.00"
+    volumes:
+      - ./data/analytics/input:/videos:ro
+    command:
+      - -re
+      - -stream_loop
+      - "-1"
+      - -ss
+      - "15"
+      - -i
+      - /videos/people.mp4
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -pix_fmt
+      - yuv420p
+      - -an
+      - -f
+      - rtsp
+      - -rtsp_transport
+      - tcp
+      - rtsp://mediamtx:8554/people-2
+    restart: unless-stopped
+
   # I-287 Just East of Interchange 5 (Route 119)
   rtsp-i287-publisher:
     image: linuxserver/ffmpeg:7.1.1

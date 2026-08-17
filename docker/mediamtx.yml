@@ -11,4 +11,5 @@ hls: yes
 paths:
   test: {}
   people: {}         # локальный файл people.mp4
+  people-2: {}         # локальный файл people.mp4
   i287: {}           # дорожная камера
