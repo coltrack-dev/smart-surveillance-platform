@@ -12,6 +12,9 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 /**
@@ -27,7 +30,15 @@ import java.util.List;
 public class CameraStreamWorker implements Runnable {
 
     private static final int PLAYLIST_TIMEOUT_SECONDS = 30;
-    private static final int RECONNECT_DELAY_SECONDS = 5;
+
+    /** Maximum acceptable age of the playlist while FFmpeg is alive. */
+    private static final int STALE_PLAYLIST_SECONDS = 15;
+
+    /** Upper bound for exponential reconnect backoff. */
+    private static final int MAX_RECONNECT_DELAY_SECONDS = 30;
+
+    /** Number of recent FFmpeg lines attached to a failure description. */
+    private static final int FFMPEG_LOG_LINES = 30;
 
     private final StreamSession session;
     private final HlsService hlsService;
@@ -46,252 +57,279 @@ public class CameraStreamWorker implements Runnable {
     @Override
     public void run() {
 
-        Path outputDir =
-                hlsService.createStreamDirectory(
-                        session.getCameraId()
-                );
+        session.setWorkerRunning(true);
 
-        hlsService.cleanupStreamDirectory(outputDir);
+        try {
+            Path outputDir =
+                    hlsService.createStreamDirectory(
+                            session.getCameraId()
+                    );
 
-        while (!session.isStopRequested()) {
+            while (!session.isStopRequested()) {
 
-            Process process = null;
-
-            try {
-
-                log.info(
-                        "Starting FFmpeg camera={}",
-                        session.getCameraId()
-                );
-
-                process =
-                        new ProcessBuilder(
-                                buildCommand(outputDir)
-                        )
-                                .redirectErrorStream(true)
-                                .start();
-
-                log.info(
-                        "FFmpeg started camera={} pid={}",
-                        session.getCameraId(),
-                        process.pid()
-                );
+                Process process = null;
 
                 /*
-                 * Consume FFmpeg output continuously.
-                 * Prevents process from blocking because of a full pipe
-                 * and provides diagnostics.
+                 * Keep only a bounded tail of FFmpeg output. It provides the real
+                 * cause of exit code 1 without retaining an unlimited log in RAM.
                  */
-                Process finalProcess = process;
+                Deque<String> ffmpegOutput = new ArrayDeque<>();
 
-                Thread.startVirtualThread(() -> {
+                try {
 
-                    try (BufferedReader reader =
-                                 new BufferedReader(
-                                         new InputStreamReader(
-                                                 finalProcess.getInputStream()
-                                         ))) {
+                    /*
+                     * A playlist left by an earlier attempt must not make the new
+                     * process appear ready before it has produced its own segment.
+                     */
+                    hlsService.cleanupStreamDirectory(outputDir);
 
-                        String line;
+                    log.info(
+                            "Starting FFmpeg camera={}",
+                            session.getCameraId()
+                    );
 
-                        while ((line = reader.readLine()) != null) {
-                            log.debug("[ffmpeg] {}", line);
+                    process =
+                            new ProcessBuilder(
+                                    buildCommand(outputDir)
+                            )
+                                    .redirectErrorStream(true)
+                                    .start();
+
+                    log.info(
+                            "FFmpeg started camera={} pid={}",
+                            session.getCameraId(),
+                            process.pid()
+                    );
+
+                    /*
+                     * Consume FFmpeg output continuously.
+                     * Prevents process from blocking because of a full pipe
+                     * and provides diagnostics.
+                     */
+                    Process finalProcess = process;
+
+                    Thread.startVirtualThread(() -> {
+
+                        try (BufferedReader reader =
+                                     new BufferedReader(
+                                             new InputStreamReader(
+                                                     finalProcess.getInputStream()
+                                             ))) {
+
+                            String line;
+
+                            while ((line = reader.readLine()) != null) {
+                                synchronized (ffmpegOutput) {
+                                    if (ffmpegOutput.size() == FFMPEG_LOG_LINES) {
+                                        ffmpegOutput.removeFirst();
+                                    }
+                                    ffmpegOutput.addLast(line);
+                                }
+                                log.info("[ffmpeg] camera={} {}", session.getCameraId(), line);
+                            }
+
+                        } catch (Exception ignored) {
+                        }
+                    });
+
+                    session.setFfmpegProcess(process);
+                    session.setStatus(StreamStatus.STARTING);
+
+                    if (session.getStartedAt() == null) {
+                        session.setStartedAt(Instant.now());
+                    }
+
+                    log.info(
+                            "Waiting HLS playlist camera={} dir={}",
+                            session.getCameraId(),
+                            outputDir.toAbsolutePath()
+                    );
+
+                    waitForPlaylist(outputDir, process);
+
+                    log.info(
+                            "HLS playlist created camera={}",
+                            session.getCameraId()
+                    );
+
+                    session.setHlsUrl(
+                            hlsService.getStreamUrl(
+                                    session.getCameraId()
+                            )
+                    );
+
+                    session.setStatus(StreamStatus.RUNNING);
+
+                    listener.started(session);
+
+                    log.info(
+                            "Stream started camera={}",
+                            session.getCameraId()
+                    );
+
+                    /*
+                     * Monitor FFmpeg.
+                     */
+                    Path playlist = outputDir.resolve("index.m3u8");
+                    while (process.isAlive()) {
+
+                        if (session.isStopRequested()) {
+
+                            log.info(
+                                    "Manual stop detected camera={}",
+                                    session.getCameraId()
+                            );
+
+                            process.destroy();
+
+                            if (!process.waitFor(
+                                    5,
+                                    java.util.concurrent.TimeUnit.SECONDS
+                            )) {
+
+                                process.destroyForcibly();
+                            }
+
+                            break;
                         }
 
-                    } catch (Exception ignored) {
+                        /*
+                         * A live process does not guarantee a live stream: FFmpeg
+                         * can remain alive after the RTSP source stops delivering
+                         * packets. Playlist modification time is used as a simple
+                         * output watchdog and reflects actual HLS progress.
+                         */
+                        Instant playlistModified = Files.getLastModifiedTime(playlist).toInstant();
+                        if (Duration.between(playlistModified, Instant.now()).getSeconds()
+                                > STALE_PLAYLIST_SECONDS) {
+                            throw new IOException("HLS playlist has not changed for more than "
+                                    + STALE_PLAYLIST_SECONDS + " seconds");
+                        }
+                        session.setLastFrameTime(playlistModified);
+
+                        Thread.sleep(1000);
                     }
-                });
 
-                session.setFfmpegProcess(process);
-                session.setStatus(StreamStatus.STARTING);
-
-                if (session.getStartedAt() == null) {
-                    session.setStartedAt(Instant.now());
-                }
-
-                log.info(
-                        "Waiting HLS playlist camera={} dir={}",
-                        session.getCameraId(),
-                        outputDir.toAbsolutePath()
-                );
-
-                waitForPlaylist(outputDir, process);
-
-                log.info(
-                        "HLS playlist created camera={}",
-                        session.getCameraId()
-                );
-
-                session.setHlsUrl(
-                        hlsService.getStreamUrl(
-                                session.getCameraId()
-                        )
-                );
-
-                session.setStatus(StreamStatus.RUNNING);
-
-                listener.started(session);
-
-                log.info(
-                        "Stream started camera={}",
-                        session.getCameraId()
-                );
-
-                /*
-                 * Monitor FFmpeg.
-                 */
-                while (process.isAlive()) {
+                    int exitCode =
+                            process.waitFor();
 
                     if (session.isStopRequested()) {
 
                         log.info(
-                                "Manual stop detected camera={}",
+                                "FFmpeg stopped manually camera={} exitCode={}",
+                                session.getCameraId(),
+                                exitCode
+                        );
+
+                        session.setStatus(StreamStatus.STOPPED);
+
+                        break;
+                    }
+
+                    session.setLastError(buildFfmpegError(exitCode, ffmpegOutput));
+
+                    session.setStatus(StreamStatus.ERROR);
+
+                    listener.failed(session);
+
+                    log.warn(
+                            "FFmpeg exited camera={} exitCode={}, reconnecting",
+                            session.getCameraId(),
+                            exitCode
+                    );
+
+                } catch (Exception e) {
+
+                    log.error("*** Stream failed camera={}", session.getCameraId(), e);
+
+                    /*
+                     * If playlist was not created,
+                     * ensure FFmpeg is not left running.
+                     */
+                    if (process != null && process.isAlive()) {
+
+                        log.warn("Stopping orphan FFmpeg camera={}", session.getCameraId());
+
+                        process.destroyForcibly();
+
+                        try {
+                            process.waitFor();
+                        } catch (InterruptedException ex) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+
+                    if (session.isStopRequested()) {
+
+                        log.info(
+                                "Stream shutdown requested camera={}",
+                                session.getCameraId()
+                        );
+
+                        break;
+                    }
+
+                    session.setStatus(StreamStatus.ERROR);
+
+                    session.setLastError(buildFailureMessage(e, ffmpegOutput));
+
+                    listener.failed(session);
+
+                } finally {
+
+                    if (process != null && process.isAlive()) {
+
+                        log.info(
+                                "Destroying FFmpeg process camera={}",
                                 session.getCameraId()
                         );
 
                         process.destroy();
 
-                        if (!process.waitFor(
-                                5,
-                                java.util.concurrent.TimeUnit.SECONDS
-                        )) {
+                        try {
+
+                            if (!process.waitFor(
+                                    5,
+                                    java.util.concurrent.TimeUnit.SECONDS
+                            )) {
+
+                                process.destroyForcibly();
+                            }
+
+                        } catch (InterruptedException e) {
+
+                            Thread.currentThread().interrupt();
 
                             process.destroyForcibly();
                         }
-
-                        break;
                     }
 
-                    session.setLastFrameTime(
-                            Instant.now()
+                    session.setFfmpegProcess(null);
+                }
+
+                if (!session.isStopRequested()) {
+
+                    session.setReconnectCount(
+                            session.getReconnectCount() + 1
                     );
 
-                    Thread.sleep(1000);
-                }
-
-                int exitCode =
-                        process.waitFor();
-
-                if (session.isStopRequested()) {
-
-                    log.info(
-                            "FFmpeg stopped manually camera={} exitCode={}",
-                            session.getCameraId(),
-                            exitCode
+                    session.setStatus(
+                            StreamStatus.RECONNECTING
                     );
 
-                    session.setStatus(StreamStatus.STOPPED);
+                    listener.reconnecting(session);
 
-                    break;
+                    sleepBeforeReconnect();
                 }
-
-                session.setLastError(
-                        "FFmpeg exited with code " + exitCode
-                );
-
-                session.setStatus(StreamStatus.ERROR);
-
-                listener.failed(session);
-
-                log.warn(
-                        "FFmpeg exited camera={} exitCode={}, reconnecting",
-                        session.getCameraId(),
-                        exitCode
-                );
-
-            } catch (Exception e) {
-
-                log.error("*** Stream failed camera={}", session.getCameraId(), e);
-
-                /*
-                 * If playlist was not created,
-                 * ensure FFmpeg is not left running.
-                 */
-                if (process != null && process.isAlive()) {
-
-                    log.warn("Stopping orphan FFmpeg camera={}", session.getCameraId());
-
-                    process.destroyForcibly();
-
-                    try {
-                        process.waitFor();
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-
-                if (session.isStopRequested()) {
-
-                    log.info(
-                            "Stream shutdown requested camera={}",
-                            session.getCameraId()
-                    );
-
-                    break;
-                }
-
-                session.setStatus(StreamStatus.ERROR);
-
-                session.setLastError(e.getMessage());
-
-                listener.failed(session);
-
-            } finally {
-
-                if (process != null && process.isAlive()) {
-
-                    log.info(
-                            "Destroying FFmpeg process camera={}",
-                            session.getCameraId()
-                    );
-
-                    process.destroy();
-
-                    try {
-
-                        if (!process.waitFor(
-                                5,
-                                java.util.concurrent.TimeUnit.SECONDS
-                        )) {
-
-                            process.destroyForcibly();
-                        }
-
-                    } catch (InterruptedException e) {
-
-                        Thread.currentThread().interrupt();
-
-                        process.destroyForcibly();
-                    }
-                }
-
-                session.setFfmpegProcess(null);
             }
 
-            if (!session.isStopRequested()) {
-
-                session.setReconnectCount(
-                        session.getReconnectCount() + 1
-                );
-
-                session.setStatus(
-                        StreamStatus.RECONNECTING
-                );
-
-                listener.reconnecting(session);
-
-                sleepBeforeReconnect();
-            }
+        } finally {
+            session.setWorkerRunning(false);
+            session.setFfmpegProcess(null);
+            session.setStatus(StreamStatus.STOPPED);
+            listener.stopped(session);
+            log.info("Worker stopped camera={}", session.getCameraId());
         }
-
-        session.setStatus(StreamStatus.STOPPED);
-
-        listener.stopped(session);
-
-        log.info(
-                "Worker stopped camera={}",
-                session.getCameraId()
-        );
     }
 
     /**
@@ -318,7 +356,7 @@ public class CameraStreamWorker implements Runnable {
 
         while (System.currentTimeMillis() < deadline) {
 
-            if (Files.exists(playlist)) {
+            if (isPlaylistReady(playlist)) {
 
                 log.info(
                         "HLS playlist created camera={} after {} ms",
@@ -358,9 +396,16 @@ public class CameraStreamWorker implements Runnable {
 
         try {
 
-            Thread.sleep(
-                    RECONNECT_DELAY_SECONDS * 1000L
-            );
+            /*
+             * Fast retries handle short camera/network interruptions, while
+             * exponential backoff avoids a tight restart loop during a long
+             * outage. The delay sequence is 1, 2, 4, 8, 16, 30 seconds.
+             */
+            int exponent = Math.min(Math.max(session.getReconnectCount() - 1, 0), 5);
+            long delaySeconds = Math.min(1L << exponent, MAX_RECONNECT_DELAY_SECONDS);
+            log.info("Reconnect backoff camera={} delaySeconds={}",
+                    session.getCameraId(), delaySeconds);
+            Thread.sleep(delaySeconds * 1000L);
 
         } catch (InterruptedException e) {
 
@@ -393,11 +438,22 @@ public class CameraStreamWorker implements Runnable {
 
                 "ffmpeg",
 
+                "-hide_banner",
+
+                "-loglevel",
+                "info",
+
                 "-rtsp_transport",
                 "tcp",
 
+                "-rw_timeout",
+                "15000000",
+
                 "-i",
                 session.getRtspUrl(),
+
+                "-map",
+                "0:v:0",
 
                 "-c:v",
                 "copy",
@@ -411,7 +467,7 @@ public class CameraStreamWorker implements Runnable {
                 "2",
 
                 "-hls_list_size",
-                "5",
+                "6",
 
                 "-start_number",
                 "0",
@@ -422,11 +478,63 @@ public class CameraStreamWorker implements Runnable {
                         .toString(),
 
                 "-hls_flags",
-                "delete_segments+independent_segments+omit_endlist",
+                "delete_segments+append_list+independent_segments+omit_endlist+temp_file",
 
                 outputDir
                         .resolve("index.m3u8")
                         .toString()
         );
+    }
+
+    static boolean isPlaylistReady(Path playlist) throws IOException {
+
+        /*
+         * File existence alone is insufficient: FFmpeg creates the playlist
+         * before the first segment may be completely available to a client.
+         */
+        if (!Files.isRegularFile(playlist) || Files.size(playlist) == 0) {
+            return false;
+        }
+        List<String> lines = Files.readAllLines(playlist);
+        if (lines.stream().noneMatch(line -> line.startsWith("#EXTINF:"))) {
+            return false;
+        }
+        for (String line : lines) {
+            String value = line.trim();
+            if (!value.isEmpty() && !value.startsWith("#")) {
+                Path segment = playlist.getParent().resolve(value).normalize();
+
+                /*
+                 * Accept readiness only when a referenced, non-empty segment
+                 * exists inside the camera directory. startsWith also rejects
+                 * malformed playlist entries that escape through "../".
+                 */
+                if (segment.startsWith(playlist.getParent())
+                        && Files.isRegularFile(segment) && Files.size(segment) > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String buildFfmpegError(int exitCode, Deque<String> output) {
+        String details;
+        synchronized (output) {
+            details = String.join(" | ", output);
+        }
+        return "FFmpeg exited with code " + exitCode
+                + (details.isBlank() ? "" : ". Last output: " + details);
+    }
+
+    private String buildFailureMessage(Exception failure, Deque<String> output) {
+        String details;
+        synchronized (output) {
+            details = String.join(" | ", output);
+        }
+        String message = failure.getMessage() == null
+                ? failure.getClass().getSimpleName()
+                : failure.getMessage();
+        return details.isBlank() ? message : message + ". Last FFmpeg output: " + details;
     }
 }

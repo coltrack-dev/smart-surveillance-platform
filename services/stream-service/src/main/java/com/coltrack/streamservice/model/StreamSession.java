@@ -68,6 +68,17 @@ public class StreamSession {
 
     private volatile boolean stopRequested;
 
+    /**
+     * Indicates that the CameraStreamWorker lifecycle is still active.
+     *
+     * This flag is intentionally independent from the FFmpeg process state:
+     * between reconnect attempts FFmpeg is not running, but the worker still
+     * owns the camera session and will start a new process. StreamManager uses
+     * it to prevent a second worker from being created during that interval.
+     */
+    @JsonIgnore
+    private volatile boolean workerRunning;
+
     public boolean isRunning() {
         return status == StreamStatus.RUNNING;
     }

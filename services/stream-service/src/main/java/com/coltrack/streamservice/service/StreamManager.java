@@ -59,16 +59,19 @@ public class StreamManager implements StreamListener {
      * Starts camera stream.
      * If stream already running returns existing session.
      */
-    public StreamSession start(UUID cameraId) {
+    public synchronized StreamSession start(UUID cameraId) {
 
         StreamSession existing = sessions.get(cameraId);
 
 
         if (existing != null) {
 
-            Process process = existing.getFfmpegProcess();
-
-            if (process != null && process.isAlive()) {
+            /*
+             * FFmpeg may temporarily be absent while the existing worker is
+             * waiting before a reconnect. The worker flag, rather than only
+             * process.isAlive(), prevents two FFmpeg processes for one camera.
+             */
+            if (existing.isWorkerRunning() && !existing.isStopRequested()) {
 
                 log.info("Stream already running camera={}", cameraId);
                 return existing;
@@ -114,7 +117,7 @@ public class StreamManager implements StreamListener {
     /**
      * Stops camera stream.
      */
-    public void stop(UUID cameraId) {
+    public synchronized void stop(UUID cameraId) {
 
         StreamSession session = sessions.get(cameraId);
         if (session == null) {
@@ -202,7 +205,7 @@ public class StreamManager implements StreamListener {
 
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.STOPPED);
-        sessions.remove(cameraId);
+        sessions.remove(cameraId, session);
 
         log.info("Stream stopped camera={}",cameraId);
 
@@ -230,8 +233,12 @@ public class StreamManager implements StreamListener {
 
         UUID cameraId = session.getCameraId();
         session.setStatus(StreamStatus.ERROR);
-        sessions.remove(cameraId);
 
+        /*
+         * Do not remove the session here. CameraStreamWorker treats most RTSP
+         * failures as recoverable and continues with RECONNECTING. The session
+         * is removed only when the worker has actually stopped.
+         */
         log.error(
                 "Stream failed camera={}, error={}",
                 cameraId,
