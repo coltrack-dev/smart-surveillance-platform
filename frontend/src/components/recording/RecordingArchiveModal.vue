@@ -2,6 +2,7 @@
 import {
   computed,
   onMounted,
+  onUnmounted,
   ref
 } from "vue";
 
@@ -22,6 +23,12 @@ import {
 } from "@/api/recordingApi";
 
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
+import type {AnalyticsJob, AnalyticsJobStatus} from "@/types/AnalyticsControl";
+import {
+  findAnalyticsJob,
+  findLatestRecordingAnalyticsJob,
+  startRecordingAnalytics
+} from "@/api/analyticsApi";
 
 const props = defineProps<{
   camera: Camera;
@@ -44,6 +51,28 @@ const errorMessage = ref<string | null>(null);
 const playbackLoading = ref(false);
 const playbackError = ref<string | null>(null);
 const preparedPlaybackUrl = ref<string | null>(null);
+const analyticsJob = ref<AnalyticsJob | null>(null);
+const analyticsLoading = ref(false);
+const analyticsError = ref<string | null>(null);
+let analyticsPollingTimer: ReturnType<typeof setInterval> | null = null;
+
+const activeAnalyticsStatuses = new Set<AnalyticsJobStatus>([
+  "REQUESTED",
+  "RUNNING",
+  "RETRYING",
+  "STOP_REQUESTED"
+]);
+
+const analyticsRunning = computed(() =>
+    analyticsJob.value != null
+    && activeAnalyticsStatuses.has(analyticsJob.value.status)
+);
+
+const canAnalyzeSelectedRecording = computed(() =>
+    selectedRecording.value != null
+    && selectedRecording.value.status !== "RECORDING"
+    && selectedRecording.value.finishedAt != null
+);
 
 const playbackBaseUrl =
     import.meta.env.VITE_RECORDING_URL ??
@@ -116,8 +145,10 @@ async function selectDate(
      * сразу открываем её.
      */
     if (recordings.value.length === 1) {
-      selectedRecording.value =
-          recordings.value[0] ?? null;
+      const recording = recordings.value[0];
+      if (recording) {
+        await selectRecording(recording);
+      }
     }
 
   } catch (error) {
@@ -253,21 +284,100 @@ function statusClass(
 }
 
 function close(): void {
+  stopAnalyticsPolling();
   emit("close");
 }
 
-//function selectRecording(
-//    recording: Recording
-//): void {
-//
-//  selectedRecording.value = recording;
-//}
+function analyticsStatusLabel(status: AnalyticsJobStatus): string {
+  const labels: Record<AnalyticsJobStatus, string> = {
+    REQUESTED: "Waiting for worker",
+    RUNNING: "Analysis in progress",
+    RETRYING: "Retrying analysis",
+    STOP_REQUESTED: "Stopping",
+    STOPPED: "Stopped",
+    COMPLETED: "Analysis completed",
+    FAILED: "Analysis failed",
+    REJECTED: "Analysis rejected"
+  };
+  return labels[status];
+}
+
+function stopAnalyticsPolling(): void {
+  if (analyticsPollingTimer != null) {
+    clearInterval(analyticsPollingTimer);
+    analyticsPollingTimer = null;
+  }
+}
+
+function startAnalyticsPolling(jobId: string): void {
+  stopAnalyticsPolling();
+  analyticsPollingTimer = setInterval(async () => {
+    try {
+      const job = await findAnalyticsJob(jobId);
+      if (job.recordingId !== selectedRecording.value?.id) {
+        return;
+      }
+      analyticsJob.value = job;
+      if (!activeAnalyticsStatuses.has(job.status)) {
+        stopAnalyticsPolling();
+      }
+    } catch (error) {
+      console.error("Unable to refresh analytics job", error);
+    }
+  }, 3000);
+}
+
+async function loadRecordingAnalytics(recordingId: string): Promise<void> {
+  stopAnalyticsPolling();
+  analyticsJob.value = null;
+  analyticsError.value = null;
+  try {
+    const job = await findLatestRecordingAnalyticsJob(recordingId);
+    if (selectedRecording.value?.id !== recordingId) {
+      return;
+    }
+    analyticsJob.value = job;
+    if (job && activeAnalyticsStatuses.has(job.status)) {
+      startAnalyticsPolling(job.jobId);
+    }
+  } catch (error) {
+    console.error("Unable to load recording analytics", error);
+    analyticsError.value = "Unable to load analytics status.";
+  }
+}
+
+async function runRecordingAnalytics(): Promise<void> {
+  const recording = selectedRecording.value;
+  if (!recording || !canAnalyzeSelectedRecording.value || analyticsRunning.value) {
+    return;
+  }
+  analyticsLoading.value = true;
+  analyticsError.value = null;
+  try {
+    const job = await startRecordingAnalytics(recording.id, {
+      cameraId: recording.cameraId,
+      classes: [0],
+      confidence: 0.5,
+      devicePreference: "auto",
+      linePosition: 0.5,
+      targetFps: 10
+    });
+    analyticsJob.value = job;
+    startAnalyticsPolling(job.jobId);
+  } catch (error) {
+    console.error("Unable to start recording analytics", error);
+    analyticsError.value = "Unable to start recording analysis.";
+  } finally {
+    analyticsLoading.value = false;
+  }
+}
 
 async function selectRecording(
     recording: Recording
 ): Promise<void> {
 
   selectedRecording.value = recording;
+  void loadRecordingAnalytics(recording.id);
 
   preparedPlaybackUrl.value = null;
   playbackError.value = null;
@@ -321,6 +431,8 @@ async function selectRecording(
 onMounted(
     loadDates
 );
+
+onUnmounted(stopAnalyticsPolling);
 </script>
 
 <template>
@@ -484,6 +596,42 @@ onMounted(
             </div>
 
 
+            <div
+                v-if="selectedRecording"
+                class="analytics-controls"
+            >
+              <button
+                  type="button"
+                  class="analytics-button"
+                  :disabled="analyticsLoading || analyticsRunning || !canAnalyzeSelectedRecording"
+                  @click="runRecordingAnalytics"
+              >
+                {{ analyticsLoading
+                  ? "Starting..."
+                  : analyticsRunning
+                      ? "Analysis in progress"
+                      : analyticsJob?.status === "FAILED"
+                          ? "Retry analysis"
+                          : "Analyze recording" }}
+              </button>
+
+              <span
+                  v-if="analyticsJob"
+                  class="analytics-status"
+                  :class="`analytics-${analyticsJob.status.toLowerCase()}`"
+              >
+                {{ analyticsStatusLabel(analyticsJob.status) }}
+              </span>
+
+              <span
+                  v-if="analyticsError"
+                  class="analytics-error"
+              >
+                {{ analyticsError }}
+              </span>
+            </div>
+
+
             <div class="archive-video-panel">
 
               <div
@@ -609,6 +757,44 @@ onMounted(
 
   background: #fff;
   cursor: pointer;
+}
+
+.analytics-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.analytics-button {
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #3978ff;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.analytics-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.analytics-status {
+  color: #555;
+  font-size: 14px;
+}
+
+.analytics-completed {
+  color: #18864b;
+}
+
+.analytics-failed,
+.analytics-rejected,
+.analytics-error {
+  color: #b42318;
 }
 
 .date-button.selected,

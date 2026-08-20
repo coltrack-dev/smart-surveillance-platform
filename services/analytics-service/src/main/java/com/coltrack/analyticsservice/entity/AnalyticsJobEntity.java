@@ -69,4 +69,7 @@ public class AnalyticsJobEntity {
 
     @Column(name = "finished_at")
     private OffsetDateTime finishedAt;
+
+    @Column(name = "recording_id")
+    private UUID recordingId;
 }

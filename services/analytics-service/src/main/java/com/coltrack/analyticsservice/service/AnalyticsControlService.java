@@ -3,6 +3,7 @@ package com.coltrack.analyticsservice.service;
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
+import com.coltrack.analyticsservice.dto.RecordingAnalyticsStartRequest;
 import com.coltrack.analyticsservice.entity.AnalyticsJobEntity;
 import com.coltrack.analyticsservice.entity.AnalyticsWorkerEntity;
 import com.coltrack.analyticsservice.repository.AnalyticsJobRepository;
@@ -117,10 +118,85 @@ public class AnalyticsControlService {
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
-        jobRepository.save(entity);
+        // The worker may answer immediately, so the status consumer must see the job first.
+        jobRepository.saveAndFlush(entity);
 
         try {
             send(cameraId, job);
+        } catch (RuntimeException exception) {
+            entity.setStatus("FAILED");
+            entity.setFinishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            entity.setUpdatedAt(entity.getFinishedAt());
+            entity.setDetails(Map.of("errorCode", "KAFKA_PUBLISH_FAILED"));
+            jobRepository.save(entity);
+            throw exception;
+        }
+        return AnalyticsJobResponse.fromEntity(entity);
+    }
+
+    public AnalyticsJobResponse startRecording(
+            UUID recordingId,
+            RecordingAnalyticsStartRequest request
+    ) {
+        if (request == null || request.cameraId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "cameraId is required");
+        }
+        validateProfile(
+                request.classes(),
+                request.confidence(),
+                request.linePosition(),
+                request.targetFps()
+        );
+        jobRepository
+                .findFirstByRecordingIdAndJobTypeAndStatusInOrderByCreatedAtDesc(
+                        recordingId, "RECORDING", ACTIVE_STATUSES
+                )
+                .ifPresent(existing -> {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Recording analytics is already active: " + existing.getJobId()
+                    );
+                });
+
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        UUID jobId = UUID.randomUUID();
+        AnalyticsProfile profile = new AnalyticsProfile(
+                request.model(),
+                defaultClasses(request.classes()),
+                defaultDecimal(request.confidence(), "0.5"),
+                defaultString(request.devicePreference(), "auto"),
+                defaultDecimal(request.linePosition(), "0.5"),
+                defaultDecimal(request.targetFps(), "10"),
+                request.attributes() == null ? Map.of() : request.attributes()
+        );
+        AnalyticsJob job = new AnalyticsJob(
+                jobId,
+                1,
+                "ANALYTICS_JOB",
+                "RECORDING",
+                "START",
+                request.cameraId(),
+                recordingId,
+                new AnalyticsSource("RECORDING_SERVICE", null, null),
+                profile,
+                now
+        );
+        AnalyticsJobEntity entity = AnalyticsJobEntity.builder()
+                .jobId(jobId)
+                .cameraId(request.cameraId())
+                .recordingId(recordingId)
+                .jobType("RECORDING")
+                .status("REQUESTED")
+                .profile(profileAsMap(profile))
+                .details(new HashMap<>())
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+
+        // Commit the job before Kafka delivery to avoid a status-before-create race.
+        jobRepository.saveAndFlush(entity);
+        try {
+            send(request.cameraId(), job);
         } catch (RuntimeException exception) {
             entity.setStatus("FAILED");
             entity.setFinishedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -186,6 +262,18 @@ public class AnalyticsControlService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "No realtime analytics jobs for camera " + cameraId
+                ));
+    }
+
+    public AnalyticsJobResponse findLatestRecordingJob(UUID recordingId) {
+        return jobRepository
+                .findFirstByRecordingIdAndJobTypeOrderByCreatedAtDesc(
+                        recordingId, "RECORDING"
+                )
+                .map(AnalyticsJobResponse::fromEntity)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "No analytics jobs for recording " + recordingId
                 ));
     }
 
@@ -268,27 +356,41 @@ public class AnalyticsControlService {
     }
 
     private static void validateProfile(RealtimeAnalyticsStartRequest request) {
-        if (request.confidence() != null
-                && (request.confidence().signum() < 0
-                || request.confidence().compareTo(BigDecimal.ONE) > 0)) {
+        validateProfile(
+                request.classes(),
+                request.confidence(),
+                request.linePosition(),
+                request.targetFps()
+        );
+    }
+
+    private static void validateProfile(
+            List<Integer> classes,
+            BigDecimal confidence,
+            BigDecimal linePosition,
+            BigDecimal targetFps
+    ) {
+        if (confidence != null
+                && (confidence.signum() < 0
+                || confidence.compareTo(BigDecimal.ONE) > 0)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "confidence must be between 0 and 1"
             );
         }
-        if (request.linePosition() != null
-                && (request.linePosition().signum() <= 0
-                || request.linePosition().compareTo(BigDecimal.ONE) >= 0)) {
+        if (linePosition != null
+                && (linePosition.signum() <= 0
+                || linePosition.compareTo(BigDecimal.ONE) >= 0)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "linePosition must be between 0 and 1"
             );
         }
-        if (request.targetFps() != null && request.targetFps().signum() <= 0) {
+        if (targetFps != null && targetFps.signum() <= 0) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "targetFps must be positive"
             );
         }
-        if (request.classes() != null
-                && request.classes().stream().anyMatch(value -> value == null || value < 0)) {
+        if (classes != null
+                && classes.stream().anyMatch(value -> value == null || value < 0)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "classes must contain non-negative ids"
             );

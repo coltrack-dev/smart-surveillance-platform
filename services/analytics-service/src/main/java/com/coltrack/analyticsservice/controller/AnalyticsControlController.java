@@ -3,6 +3,7 @@ package com.coltrack.analyticsservice.controller;
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
+import com.coltrack.analyticsservice.dto.RecordingAnalyticsStartRequest;
 import com.coltrack.analyticsservice.service.AnalyticsControlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -41,6 +42,22 @@ public class AnalyticsControlController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     public AnalyticsJobResponse stopRealtime(@PathVariable UUID cameraId) {
         return controlService.stopRealtime(cameraId);
+    }
+
+    @PostMapping("/recordings/{recordingId}/start")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public AnalyticsJobResponse startRecording(
+            @PathVariable UUID recordingId,
+            @RequestBody RecordingAnalyticsStartRequest request
+    ) {
+        return controlService.startRecording(recordingId, request);
+    }
+
+    @GetMapping("/recordings/{recordingId}")
+    public AnalyticsJobResponse findLatestRecordingJob(
+            @PathVariable UUID recordingId
+    ) {
+        return controlService.findLatestRecordingJob(recordingId);
     }
 
     @GetMapping("/realtime/{cameraId}")

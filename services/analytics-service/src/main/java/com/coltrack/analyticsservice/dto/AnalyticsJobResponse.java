@@ -9,6 +9,11 @@ import java.util.UUID;
 public record AnalyticsJobResponse(
         UUID jobId,
         UUID cameraId,
+
+        // Для REALTIME-задач значение null,
+        // для анализа записи содержит идентификатор записи.
+        UUID recordingId,
+
         String jobType,
         String status,
         String workerId,
@@ -21,10 +26,14 @@ public record AnalyticsJobResponse(
         OffsetDateTime startedAt,
         OffsetDateTime finishedAt
 ) {
-    public static AnalyticsJobResponse fromEntity(AnalyticsJobEntity entity) {
+
+    public static AnalyticsJobResponse fromEntity(
+            AnalyticsJobEntity entity
+    ) {
         return new AnalyticsJobResponse(
                 entity.getJobId(),
                 entity.getCameraId(),
+                entity.getRecordingId(),
                 entity.getJobType(),
                 entity.getStatus(),
                 entity.getWorkerId(),

@@ -85,3 +85,23 @@ export async function findLatestRealtimeAnalyticsJob(
         throw error;
     }
 }
+
+export async function startRecordingAnalytics(
+    recordingId: string,
+    request: RecordingAnalyticsStartRequest
+): Promise<AnalyticsJob> {
+    const response = await http.post(
+        `/api/analytics/recordings/${recordingId}/start`,
+        request
+    );
+
+    return response.data;
+}
+
+export interface RecordingAnalyticsStartRequest {
+    cameraId: string;
+    classes: number[];
+    confidence: number;
+    linePosition: number;
+    targetFps: number;
+}
