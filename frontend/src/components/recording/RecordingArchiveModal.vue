@@ -27,7 +27,8 @@ import type {AnalyticsJob, AnalyticsJobStatus} from "@/types/AnalyticsControl";
 import {
   findAnalyticsJob,
   findLatestRecordingAnalyticsJob,
-  startRecordingAnalytics
+  startRecordingAnalytics,
+  stopRecordingAnalytics
 } from "@/api/analyticsApi";
 
 const props = defineProps<{
@@ -53,6 +54,7 @@ const playbackError = ref<string | null>(null);
 const preparedPlaybackUrl = ref<string | null>(null);
 const analyticsJob = ref<AnalyticsJob | null>(null);
 const analyticsLoading = ref(false);
+const analyticsStopping = ref(false);
 const analyticsError = ref<string | null>(null);
 let analyticsPollingTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -67,6 +69,11 @@ const analyticsRunning = computed(() =>
     analyticsJob.value != null
     && activeAnalyticsStatuses.has(analyticsJob.value.status)
 );
+
+const analyticsProgress = computed<number | null>(() => {
+  const value = analyticsJob.value?.details?.progressPercent;
+  return typeof value === "number" ? Math.max(0, Math.min(100, value)) : null;
+});
 
 const canAnalyzeSelectedRecording = computed(() =>
     selectedRecording.value != null
@@ -372,6 +379,24 @@ async function runRecordingAnalytics(): Promise<void> {
   }
 }
 
+async function stopRecordingAnalysis(): Promise<void> {
+  const recording = selectedRecording.value;
+  if (!recording || !analyticsRunning.value || analyticsStopping.value) {
+    return;
+  }
+  analyticsStopping.value = true;
+  analyticsError.value = null;
+  try {
+    analyticsJob.value = await stopRecordingAnalytics(recording.id);
+    startAnalyticsPolling(analyticsJob.value.jobId);
+  } catch (error) {
+    console.error("Unable to stop recording analytics", error);
+    analyticsError.value = "Unable to stop recording analysis.";
+  } finally {
+    analyticsStopping.value = false;
+  }
+}
+
 async function selectRecording(
     recording: Recording
 ): Promise<void> {
@@ -607,12 +632,12 @@ onUnmounted(stopAnalyticsPolling);
                   @click="runRecordingAnalytics"
               >
                 {{ analyticsLoading
-                  ? "Starting..."
-                  : analyticsRunning
-                      ? "Analysis in progress"
-                      : analyticsJob?.status === "FAILED"
-                          ? "Retry analysis"
-                          : "Analyze recording" }}
+                    ? "Starting..."
+                    : analyticsRunning
+                        ? "Analysis in progress"
+                        : analyticsJob?.status === "FAILED"
+                            ? "Retry analysis"
+                            : "Analyze recording" }}
               </button>
 
               <span
@@ -623,12 +648,40 @@ onUnmounted(stopAnalyticsPolling);
                 {{ analyticsStatusLabel(analyticsJob.status) }}
               </span>
 
+              <button
+                  v-if="analyticsRunning"
+                  type="button"
+                  class="analytics-stop-button"
+                  :disabled="analyticsStopping || analyticsJob?.status === 'STOP_REQUESTED'"
+                  @click="stopRecordingAnalysis"
+              >
+                {{ analyticsStopping || analyticsJob?.status === "STOP_REQUESTED"
+                    ? "Stopping..."
+                    : "Stop analysis" }}
+              </button>
+
               <span
                   v-if="analyticsError"
                   class="analytics-error"
               >
                 {{ analyticsError }}
               </span>
+
+              <div
+                  v-if="analyticsRunning"
+                  class="analytics-progress"
+                  role="progressbar"
+                  :aria-valuenow="analyticsProgress ?? undefined"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+              >
+                <div
+                    class="analytics-progress-fill"
+                    :class="{ indeterminate: analyticsProgress == null }"
+                    :style="analyticsProgress == null ? undefined : { width: `${analyticsProgress}%` }"
+                />
+                <span>{{ analyticsProgress == null ? "Preparing..." : `${analyticsProgress}%` }}</span>
+              </div>
             </div>
 
 
@@ -780,6 +833,49 @@ onUnmounted(stopAnalyticsPolling);
 .analytics-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.analytics-stop-button {
+  padding: 8px 12px;
+  border: 1px solid #b42318;
+  border-radius: 6px;
+  background: #fff;
+  color: #b42318;
+  cursor: pointer;
+}
+
+.analytics-progress {
+  position: relative;
+  width: 180px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #e8edf5;
+  text-align: center;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.analytics-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #7da5ff;
+  transition: width 0.3s ease;
+}
+
+.analytics-progress-fill.indeterminate {
+  width: 35%;
+  animation: analytics-progress 1.2s linear infinite;
+}
+
+.analytics-progress span {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes analytics-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
 }
 
 .analytics-status {

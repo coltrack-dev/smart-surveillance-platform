@@ -5,10 +5,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.request import Request, urlopen
 
 from confluent_kafka import (
@@ -35,6 +37,17 @@ class RealtimeProcess:
     job: AnalyticsJob
     process: subprocess.Popen
     stop_requested: bool = False
+
+
+class RecordingStopped(Exception):
+    """Raised when a running recording job is cancelled by the user."""
+
+
+@dataclass
+class RecordingTask:
+    job: AnalyticsJob
+    stop_event: threading.Event
+    thread: threading.Thread
 
 
 def download_recording(
@@ -93,7 +106,9 @@ def download_recording(
 
 def run_inference(
     job: AnalyticsJob,
-) -> None:
+    stop_event: threading.Event,
+    progress_callback: Callable[[dict], None],
+) -> dict:
     if job.job_type != "RECORDING":
         raise UnsupportedAnalyticsJob(
             "recording_consumer only supports "
@@ -134,6 +149,9 @@ def run_inference(
             / "source.mkv"
         )
 
+        if stop_event.is_set():
+            raise RecordingStopped()
+
         download_recording(
             recording_id,
             source,
@@ -156,6 +174,9 @@ def run_inference(
                     job_directory
                     / "events.jsonl"
                 ),
+                "ANALYTICS_PROGRESS_FILE": str(
+                    job_directory / "progress.json"
+                ),
             }
         )
 
@@ -175,15 +196,44 @@ def run_inference(
             if value is not None:
                 environment[key] = str(value)
 
-        subprocess.run(
+        process = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
                 "inference_worker.main",
             ],
             env=environment,
-            check=True,
         )
+
+        progress_file = job_directory / "progress.json"
+        last_progress: dict = {}
+        while process.poll() is None:
+            if stop_event.wait(1.0):
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                raise RecordingStopped()
+
+            if progress_file.exists():
+                try:
+                    progress = json.loads(progress_file.read_text(encoding="utf-8"))
+                    if progress != last_progress:
+                        last_progress = progress
+                        progress_callback(progress)
+                except (OSError, json.JSONDecodeError):
+                    # The producer replaces the file atomically; retry on the next tick.
+                    pass
+
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(
+                process.returncode,
+                [sys.executable, "-m", "inference_worker.main"],
+            )
+
+        return last_progress
 
 
 def realtime_environment(job: AnalyticsJob) -> dict[str, str]:
@@ -239,6 +289,80 @@ def stop_realtime(running: RealtimeProcess, timeout: float = 15.0) -> None:
         running.process.wait(timeout=5)
 
 
+def process_recording_job(
+    job: AnalyticsJob,
+    stop_event: threading.Event,
+    worker_events: WorkerEventPublisher,
+) -> None:
+    retry_delay = 10
+
+    def publish_progress(details: dict) -> None:
+        worker_events.publish_status(
+            job_id=job.job_id,
+            camera_id=job.camera_id,
+            recording_id=job.recording_id,
+            job_type=job.job_type,
+            status="RUNNING",
+            details=details,
+        )
+
+    while not stop_event.is_set():
+        try:
+            final_progress = run_inference(job, stop_event, publish_progress)
+            worker_events.publish_status(
+                job_id=job.job_id,
+                camera_id=job.camera_id,
+                recording_id=job.recording_id,
+                job_type=job.job_type,
+                status="COMPLETED",
+                details=final_progress,
+            )
+            log.info(
+                "Inference completed jobId=%s recordingId=%s",
+                job.job_id,
+                job.recording_id,
+            )
+            return
+        except RecordingStopped:
+            worker_events.publish_status(
+                job_id=job.job_id,
+                camera_id=job.camera_id,
+                recording_id=job.recording_id,
+                job_type=job.job_type,
+                status="STOPPED",
+                details={"cancelled": True},
+            )
+            log.info("Inference stopped jobId=%s", job.job_id)
+            return
+        except Exception:
+            log.exception(
+                "Inference failed jobId=%s recordingId=%s; retrying in %ss",
+                job.job_id,
+                job.recording_id,
+                retry_delay,
+            )
+            worker_events.publish_status(
+                job_id=job.job_id,
+                camera_id=job.camera_id,
+                recording_id=job.recording_id,
+                job_type=job.job_type,
+                status="RETRYING",
+                details={"retryDelaySeconds": retry_delay},
+            )
+            if stop_event.wait(retry_delay):
+                continue
+            retry_delay = min(retry_delay * 2, 300)
+
+    worker_events.publish_status(
+        job_id=job.job_id,
+        camera_id=job.camera_id,
+        recording_id=job.recording_id,
+        job_type=job.job_type,
+        status="STOPPED",
+        details={"cancelled": True},
+    )
+
+
 def main() -> None:
 
     logging.basicConfig(
@@ -265,6 +389,7 @@ def main() -> None:
     heartbeat = WorkerHeartbeat(worker_events)
     heartbeat.start()
     realtime_by_camera: dict[str, RealtimeProcess] = {}
+    recording_task: RecordingTask | None = None
     execution_mode = os.getenv(
         "INFERENCE_EXECUTION_MODE", "process"
     ).strip().lower()
@@ -316,6 +441,11 @@ def main() -> None:
     try:
 
         while True:
+
+            if recording_task is not None and not recording_task.thread.is_alive():
+                recording_task.thread.join()
+                recording_task = None
+                heartbeat.set_active_jobs(len(realtime_by_camera))
 
             if multistream is not None:
                 multistream.check_health()
@@ -517,6 +647,20 @@ def main() -> None:
                 consumer.commit(message=message, asynchronous=False)
                 continue
 
+            if job.action == "STOP":
+                if (
+                    recording_task is not None
+                    and recording_task.job.recording_id == job.recording_id
+                ):
+                    recording_task.stop_event.set()
+                    log.info(
+                        "Recording inference stop requested jobId=%s recordingId=%s",
+                        recording_task.job.job_id,
+                        recording_task.job.recording_id,
+                    )
+                consumer.commit(message=message, asynchronous=False)
+                continue
+
             log.info(
                 "Processing analytics job jobId=%s "
                 "recordingId=%s cameraId=%s",
@@ -530,7 +674,7 @@ def main() -> None:
                 if multistream is not None
                 else len(realtime_by_camera)
             )
-            if active_realtime_jobs > 0:
+            if active_realtime_jobs > 0 or recording_task is not None:
                 worker_events.publish_status(
                     job_id=job.job_id,
                     camera_id=job.camera_id,
@@ -539,7 +683,7 @@ def main() -> None:
                     status="REJECTED",
                     details={
                         "errorCode": "WORKER_BUSY",
-                        "message": "Recording jobs cannot share a worker with realtime jobs",
+                        "message": "Worker is already processing another analytics job",
                     },
                 )
                 consumer.commit(message=message, asynchronous=False)
@@ -554,71 +698,25 @@ def main() -> None:
             )
             heartbeat.set_active_jobs(len(realtime_by_camera) + 1)
 
-            retry_delay = 10
-
-            while True:
-
-                try:
-
-                    run_inference(
-                        job
-                    )
-
-                    break
-
-                except Exception:
-
-                    log.exception(
-                        "Inference failed "
-                        "jobId=%s recordingId=%s; "
-                        "retrying in %ss",
-                        job.job_id,
-                        job.recording_id,
-                        retry_delay,
-                    )
-
-                    worker_events.publish_status(
-                        job_id=job.job_id,
-                        camera_id=job.camera_id,
-                        recording_id=job.recording_id,
-                        job_type=job.job_type,
-                        status="RETRYING",
-                        details={
-                            "retryDelaySeconds": retry_delay,
-                        },
-                    )
-
-                    time.sleep(
-                        retry_delay
-                    )
-
-                    retry_delay = min(
-                        retry_delay * 2,
-                        300,
-                    )
+            stop_event = threading.Event()
+            recording_thread = threading.Thread(
+                target=process_recording_job,
+                args=(job, stop_event, worker_events),
+                name=f"recording-{job.job_id}",
+                daemon=True,
+            )
+            recording_task = RecordingTask(job, stop_event, recording_thread)
+            recording_thread.start()
 
             consumer.commit(
                 message=message,
                 asynchronous=False,
             )
 
-            heartbeat.set_active_jobs(len(realtime_by_camera))
-
-            worker_events.publish_status(
-                job_id=job.job_id,
-                camera_id=job.camera_id,
-                recording_id=job.recording_id,
-                job_type=job.job_type,
-                status="COMPLETED",
-            )
-
-            log.info(
-                "Inference completed jobId=%s recordingId=%s",
-                job.job_id,
-                job.recording_id,
-            )
-
     finally:
+        if recording_task is not None:
+            recording_task.stop_event.set()
+            recording_task.thread.join(timeout=20)
         for running in list(realtime_by_camera.values()):
             stop_realtime(running)
         if multistream is not None:

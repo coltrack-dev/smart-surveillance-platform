@@ -53,6 +53,12 @@ public class AnalyticsControlController {
         return controlService.startRecording(recordingId, request);
     }
 
+    @PostMapping("/recordings/{recordingId}/stop")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public AnalyticsJobResponse stopRecording(@PathVariable UUID recordingId) {
+        return controlService.stopRecording(recordingId);
+    }
+
     @GetMapping("/recordings/{recordingId}")
     public AnalyticsJobResponse findLatestRecordingJob(
             @PathVariable UUID recordingId

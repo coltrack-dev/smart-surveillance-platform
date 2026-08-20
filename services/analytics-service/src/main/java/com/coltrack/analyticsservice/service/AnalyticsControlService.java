@@ -218,6 +218,10 @@ public class AnalyticsControlService {
                         "No active realtime analytics job for camera " + cameraId
                 ));
 
+        if ("STOP_REQUESTED".equals(entity.getStatus())) {
+            return AnalyticsJobResponse.fromEntity(entity);
+        }
+
         String previousStatus = entity.getStatus();
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         entity.setStatus("STOP_REQUESTED");
@@ -238,6 +242,49 @@ public class AnalyticsControlService {
         );
         try {
             send(cameraId, stop);
+        } catch (RuntimeException exception) {
+            entity.setStatus(previousStatus);
+            entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            jobRepository.save(entity);
+            throw exception;
+        }
+        return AnalyticsJobResponse.fromEntity(entity);
+    }
+
+    public AnalyticsJobResponse stopRecording(UUID recordingId) {
+        AnalyticsJobEntity entity = jobRepository
+                .findFirstByRecordingIdAndJobTypeAndStatusInOrderByCreatedAtDesc(
+                        recordingId, "RECORDING", ACTIVE_STATUSES
+                )
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "No active analytics job for recording " + recordingId
+                ));
+
+        if ("STOP_REQUESTED".equals(entity.getStatus())) {
+            return AnalyticsJobResponse.fromEntity(entity);
+        }
+
+        String previousStatus = entity.getStatus();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        entity.setStatus("STOP_REQUESTED");
+        entity.setUpdatedAt(now);
+        jobRepository.saveAndFlush(entity);
+
+        AnalyticsJob stop = new AnalyticsJob(
+                entity.getJobId(),
+                1,
+                "ANALYTICS_JOB",
+                "RECORDING",
+                "STOP",
+                entity.getCameraId(),
+                recordingId,
+                new AnalyticsSource("RECORDING_SERVICE", null, null),
+                null,
+                now
+        );
+        try {
+            send(entity.getCameraId(), stop);
         } catch (RuntimeException exception) {
             entity.setStatus(previousStatus);
             entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -298,6 +345,10 @@ public class AnalyticsControlService {
         OffsetDateTime occurredAt = event.occurredAt() == null
                 ? OffsetDateTime.now(ZoneOffset.UTC)
                 : event.occurredAt();
+        if ("STOP_REQUESTED".equals(entity.getStatus())
+                && ("RUNNING".equals(event.status()) || "RETRYING".equals(event.status()))) {
+            return;
+        }
         entity.setStatus(event.status());
         entity.setWorkerId(event.workerId());
         entity.setUpdatedAt(occurredAt);

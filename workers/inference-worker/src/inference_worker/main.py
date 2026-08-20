@@ -128,6 +128,30 @@ RECORDING_ID = os.getenv(
     "RECORDING_ID",
 )
 
+PROGRESS_FILE = (
+    Path(os.environ["ANALYTICS_PROGRESS_FILE"])
+    if os.getenv("ANALYTICS_PROGRESS_FILE")
+    else None
+)
+
+
+def write_progress(processed_frames: int, total_frames: int) -> None:
+    """Atomically expose progress to the supervising recording consumer."""
+    if PROGRESS_FILE is None:
+        return
+    progress = {
+        "processedFrames": processed_frames,
+        "totalFrames": total_frames,
+        "progressPercent": (
+            min(100, round(processed_frames * 100 / total_frames))
+            if total_frames > 0
+            else None
+        ),
+    }
+    temporary = PROGRESS_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(progress), encoding="utf-8")
+    temporary.replace(PROGRESS_FILE)
+
 
 def resolve_device() -> str:
     """
@@ -432,6 +456,9 @@ def main() -> None:
     if fps <= 0:
         fps = 25.0
 
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    write_progress(0, total_frames)
+
     width = int(
         capture.get(
             cv2.CAP_PROP_FRAME_WIDTH
@@ -534,6 +561,9 @@ def main() -> None:
                 break
 
             frame_number += 1
+
+            if frame_number == 1 or frame_number % 25 == 0:
+                write_progress(frame_number, total_frames)
 
             results = model.track(
                 frame,
@@ -836,6 +866,7 @@ def main() -> None:
         frame_number,
         crossing_count,
     )
+    write_progress(frame_number, total_frames)
 
     logging.info(
         "Video result: %s",

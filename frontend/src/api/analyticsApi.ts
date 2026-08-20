@@ -35,6 +35,15 @@ export async function startRecordingAnalytics(
     return response.data;
 }
 
+export async function stopRecordingAnalytics(
+    recordingId: string
+): Promise<AnalyticsJob> {
+    const response = await http.post<AnalyticsJob>(
+        `/analytics/recordings/${recordingId}/stop`
+    );
+    return response.data;
+}
+
 export async function findLatestRecordingAnalyticsJob(
     recordingId: string
 ): Promise<AnalyticsJob | null> {
