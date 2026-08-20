@@ -11,6 +11,7 @@ export type AnalyticsJobStatus =
 export interface AnalyticsJob {
     jobId: string;
     cameraId: string;
+    recordingId: string | null;
     jobType: "REALTIME" | "RECORDING";
     status: AnalyticsJobStatus;
     workerId: string | null;
@@ -22,6 +23,16 @@ export interface AnalyticsJob {
     updatedAt: string;
     startedAt: string | null;
     finishedAt: string | null;
+}
+
+export interface RecordingAnalyticsStartRequest {
+    cameraId: string;
+    model?: string;
+    classes: number[];
+    confidence: number;
+    devicePreference: string;
+    linePosition: number;
+    targetFps: number;
 }
 
 export interface RealtimeAnalyticsStartRequest {

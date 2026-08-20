@@ -6,6 +6,7 @@ import type {
 } from "@/types/AnalyticsEvent";
 import type {
     AnalyticsJob,
+    RecordingAnalyticsStartRequest,
     RealtimeAnalyticsStartRequest
 } from "@/types/AnalyticsControl";
 
@@ -21,6 +22,43 @@ interface AnalyticsEventsApiPage {
         totalElements: number;
         totalPages: number;
     };
+}
+
+export async function startRecordingAnalytics(
+    recordingId: string,
+    request: RecordingAnalyticsStartRequest
+): Promise<AnalyticsJob> {
+    const response = await http.post<AnalyticsJob>(
+        `/analytics/recordings/${recordingId}/start`,
+        request
+    );
+    return response.data;
+}
+
+export async function findLatestRecordingAnalyticsJob(
+    recordingId: string
+): Promise<AnalyticsJob | null> {
+    try {
+        const response = await http.get<AnalyticsJob>(
+            `/analytics/recordings/${recordingId}`
+        );
+        return response.data;
+    } catch (error: unknown) {
+        if (
+            typeof error === "object"
+            && error !== null
+            && "response" in error
+            && (error as { response?: { status?: number } }).response?.status === 404
+        ) {
+            return null;
+        }
+        throw error;
+    }
+}
+
+export async function findAnalyticsJob(jobId: string): Promise<AnalyticsJob> {
+    const response = await http.get<AnalyticsJob>(`/analytics/jobs/${jobId}`);
+    return response.data;
 }
 
 export async function findAnalyticsEvents(
@@ -84,24 +122,4 @@ export async function findLatestRealtimeAnalyticsJob(
         }
         throw error;
     }
-}
-
-export async function startRecordingAnalytics(
-    recordingId: string,
-    request: RecordingAnalyticsStartRequest
-): Promise<AnalyticsJob> {
-    const response = await http.post(
-        `/api/analytics/recordings/${recordingId}/start`,
-        request
-    );
-
-    return response.data;
-}
-
-export interface RecordingAnalyticsStartRequest {
-    cameraId: string;
-    classes: number[];
-    confidence: number;
-    linePosition: number;
-    targetFps: number;
 }
