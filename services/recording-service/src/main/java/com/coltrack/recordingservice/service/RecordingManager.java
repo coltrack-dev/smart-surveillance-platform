@@ -3,6 +3,7 @@ package com.coltrack.recordingservice.service;
 import com.coltrack.recordingservice.client.CameraClient;
 import com.coltrack.recordingservice.dto.CameraDto;
 import com.coltrack.recordingservice.model.RecordingSession;
+import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.worker.RecordingListener;
 import com.coltrack.recordingservice.worker.RecordingWorker;
@@ -10,10 +11,12 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import com.coltrack.recordingservice.kafka.RecordingEventPublisher;
 
 import java.time.Instant;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
@@ -90,7 +93,11 @@ public class RecordingManager implements RecordingListener {
     }
 
 
-    private void startWorker(RecordingSession session) {
+    private void startWorker(
+            RecordingSession session,
+            RecordingEntity metadata,
+            Path directory
+    ) {
 
         Thread.startVirtualThread(
                 () -> {
@@ -107,6 +114,8 @@ public class RecordingManager implements RecordingListener {
                                         s3StorageService,
                                         recordingEventPublisher,
                                         session.getRtspUrl(),
+                                        metadata,
+                                        directory,
                                         this
                                 );
 
@@ -118,6 +127,9 @@ public class RecordingManager implements RecordingListener {
                         session.setStatus(
                                 RecordingStatus.FAILED
                         );
+                        session.setLastError(e.getMessage());
+                        recordingMetadataService.failed(metadata, e.getMessage());
+                        failed(session);
                     }
                 }
         );
@@ -130,7 +142,11 @@ public class RecordingManager implements RecordingListener {
      * <p>
      * Called when StreamStartedEvent received.
      */
-    public RecordingSession start(UUID cameraId, Instant eventTime) {
+    public RecordingSession start(
+            UUID cameraId,
+            UUID recordingId,
+            Instant eventTime
+    ) {
 
         RecordingSession session =
                 sessions.compute(cameraId, (id, existing) -> {
@@ -166,26 +182,58 @@ public class RecordingManager implements RecordingListener {
                         );
                     }
 
+                    /*
+                     * StreamStartedEvent.eventId is used as recordingId. A
+                     * redelivered Kafka event therefore addresses the same DB
+                     * row instead of creating a duplicate recording.
+                     */
+                    if (recordingMetadataService.find(recordingId).isPresent()) {
+                        log.info(
+                                "Recording event already persisted recordingId={} camera={}",
+                                recordingId,
+                                cameraId
+                        );
+                        return null;
+                    }
+
                     CameraDto camera =
                             cameraClient.findById(cameraId);
 
+                    Instant startedAt = eventTime != null
+                            ? eventTime
+                            : Instant.now();
+
+                    Path directory = storageService.createRecordingDirectory(
+                            cameraId,
+                            recordingId
+                    );
+
                     RecordingSession newSession =
                             RecordingSession.builder()
-                                    .id(UUID.randomUUID())
+                                    .id(recordingId)
                                     .cameraId(cameraId)
                                     .rtspUrl(camera.rtspUrl())
                                     .status(RecordingStatus.STARTING)
-                                    .startedAt(
-                                            eventTime != null
-                                                    ? eventTime
-                                                    : Instant.now()
-                                    )
+                                    .startedAt(startedAt)
+                                    .filePath(directory.toString())
                                     .build();
 
                     log.info("Creating recording session camera={} id={}", cameraId, newSession.getId());
 
 
-                    startWorker(newSession);
+                    /*
+                     * Persist synchronously before returning to the Kafka
+                     * listener. If this transaction fails, the listener throws
+                     * and Kafka can redeliver the StreamStartedEvent.
+                     */
+                    RecordingEntity metadata = recordingMetadataService.create(
+                            recordingId,
+                            cameraId,
+                            directory.toString(),
+                            startedAt
+                    );
+
+                    startWorker(newSession, metadata, directory);
 
 
                     return newSession;
@@ -193,6 +241,34 @@ public class RecordingManager implements RecordingListener {
 
 
         return session;
+    }
+
+    /**
+     * Reconciles rows left in an active state after an unclean service stop.
+     * They cannot be silently reported as live because their FFmpeg process no
+     * longer exists. A subsequent StreamStartedEvent creates a new session.
+     */
+    @Scheduled(
+            initialDelayString = "${recording.recovery.initial-delay:30s}",
+            fixedDelayString = "${recording.recovery.scan-delay:1h}"
+    )
+    public void reconcileInterruptedRecordings() {
+        recordingMetadataService.findIncomplete().forEach(recording -> {
+            RecordingSession activeSession = sessions.get(recording.getCameraId());
+            if (activeSession != null
+                    && recording.getId().equals(activeSession.getId())) {
+                return;
+            }
+            log.warn(
+                    "Marking interrupted recording as failed recordingId={} camera={}",
+                    recording.getId(),
+                    recording.getCameraId()
+            );
+            recordingMetadataService.failed(
+                    recording,
+                    "Recording service restarted before recording completed"
+            );
+        });
     }
 
     /**

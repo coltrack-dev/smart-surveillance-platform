@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -37,6 +39,22 @@ public class RecordingMetadataService {
 
         return repository.saveAndFlush(
                 entity
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<RecordingEntity> find(UUID recordingId) {
+        return repository.findById(recordingId);
+    }
+
+    @Transactional(readOnly = true)
+    public Collection<RecordingEntity> findIncomplete() {
+        return repository.findByStatusIn(
+                java.util.List.of(
+                        RecordingStatus.STARTING,
+                        RecordingStatus.RECORDING,
+                        RecordingStatus.STOPPING
+                )
         );
     }
 
@@ -95,6 +113,13 @@ public class RecordingMetadataService {
         );
     }
 
+    @Transactional
+    public void markRecording(RecordingEntity entity) {
+        entity.setStatus(RecordingStatus.RECORDING);
+        repository.saveAndFlush(entity);
+    }
+
+    @Transactional
     public void failed(
             RecordingEntity entity,
             String reason

@@ -36,16 +36,17 @@ public class RecordingStorageService {
     /**
      * Creates directory for camera recordings.
      */
-    public Path createRecordingDirectory(UUID cameraId) {
+    public Path createRecordingDirectory(
+            UUID cameraId,
+            UUID recordingId
+    ) {
 
         LocalDate date = LocalDate.now();
 
-        Path path = Paths.get(
-                "data",
-                "recordings",
-                cameraId.toString(),
-                date.toString()
-        );
+        Path path = storageRoot
+                .resolve(cameraId.toString())
+                .resolve(date.toString())
+                .resolve(recordingId.toString());
 
         try {
             Files.createDirectories(path);

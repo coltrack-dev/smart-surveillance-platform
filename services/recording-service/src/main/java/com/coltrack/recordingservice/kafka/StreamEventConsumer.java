@@ -79,6 +79,7 @@ public class StreamEventConsumer {
 
         recordingManager.start(
                 event.cameraId(),
+                event.eventId(),
                 event.startedAt()
         );
     }

@@ -33,6 +33,7 @@ public class RecordingController {
 
         return recordingManager.start(
                 cameraId,
+                UUID.randomUUID(),
                 Instant.now()
         );
     }

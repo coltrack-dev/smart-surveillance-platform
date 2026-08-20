@@ -10,17 +10,24 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import com.coltrack.recordingservice.kafka.RecordingEventPublisher;
 
 @Slf4j
 public class RecordingWorker implements Runnable {
+
+    private static final int FIRST_SEGMENT_TIMEOUT_SECONDS = 30;
+    private static final int OUTPUT_STALE_TIMEOUT_SECONDS = 20;
+    private static final int MAX_RECONNECT_ATTEMPTS = 10;
+    private static final int MAX_RECONNECT_DELAY_SECONDS = 30;
 
     private final RecordingSession session;
     private final RecordingStorageService storageService;
@@ -32,6 +39,8 @@ public class RecordingWorker implements Runnable {
     private final S3StorageService s3StorageService;
 
     private final RecordingEventPublisher recordingEventPublisher;
+    private final RecordingEntity metadata;
+    private final Path directory;
 
     private final Deque<String> errorLines = new ArrayDeque<>(30);
 
@@ -44,6 +53,8 @@ public class RecordingWorker implements Runnable {
             S3StorageService s3StorageService,
             RecordingEventPublisher recordingEventPublisher,
             String rtspUrl,
+            RecordingEntity metadata,
+            Path directory,
             RecordingListener listener
     ) {
 
@@ -55,6 +66,8 @@ public class RecordingWorker implements Runnable {
         this.s3StorageService = s3StorageService;
         this.recordingEventPublisher = recordingEventPublisher;
         this.rtspUrl = rtspUrl;
+        this.metadata = metadata;
+        this.directory = directory;
         this.listener = listener;
     }
 
@@ -69,21 +82,71 @@ public class RecordingWorker implements Runnable {
     public void run() {
 
         Process process = null;
-        RecordingEntity metadata = null;
+        int reconnectAttempt = 0;
+        boolean recordingConfirmed = false;
 
         try {
 
-            Path directory = prepareDirectory();
+            storageService.cleanupDirectory(directory);
 
-            Path outputPattern = directory.resolve("recording-%03d.mkv");
+            while (!session.isStopRequested()) {
+                Path outputPattern = directory.resolve(
+                        String.format("recording-%03d-%%03d.mkv", reconnectAttempt)
+                );
 
-            process = startFfmpeg(outputPattern);
+                try {
+                    process = startFfmpeg(outputPattern);
+                    waitForFirstSegment(process, reconnectAttempt);
 
-            metadata = createMetadata(directory);
+                    if (!recordingConfirmed) {
+                        recordingConfirmed = true;
+                        session.setStatus(RecordingStatus.RECORDING);
+                        recordingMetadataService.markRecording(metadata);
+                        listener.started(session);
+                    }
 
-            waitUntilStopped(process);
+                    waitUntilStopped(process, reconnectAttempt);
 
-            finishRecording(process, metadata, outputPattern);
+                    if (session.isStopRequested()) {
+                        finishRecording(process, metadata, outputPattern);
+                        return;
+                    }
+
+                    session.setLastError(
+                            "FFmpeg exited unexpectedly: " + buildLastError()
+                    );
+
+                } catch (Exception attemptFailure) {
+                    session.setLastError(attemptFailure.getMessage());
+                    log.warn(
+                            "Recording attempt failed camera={} recordingId={} attempt={}",
+                            session.getCameraId(),
+                            session.getId(),
+                            reconnectAttempt,
+                            attemptFailure
+                    );
+                } finally {
+                    cleanup(process);
+                    process = null;
+                }
+
+                if (session.isStopRequested()) {
+                    finishStoppedWithoutLiveProcess(metadata);
+                    return;
+                }
+
+                reconnectAttempt++;
+                if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+                    throw new IOException(
+                            "Recording reconnect limit exceeded. Last error: "
+                                    + session.getLastError()
+                    );
+                }
+
+                sleepBeforeReconnect(reconnectAttempt);
+            }
+
+            finishStoppedWithoutLiveProcess(metadata);
 
         } catch (Exception e) {
 
@@ -95,32 +158,14 @@ public class RecordingWorker implements Runnable {
         }
     }
 
-    private Path prepareDirectory() throws IOException {
-
-        Path directory =
-                storageService.createRecordingDirectory(
-                        session.getCameraId()
-                );
-
-        storageService.cleanupDirectory(directory);
-
-        return directory;
-    }
-
-    private RecordingEntity createMetadata(
-            Path directory
-    ) {
-
-        return recordingMetadataService.create(
-                session.getId(),
-                session.getCameraId(),
-                directory.toString(),
-                session.getStartedAt()
-        );
-    }
-
-    private void waitUntilStopped(Process process)
+    private void waitUntilStopped(
+            Process process,
+            int attempt
+    )
             throws Exception {
+
+        Instant lastProgress = Instant.now();
+        long lastSize = -1;
 
         while (process.isAlive()) {
 
@@ -129,6 +174,19 @@ public class RecordingWorker implements Runnable {
                 stopProcessGracefully(process);
 
                 break;
+            }
+
+            long currentSize = calculateAttemptSize(attempt);
+            if (currentSize != lastSize) {
+                lastSize = currentSize;
+                lastProgress = Instant.now();
+                session.setSizeBytes(currentSize);
+            } else if (Duration.between(lastProgress, Instant.now()).getSeconds()
+                    > OUTPUT_STALE_TIMEOUT_SECONDS) {
+                throw new IOException(
+                        "Recording output has not changed for more than "
+                                + OUTPUT_STALE_TIMEOUT_SECONDS + " seconds"
+                );
             }
 
             Thread.sleep(1000);
@@ -155,16 +213,75 @@ public class RecordingWorker implements Runnable {
                         .start();
 
         session.setFfmpegProcess(process);
-        session.setStatus(RecordingStatus.RECORDING);
-        session.setStartedAt(Instant.now());
         session.setFilePath(outputPattern.getParent().toString());
-
-        listener.started(session);
 
         startStdoutReader(process);
         startStderrReader(process);
 
         return process;
+    }
+
+    private void waitForFirstSegment(
+            Process process,
+            int attempt
+    ) throws IOException, InterruptedException {
+        long deadline = System.currentTimeMillis()
+                + FIRST_SEGMENT_TIMEOUT_SECONDS * 1000L;
+
+        while (System.currentTimeMillis() < deadline) {
+            if (calculateAttemptSize(attempt) > 0) {
+                return;
+            }
+            if (!process.isAlive()) {
+                throw new IOException(
+                        "FFmpeg exited before writing the first segment: "
+                                + buildLastError()
+                );
+            }
+            Thread.sleep(500);
+        }
+
+        throw new IOException(
+                "Timed out waiting for first recording segment ("
+                        + FIRST_SEGMENT_TIMEOUT_SECONDS + " seconds)"
+        );
+    }
+
+    private long calculateAttemptSize(int attempt) throws IOException {
+        String prefix = String.format("recording-%03d-", attempt);
+        try (Stream<Path> files = Files.list(directory)) {
+            return files
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().startsWith(prefix))
+                    .filter(path -> path.getFileName().toString().endsWith(".mkv"))
+                    .mapToLong(path -> {
+                        try {
+                            return Files.size(path);
+                        } catch (IOException exception) {
+                            throw new IllegalStateException(exception);
+                        }
+                    })
+                    .sum();
+        } catch (IllegalStateException exception) {
+            if (exception.getCause() instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw exception;
+        }
+    }
+
+    private void sleepBeforeReconnect(int attempt) throws InterruptedException {
+        long delaySeconds = Math.min(
+                1L << Math.min(attempt - 1, 5),
+                MAX_RECONNECT_DELAY_SECONDS
+        );
+        log.info(
+                "Recording reconnect backoff camera={} recordingId={} delaySeconds={}",
+                session.getCameraId(),
+                session.getId(),
+                delaySeconds
+        );
+        Thread.sleep(delaySeconds * 1000L);
     }
 
     private void startStdoutReader(Process process) {
@@ -268,8 +385,20 @@ public class RecordingWorker implements Runnable {
             Path outputPattern
     ) throws Exception {
 
-        int exitCode =
-                process.waitFor();
+        session.setExitCode(process.waitFor());
+        completeStoppedRecording(metadata, outputPattern.getParent());
+    }
+
+    private void finishStoppedWithoutLiveProcess(
+            RecordingEntity metadata
+    ) throws Exception {
+        completeStoppedRecording(metadata, directory);
+    }
+
+    private void completeStoppedRecording(
+            RecordingEntity metadata,
+            Path recordingDirectory
+    ) throws Exception {
 
         Instant finishedAt =
                 Instant.now();
@@ -278,19 +407,12 @@ public class RecordingWorker implements Runnable {
                 finishedAt
         );
 
-        session.setExitCode(
-                exitCode
-        );
-
         session.setDurationSeconds(
                 Duration.between(
                         session.getStartedAt(),
                         finishedAt
                 ).toSeconds()
         );
-
-        Path recordingDirectory =
-                outputPattern.getParent();
 
         session.setSizeBytes(
                 storageService.calculateDirectorySize(
@@ -304,88 +426,70 @@ public class RecordingWorker implements Runnable {
                 )
         );
 
-        ffprobeService.fillMetadata(
-                session,
-                storageService.findFirstSegment(
-                        recordingDirectory
-                )
-        );
-
-        if (session.isStopRequested()) {
-
-            session.setStatus(
-                    RecordingStatus.STOPPED
+        Path firstSegment = storageService.findFirstSegment(recordingDirectory);
+        if (firstSegment == null || session.getSizeBytes() == 0) {
+            throw new IOException(
+                    "Recording stopped without a non-empty media segment"
             );
-
-            /*
-             * Сначала гарантированно сохраняем родительскую
-             * recording_sessions.
-             */
-            recordingMetadataService.complete(
-                    metadata,
-                    session
-            );
-
-            listener.stopped(
-                    session
-            );
-
-            if (!metadata.getId().equals(session.getId())) {
-
-                throw new IllegalStateException(
-                        "Recording ID mismatch: metadata="
-                                + metadata.getId()
-                                + ", session="
-                                + session.getId()
-                );
-            }
-
-            Thread.startVirtualThread(() -> {
-
-                try {
-
-                    /*
-                     * Здесь metadata уже должна существовать
-                     * в recording_sessions с тем же UUID,
-                     * что и session.getId().
-                     */
-                    s3StorageService.uploadRecording(session);
-
-                    log.info("S3 upload completed recordingId={}, camera={}", session.getId(), session.getCameraId());
-
-                    if (session.isUploaded()) {
-
-                        recordingEventPublisher.publishReady(session);
-                    } else {
-                        log.info("RecordingReadyEvent not published because " + "S3 upload is disabled recordingId={}", session.getId());
-                    }
-
-                } catch (Exception exception) {
-
-                    log.error(
-                            "S3 upload failed recordingId={}, camera={}",
-                            session.getId(),
-                            session.getCameraId(),
-                            exception
-                    );
-                }
-            });
-
-            return;
         }
 
+        ffprobeService.fillMetadata(
+                session,
+                firstSegment
+        );
+
         session.setStatus(
-                RecordingStatus.FAILED
+                RecordingStatus.STOPPED
         );
 
-        recordingMetadataService.failed(
+        /*
+         * Persist the parent recording before starting an upload or
+         * publishing RECORDING_READY.
+         */
+        recordingMetadataService.complete(
                 metadata,
-                buildLastError()
-        );
-
-        listener.failed(
                 session
         );
+
+        listener.stopped(
+                session
+        );
+
+        if (!metadata.getId().equals(session.getId())) {
+
+            throw new IllegalStateException(
+                    "Recording ID mismatch: metadata="
+                            + metadata.getId()
+                            + ", session="
+                            + session.getId()
+            );
+        }
+
+        Thread.startVirtualThread(() -> {
+
+            try {
+
+                s3StorageService.uploadRecording(session);
+
+                log.info("S3 upload completed recordingId={}, camera={}", session.getId(), session.getCameraId());
+
+                if (session.isUploaded()) {
+
+                    recordingEventPublisher.publishReady(session);
+                } else {
+                    log.info("RecordingReadyEvent not published because " + "S3 upload is disabled recordingId={}", session.getId());
+                }
+
+            } catch (Exception exception) {
+
+                log.error(
+                        "S3 upload failed recordingId={}, camera={}",
+                        session.getId(),
+                        session.getCameraId(),
+                        exception
+                );
+            }
+        });
     }
 
 
@@ -482,6 +586,10 @@ public class RecordingWorker implements Runnable {
 
                 "-rtsp_transport",
                 "tcp",
+
+
+                "-rw_timeout",
+                "15000000",
 
 
                 "-i",
