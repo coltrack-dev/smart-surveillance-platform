@@ -5,6 +5,7 @@ import Hls from "hls.js";
 const props = defineProps<{
   url?: string;
   connecting?: boolean;
+  proportional?: boolean;
 }>();
 
 // HTML5 video элемент
@@ -271,7 +272,10 @@ onUnmounted(
 
 <template>
 
-  <div class="player-container">
+  <div
+      class="player-container"
+      :class="{ proportional: props.proportional }"
+  >
 
     <video
         ref="video"
@@ -280,6 +284,7 @@ onUnmounted(
         muted
         playsinline
         class="player"
+        :class="{ proportional: props.proportional }"
     />
 
     <div v-if="loading" class="overlay">

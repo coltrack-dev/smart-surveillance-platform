@@ -984,10 +984,8 @@ onUnmounted(stopAnalyticsPolling);
 
 .archive-player {
   display: block;
-
   width: 100%;
-  max-height: 600px;
-
+  max-height: none;
   background: #000;
 }
 
