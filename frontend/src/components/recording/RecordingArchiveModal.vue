@@ -75,6 +75,34 @@ const analyticsProgress = computed<number | null>(() => {
   return typeof value === "number" ? Math.max(0, Math.min(100, value)) : null;
 });
 
+function numericAnalyticsDetail(name: string): number | null {
+  const value = analyticsJob.value?.details?.[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+const processedFrames = computed(() => numericAnalyticsDetail("processedFrames"));
+const totalFrames = computed(() => numericAnalyticsDetail("totalFrames"));
+
+const processedVideoSeconds = computed<number | null>(() => {
+  const processed = processedFrames.value;
+  const total = totalFrames.value;
+  const duration = selectedRecording.value?.durationSeconds;
+  if (processed == null || total == null || total <= 0 || duration == null) {
+    return null;
+  }
+  return Math.min(duration, Math.round(duration * processed / total));
+});
+
+const analyticsEtaSeconds = computed<number | null>(() => {
+  const progress = analyticsProgress.value;
+  const startedAt = analyticsJob.value?.startedAt;
+  if (progress == null || progress <= 0 || progress >= 100 || !startedAt) {
+    return null;
+  }
+  const elapsedSeconds = Math.max(0, (Date.now() - new Date(startedAt).getTime()) / 1000);
+  return Math.max(0, Math.round(elapsedSeconds * (100 - progress) / progress));
+});
+
 const canAnalyzeSelectedRecording = computed(() =>
     selectedRecording.value != null
     && selectedRecording.value.status !== "RECORDING"
@@ -669,18 +697,35 @@ onUnmounted(stopAnalyticsPolling);
 
               <div
                   v-if="analyticsRunning"
-                  class="analytics-progress"
-                  role="progressbar"
-                  :aria-valuenow="analyticsProgress ?? undefined"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
+                  class="analytics-progress-section"
               >
                 <div
-                    class="analytics-progress-fill"
-                    :class="{ indeterminate: analyticsProgress == null }"
-                    :style="analyticsProgress == null ? undefined : { width: `${analyticsProgress}%` }"
-                />
-                <span>{{ analyticsProgress == null ? "Preparing..." : `${analyticsProgress}%` }}</span>
+                    class="analytics-progress"
+                    role="progressbar"
+                    :aria-valuenow="analyticsProgress ?? undefined"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                >
+                  <div
+                      class="analytics-progress-fill"
+                      :class="{ indeterminate: analyticsProgress == null }"
+                      :style="analyticsProgress == null ? undefined : { width: `${analyticsProgress}%` }"
+                  />
+                  <span>{{ analyticsProgress == null ? "Preparing..." : `${analyticsProgress}%` }}</span>
+                </div>
+
+                <div
+                    v-if="processedFrames != null && totalFrames != null"
+                    class="analytics-progress-details"
+                >
+                  <span v-if="processedVideoSeconds != null && selectedRecording?.durationSeconds != null">
+                    Video: {{ formatDuration(processedVideoSeconds) }} / {{ formatDuration(selectedRecording.durationSeconds) }}
+                  </span>
+                  <span>Frames: {{ processedFrames }} / {{ totalFrames }}</span>
+                  <span v-if="analyticsEtaSeconds != null">
+                    About {{ formatDuration(analyticsEtaSeconds) }} remaining
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -815,6 +860,7 @@ onUnmounted(stopAnalyticsPolling);
 .analytics-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -854,6 +900,20 @@ onUnmounted(stopAnalyticsPolling);
   text-align: center;
   font-size: 12px;
   line-height: 20px;
+}
+
+.analytics-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analytics-progress-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: #667085;
+  font-size: 12px;
 }
 
 .analytics-progress-fill {
