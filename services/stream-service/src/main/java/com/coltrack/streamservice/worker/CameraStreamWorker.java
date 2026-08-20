@@ -125,7 +125,7 @@ public class CameraStreamWorker implements Runnable {
                                     }
                                     ffmpegOutput.addLast(line);
                                 }
-                                log.info("[ffmpeg] camera={} {}", session.getCameraId(), line);
+                                log.debug("[ffmpeg] camera={} {}", session.getCameraId(), line);
                             }
 
                         } catch (Exception ignored) {
@@ -441,13 +441,11 @@ public class CameraStreamWorker implements Runnable {
                 "-hide_banner",
 
                 "-loglevel",
-                "info",
+                //"info",
+                "warning",
 
                 "-rtsp_transport",
                 "tcp",
-
-                "-rw_timeout",
-                "15000000",
 
                 "-i",
                 session.getRtspUrl(),

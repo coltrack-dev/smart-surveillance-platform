@@ -583,14 +583,8 @@ public class RecordingWorker implements Runnable {
                 "-loglevel",
                 "warning",
 
-
                 "-rtsp_transport",
                 "tcp",
-
-
-                "-rw_timeout",
-                "15000000",
-
 
                 "-i",
                 rtspUrl,

@@ -10,7 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-
+import com.coltrack.events.StreamReconnectingEvent;
+import com.coltrack.events.StreamRecoveredEvent;
 
 @Component
 @RequiredArgsConstructor
@@ -59,6 +60,26 @@ public class StreamEventConsumer {
             return;
         }
 
+        if (event instanceof StreamReconnectingEvent reconnecting) {
+
+            log.info(
+                    "Stream reconnecting camera={}; " +
+                            "recording worker manages its own reconnect",
+                    reconnecting.cameraId()
+            );
+
+            return;
+        }
+
+        if (event instanceof StreamRecoveredEvent recovered) {
+
+            log.info(
+                    "Stream recovered camera={}",
+                    recovered.cameraId()
+            );
+
+            return;
+        }
 
         log.warn(
                 "Unknown stream event type={}",
@@ -105,17 +126,16 @@ public class StreamEventConsumer {
     private void handleFailed(
             StreamFailedEvent event
     ) {
-
+        /*
+         * StreamFailedEvent является временным: после него
+         * stream-service выполняет автоматический reconnect.
+         * Поэтому логическую запись здесь не останавливаем.
+         */
         log.warn(
-                "Stream failed event camera={} reason={}",
+                "Stream failed temporarily camera={} reason={}; " +
+                        "recording worker will reconnect independently",
                 event.cameraId(),
                 event.reason()
-        );
-
-
-        recordingManager.stop(
-                event.cameraId(),
-                event.failedAt()
         );
     }
 }
