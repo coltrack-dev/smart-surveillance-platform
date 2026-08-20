@@ -751,6 +751,8 @@ onUnmounted(stopAnalyticsPolling);
                   :key="preparedPlaybackUrl"
                   :url="preparedPlaybackUrl"
                   :connecting="false"
+                  proportional
+                  class="archive-player"
               />
 
               <div

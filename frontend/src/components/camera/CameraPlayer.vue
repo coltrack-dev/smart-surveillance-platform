@@ -338,11 +338,22 @@ onUnmounted(
 }
 
 .player {
-
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
 
+.player-container.proportional {
+  height: auto;
+  aspect-ratio: auto;
+}
+
+.player.proportional {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: auto;
+  object-fit: contain;
 }
 
 .overlay {
