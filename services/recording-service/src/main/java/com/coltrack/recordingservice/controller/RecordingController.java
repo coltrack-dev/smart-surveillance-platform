@@ -2,11 +2,12 @@ package com.coltrack.recordingservice.controller;
 
 import com.coltrack.recordingservice.dto.RecordingDateResponse;
 import com.coltrack.recordingservice.dto.RecordingResponse;
+import com.coltrack.recordingservice.dto.ActiveRecordingResponse;
 import com.coltrack.recordingservice.client.StreamClient;
-import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.service.RecordingManager;
 import com.coltrack.recordingservice.service.RecordingQueryService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -29,7 +30,7 @@ public class RecordingController {
      * Manual recording start.
      */
     @PostMapping("/{cameraId}/start")
-    public RecordingSession start(
+    public ActiveRecordingResponse start(
             @PathVariable UUID cameraId
     ) {
 
@@ -40,10 +41,12 @@ public class RecordingController {
          */
         streamClient.start(cameraId);
 
-        return recordingManager.start(
-                cameraId,
-                UUID.randomUUID(),
-                Instant.now()
+        return ActiveRecordingResponse.from(
+                recordingManager.start(
+                        cameraId,
+                        UUID.randomUUID(),
+                        Instant.now()
+                )
         );
     }
 
@@ -67,11 +70,17 @@ public class RecordingController {
      * Get active recording session.
      */
     @GetMapping("/{cameraId}")
-    public RecordingSession find(
+    public ResponseEntity<ActiveRecordingResponse> find(
             @PathVariable UUID cameraId
     ) {
 
-        return recordingManager.find(cameraId);
+        ActiveRecordingResponse response = ActiveRecordingResponse.from(
+                recordingManager.find(cameraId)
+        );
+
+        return response == null
+                ? ResponseEntity.notFound().build()
+                : ResponseEntity.ok(response);
     }
 
     @GetMapping("/cameras/{cameraId}/dates")
