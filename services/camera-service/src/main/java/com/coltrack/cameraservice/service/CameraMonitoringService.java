@@ -17,6 +17,7 @@ public class CameraMonitoringService {
     private final CameraRepository repository;
 
     private final RtspStreamChecker checker;
+    private final RtspUrlResolver rtspUrlResolver;
 
 
     public CameraEntity checkCamera(UUID id) {
@@ -29,7 +30,7 @@ public class CameraMonitoringService {
 
         boolean online =
                 checker.check(
-                        camera.getRtspUrl()
+                        rtspUrlResolver.resolve(camera)
                 );
 
 

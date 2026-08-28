@@ -2,6 +2,7 @@ package com.coltrack.streamservice.worker;
 
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
+import com.coltrack.streamservice.model.VideoProcessingMode;
 import com.coltrack.streamservice.service.HlsService;
 
 import lombok.extern.slf4j.Slf4j;
@@ -14,8 +15,11 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Worker responsible for running FFmpeg process.
@@ -123,9 +127,10 @@ public class CameraStreamWorker implements Runnable {
                                     if (ffmpegOutput.size() == FFMPEG_LOG_LINES) {
                                         ffmpegOutput.removeFirst();
                                     }
-                                    ffmpegOutput.addLast(line);
+                                    ffmpegOutput.addLast(redactCredentials(line));
                                 }
-                                log.debug("[ffmpeg] camera={} {}", session.getCameraId(), line);
+                                log.debug("[ffmpeg] camera={} {}",
+                                        session.getCameraId(), redactCredentials(line));
                             }
 
                         } catch (Exception ignored) {
@@ -432,56 +437,93 @@ public class CameraStreamWorker implements Runnable {
      */
     private List<String> buildCommand(
             Path outputDir
-    ) {
+    ) throws IOException, InterruptedException {
 
-        return List.of(
+        VideoProcessingMode mode = session.getVideoProcessingMode() == null
+                ? VideoProcessingMode.AUTO
+                : session.getVideoProcessingMode();
+        String codec = null;
+        if (mode == VideoProcessingMode.AUTO) {
+            codec = probeVideoCodec();
+            session.setDetectedVideoCodec(codec);
+            mode = "h264".equals(codec)
+                    ? VideoProcessingMode.COPY
+                    : VideoProcessingMode.TRANSCODE_H264;
+        }
 
+        log.info("Selected video processing camera={} configuredMode={} effectiveMode={} codec={}",
+                session.getCameraId(), session.getVideoProcessingMode(), mode, codec);
+
+        List<String> command = new ArrayList<>(List.of(
                 "ffmpeg",
-
                 "-hide_banner",
+                "-loglevel", "warning",
+                "-rtsp_transport", "tcp",
+                "-i", session.getRtspUrl(),
+                "-map", "0:v:0",
+                "-an"
+        ));
 
-                "-loglevel",
-                //"info",
-                "warning",
+        if (mode == VideoProcessingMode.COPY) {
+            command.addAll(List.of("-c:v", "copy"));
+        } else {
+            command.addAll(List.of(
+                    "-vf", "fps=15,format=yuv420p",
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-tune", "zerolatency",
+                    "-g", "30",
+                    "-keyint_min", "30",
+                    "-sc_threshold", "0"
+            ));
+        }
 
-                "-rtsp_transport",
-                "tcp",
-
-                "-i",
-                session.getRtspUrl(),
-
-                "-map",
-                "0:v:0",
-
-                "-c:v",
-                "copy",
-
-                "-an",
-
-                "-f",
-                "hls",
-
-                "-hls_time",
-                "2",
-
-                "-hls_list_size",
-                "6",
-
-                "-start_number",
-                "0",
-
+        command.addAll(List.of(
+                "-f", "hls",
+                "-hls_time", "2",
+                "-hls_list_size", "6",
+                "-start_number", "0",
                 "-hls_segment_filename",
-                outputDir
-                        .resolve("segment%05d.ts")
-                        .toString(),
-
+                outputDir.resolve("segment%05d.ts").toString(),
                 "-hls_flags",
                 "delete_segments+append_list+independent_segments+omit_endlist+temp_file",
+                outputDir.resolve("index.m3u8").toString()
+        ));
+        return command;
+    }
 
-                outputDir
-                        .resolve("index.m3u8")
-                        .toString()
-        );
+    private String probeVideoCodec() throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(
+                "ffprobe",
+                "-v", "error",
+                "-rtsp_transport", "tcp",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                session.getRtspUrl()
+        ).redirectErrorStream(true).start();
+
+        boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IOException("Timed out while probing RTSP video codec");
+        }
+        String output = new String(process.getInputStream().readAllBytes()).trim();
+        if (process.exitValue() != 0 || output.isBlank()) {
+            throw new IOException("Cannot detect RTSP video codec: "
+                    + redactCredentials(output));
+        }
+        return output.lines().findFirst().orElseThrow().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String redactCredentials(String value) {
+        if (value == null) {
+            return null;
+        }
+        String rtspUrl = session.getRtspUrl();
+        String redacted = rtspUrl == null ? value : value.replace(rtspUrl, "<redacted-rtsp-url>");
+        return redacted.replaceAll("(?i)(password[=_:])[^_&\\s]+", "$1***")
+                .replaceAll("(?i)(rtsp://[^:/\\s]+:)[^@\\s]+@", "$1***@");
     }
 
     static boolean isPlaylistReady(Path playlist) throws IOException {

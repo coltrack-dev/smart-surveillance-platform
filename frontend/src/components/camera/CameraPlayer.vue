@@ -18,6 +18,9 @@ const playing = ref(false);
 
 // Экземпляр hls.js
 let hls: Hls | null = null;
+let networkRetryTimer: number | null = null;
+let networkRetryCount = 0;
+const MAX_NETWORK_RETRIES = 10;
 
 /**
  * Загрузка HLS потока.
@@ -31,6 +34,7 @@ async function loadPlayer() {
   loading.value = true;
   error.value = false;
   playing.value = false;
+  networkRetryCount = 0;
 
   // Уничтожаем предыдущий поток
   if (hls) {
@@ -149,12 +153,31 @@ async function loadPlayer() {
             data
         );
 
-        if (data.fatal) {
+        if (!data.fatal) return;
 
-          loading.value = false;
-          error.value = true;
-
+        if (
+            data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+            networkRetryCount < MAX_NETWORK_RETRIES
+        ) {
+          networkRetryCount += 1;
+          loading.value = true;
+          error.value = false;
+          if (networkRetryTimer !== null) {
+            window.clearTimeout(networkRetryTimer);
+          }
+          networkRetryTimer = window.setTimeout(() => {
+            hls?.startLoad();
+          }, 2000);
+          return;
         }
+
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls?.recoverMediaError();
+          return;
+        }
+
+        loading.value = false;
+        error.value = true;
 
       }
   );
@@ -215,6 +238,11 @@ function stopPlayer() {
   loading.value = false;
   error.value = false;
   playing.value = false;
+
+  if (networkRetryTimer !== null) {
+    window.clearTimeout(networkRetryTimer);
+    networkRetryTimer = null;
+  }
 
   if (hls) {
 

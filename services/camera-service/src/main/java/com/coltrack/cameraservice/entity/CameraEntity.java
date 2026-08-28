@@ -2,6 +2,7 @@ package com.coltrack.cameraservice.entity;
 
 
 import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import lombok.*;
 
@@ -41,6 +42,27 @@ public class CameraEntity {
     private String name;
 
     private String rtspUrl;
+
+    @JsonIgnore
+    private String rtspUsername;
+
+    @JsonIgnore
+    @Column(columnDefinition = "TEXT")
+    private String rtspPasswordEncrypted;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private RtspUrlFormat rtspUrlFormat = RtspUrlFormat.STANDARD;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private VideoProcessingMode videoProcessingMode = VideoProcessingMode.AUTO;
+
+    public boolean isCredentialsConfigured() {
+        return rtspPasswordEncrypted != null && !rtspPasswordEncrypted.isBlank();
+    }
 
     @Column(nullable = false)
     private Instant createdAt;

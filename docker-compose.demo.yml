@@ -242,6 +242,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY}
       ANALYTICS_JOBS_TOPIC: analytics.jobs
       ANALYTICS_JOB_STATUS_TOPIC: analytics.job-status
       ANALYTICS_WORKER_HEARTBEAT_TOPIC: analytics.worker-heartbeat

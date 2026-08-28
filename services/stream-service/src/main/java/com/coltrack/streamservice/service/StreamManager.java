@@ -3,6 +3,7 @@ package com.coltrack.streamservice.service;
 import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
+import com.coltrack.streamservice.client.dto.CameraConnectionDto;
 import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
@@ -82,10 +83,11 @@ public class StreamManager implements StreamListener {
             sessions.remove(cameraId);
         }
 
-        CameraDto camera = cameraClient.findById(cameraId);
+        CameraConnectionDto camera = cameraClient.connection(cameraId);
         StreamSession session = StreamSession.builder()
                 .cameraId(camera.id())
                 .rtspUrl(camera.rtspUrl())
+                .videoProcessingMode(camera.videoProcessingMode())
                 .status(StreamStatus.STARTING)
                 .build();
         sessions.put(cameraId, session);
@@ -94,7 +96,8 @@ public class StreamManager implements StreamListener {
                 session
         );
 
-        log.info("Creating stream session camera={} rtsp={}", cameraId, camera.rtspUrl());
+        log.info("Creating stream session camera={} processingMode={}",
+                cameraId, camera.videoProcessingMode());
         Thread.startVirtualThread(() -> {
             try {
                 CameraStreamWorker worker = new CameraStreamWorker(

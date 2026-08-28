@@ -43,6 +43,10 @@ public class CameraController {
                         request.name(),
                         request.lbsLocationId(),
                         request.rtspUrl(),
+                        request.rtspUsername(),
+                        request.rtspPassword(),
+                        request.rtspUrlFormat(),
+                        request.videoProcessingMode(),
                         request.autoStart()
                 );
 
@@ -92,10 +96,13 @@ public class CameraController {
                 id,
                 request.name(),
                 request.lbsLocationId(),
-                request.rtspUrl()
+                request.rtspUrl(),
+                request.rtspUsername(),
+                request.rtspPassword(),
+                request.rtspUrlFormat(),
+                request.videoProcessingMode()
         );
     }
-
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)

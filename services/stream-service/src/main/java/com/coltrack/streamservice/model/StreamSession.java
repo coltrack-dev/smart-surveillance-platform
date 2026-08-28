@@ -23,6 +23,11 @@ public class StreamSession {
      */
     private String rtspUrl;
 
+    @Builder.Default
+    private VideoProcessingMode videoProcessingMode = VideoProcessingMode.AUTO;
+
+    private String detectedVideoCodec;
+
 
     /**
      * Текущее состояние потока.

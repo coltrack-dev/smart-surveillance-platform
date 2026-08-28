@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.client;
 
 import com.coltrack.streamservice.client.dto.CameraDto;
+import com.coltrack.streamservice.client.dto.CameraConnectionDto;
 
 import lombok.RequiredArgsConstructor;
 
@@ -24,6 +25,13 @@ public class CameraClient {
                 .uri("/api/cameras/{id}", cameraId)
                 .retrieve()
                 .body(CameraDto.class);
+    }
+
+    public CameraConnectionDto connection(UUID cameraId) {
+        return restClient.get()
+                .uri("/internal/cameras/{id}/connection", cameraId)
+                .retrieve()
+                .body(CameraConnectionDto.class);
     }
 
     public Collection<CameraDto> findAll() {

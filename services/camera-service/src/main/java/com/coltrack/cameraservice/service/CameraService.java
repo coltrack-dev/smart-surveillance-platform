@@ -4,6 +4,9 @@ package com.coltrack.cameraservice.service;
 import com.coltrack.cameraservice.entity.CameraEntity;
 import com.coltrack.cameraservice.entity.CameraStatus;
 import com.coltrack.cameraservice.entity.LbsLocationEntity;
+import com.coltrack.cameraservice.entity.RtspUrlFormat;
+import com.coltrack.cameraservice.entity.VideoProcessingMode;
+import com.coltrack.cameraservice.dto.CameraConnectionResponse;
 import com.coltrack.cameraservice.repository.CameraRepository;
 
 import com.coltrack.cameraservice.repository.LbsLocationRepository;
@@ -31,11 +34,17 @@ public class CameraService {
     private final CameraRepository repository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final LbsLocationRepository lbsLocationRepository;
+    private final CameraCredentialsCipher credentialsCipher;
+    private final RtspUrlResolver rtspUrlResolver;
 
     public CameraEntity create(
             String name,
             UUID lbsLocationId,
             String rtspUrl,
+            String rtspUsername,
+            String rtspPassword,
+            RtspUrlFormat rtspUrlFormat,
+            VideoProcessingMode videoProcessingMode,
             boolean autoStart
     ) {
 
@@ -63,6 +72,11 @@ public class CameraService {
                         .name(name)
                         .lbsLocation(lbsLocation)
                         .rtspUrl(rtspUrl)
+                        .rtspUsername(rtspUsername)
+                        .rtspPasswordEncrypted(credentialsCipher.encrypt(rtspPassword))
+                        .rtspUrlFormat(rtspUrlFormat == null ? RtspUrlFormat.STANDARD : rtspUrlFormat)
+                        .videoProcessingMode(videoProcessingMode == null
+                                ? VideoProcessingMode.AUTO : videoProcessingMode)
                         .autoStart(autoStart)
                         .status(CameraStatus.OFFLINE)
                         .createdAt(Instant.now())
@@ -109,7 +123,11 @@ public class CameraService {
             UUID id,
             String name,
             UUID lbsLocationId,
-            String rtspUrl
+            String rtspUrl,
+            String rtspUsername,
+            String rtspPassword,
+            RtspUrlFormat rtspUrlFormat,
+            VideoProcessingMode videoProcessingMode
     ) {
 
 
@@ -136,6 +154,14 @@ public class CameraService {
         camera.setName(name);
         camera.setLbsLocation(lbsLocation);
         camera.setRtspUrl(rtspUrl);
+        camera.setRtspUsername(rtspUsername);
+        if (rtspPassword != null && !rtspPassword.isBlank()) {
+            camera.setRtspPasswordEncrypted(credentialsCipher.encrypt(rtspPassword));
+        }
+        camera.setRtspUrlFormat(rtspUrlFormat == null
+                ? RtspUrlFormat.STANDARD : rtspUrlFormat);
+        camera.setVideoProcessingMode(videoProcessingMode == null
+                ? VideoProcessingMode.AUTO : videoProcessingMode);
 
 
         repository.save(camera);
@@ -157,6 +183,15 @@ public class CameraService {
 
 
         return camera;
+    }
+
+    public CameraConnectionResponse connection(UUID id) {
+        CameraEntity camera = findById(id);
+        return new CameraConnectionResponse(
+                camera.getId(),
+                rtspUrlResolver.resolve(camera),
+                camera.getVideoProcessingMode()
+        );
     }
 
     public void delete(UUID id) {

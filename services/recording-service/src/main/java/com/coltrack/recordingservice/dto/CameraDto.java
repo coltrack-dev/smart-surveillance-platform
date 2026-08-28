@@ -4,6 +4,7 @@ import java.util.UUID;
 
 public record CameraDto(
         UUID id,
-        String rtspUrl
+        String rtspUrl,
+        String videoProcessingMode
 ) {
 }

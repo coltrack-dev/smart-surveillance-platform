@@ -23,7 +23,7 @@ public class CameraClient {
 
         return restClient.get()
                 .uri(
-                        "/api/cameras/{id}",
+                        "/internal/cameras/{id}/connection",
                         cameraId
                 )
                 .retrieve()

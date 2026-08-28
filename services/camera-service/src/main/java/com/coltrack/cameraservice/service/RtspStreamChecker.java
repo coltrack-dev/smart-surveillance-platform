@@ -46,8 +46,7 @@ public class RtspStreamChecker {
             future.cancel(true);
 
             log.error(
-                    "RTSP timeout: {}",
-                    url
+                    "RTSP check timed out"
             );
 
             return false;
@@ -55,8 +54,7 @@ public class RtspStreamChecker {
         } catch (Exception e) {
 
             log.error(
-                    "RTSP check error: {}",
-                    url,
+                    "RTSP check error",
                     e
             );
 
@@ -74,8 +72,7 @@ public class RtspStreamChecker {
         try {
 
             log.info(
-                    "RTSP connecting: {}",
-                    url
+                    "RTSP connecting"
             );
 
             grabber =
@@ -106,8 +103,7 @@ public class RtspStreamChecker {
             grabber.start();
 
             log.info(
-                    "RTSP connected: {}",
-                    url
+                    "RTSP connected"
             );
 
             /*
@@ -118,9 +114,8 @@ public class RtspStreamChecker {
                     grabber.grabImage() != null;
 
             log.info(
-                    "RTSP frame received={} url={}",
-                    available,
-                    url
+                    "RTSP frame received={}",
+                    available
             );
 
             return available;
@@ -128,8 +123,7 @@ public class RtspStreamChecker {
         } catch (Exception e) {
 
             log.error(
-                    "RTSP failed: {}",
-                    url,
+                    "RTSP failed",
                     e
             );
 
