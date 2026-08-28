@@ -31,3 +31,24 @@ export async function stopStream(
     );
 
 }
+
+export async function findStream(
+    id: string
+): Promise<StreamInfo | null> {
+    try {
+        const response = await http.get<StreamInfo>(
+            `/streams/${id}`
+        );
+        return response.data;
+    } catch (error: unknown) {
+        if (
+            typeof error === "object"
+            && error !== null
+            && "response" in error
+            && (error as { response?: { status?: number } }).response?.status === 404
+        ) {
+            return null;
+        }
+        throw error;
+    }
+}

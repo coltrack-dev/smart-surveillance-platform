@@ -42,7 +42,10 @@ public class StreamEventConsumer {
 
         if (event instanceof StreamStartedEvent started) {
 
-            handleStarted(started);
+            log.info(
+                    "Stream started camera={}; recording remains manual",
+                    started.cameraId()
+            );
             return;
         }
 
@@ -84,24 +87,6 @@ public class StreamEventConsumer {
         log.warn(
                 "Unknown stream event type={}",
                 event.getClass()
-        );
-    }
-
-
-    private void handleStarted(
-            StreamStartedEvent event
-    ) {
-
-        log.info(
-                "Stream started event camera={}",
-                event.cameraId()
-        );
-
-
-        recordingManager.start(
-                event.cameraId(),
-                event.eventId(),
-                event.startedAt()
         );
     }
 

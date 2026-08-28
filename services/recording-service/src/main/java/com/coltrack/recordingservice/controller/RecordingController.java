@@ -2,6 +2,7 @@ package com.coltrack.recordingservice.controller;
 
 import com.coltrack.recordingservice.dto.RecordingDateResponse;
 import com.coltrack.recordingservice.dto.RecordingResponse;
+import com.coltrack.recordingservice.client.StreamClient;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.service.RecordingManager;
 import com.coltrack.recordingservice.service.RecordingQueryService;
@@ -21,6 +22,7 @@ public class RecordingController {
 
     private final RecordingManager recordingManager;
     private final RecordingQueryService recordingQueryService;
+    private final StreamClient streamClient;
 
 
     /**
@@ -30,6 +32,13 @@ public class RecordingController {
     public RecordingSession start(
             @PathVariable UUID cameraId
     ) {
+
+        /*
+         * Recording is allowed to depend on a live stream, but starting a
+         * stream alone must never create a recording. StreamManager.start is
+         * idempotent, therefore this is also safe when LIVE is already open.
+         */
+        streamClient.start(cameraId);
 
         return recordingManager.start(
                 cameraId,

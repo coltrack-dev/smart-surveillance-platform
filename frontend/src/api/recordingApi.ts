@@ -1,6 +1,7 @@
 import http from "@/api/http";
 
 import type {
+    ActiveRecording,
     Recording,
     RecordingDate
 } from "@/types/Recording";
@@ -60,10 +61,12 @@ export async function prepareRecordingPlayback(
 
 export async function startRecording(
     cameraId: string
-): Promise<void> {
-    await http.post(
+): Promise<ActiveRecording> {
+    const response = await http.post<ActiveRecording>(
         `/recordings/${cameraId}/start`
     );
+
+    return response.data;
 }
 
 export async function stopRecording(
@@ -72,4 +75,14 @@ export async function stopRecording(
     await http.post(
         `/recordings/${cameraId}/stop`
     );
+}
+
+export async function findActiveRecording(
+    cameraId: string
+): Promise<ActiveRecording | null> {
+    const response = await http.get<ActiveRecording | null>(
+        `/recordings/${cameraId}`
+    );
+
+    return response.data || null;
 }

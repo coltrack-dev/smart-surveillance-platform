@@ -40,6 +40,9 @@ spring:
 camera-service:
   url: http://localhost:8091
 
+stream-service:
+  url: http://localhost:8094
+
 
 # Recording storage
 recording:
@@ -104,4 +107,3 @@ logging:
     com.coltrack.recordingservice: DEBUG
 
     org.apache.kafka: WARN
-

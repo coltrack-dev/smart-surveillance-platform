@@ -302,6 +302,7 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
 
       CAMERA_SERVICE_URL: http://camera-service:8091
+      STREAM_SERVICE_URL: http://stream-service:8094
 
       RECORDING_STORAGE_PATH: /data/recordings
       RECORDING_PLAYBACK_CACHE_DIRECTORY: /data/playback-cache
@@ -326,6 +327,8 @@ services:
       kafka:
         condition: service_started
       camera-service:
+        condition: service_started
+      stream-service:
         condition: service_started
     restart: unless-stopped
 

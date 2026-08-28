@@ -140,7 +140,8 @@ public class RecordingManager implements RecordingListener {
     /**
      * Starts recording for camera.
      * <p>
-     * Called when StreamStartedEvent received.
+     * Called only by an explicit recording command. Starting a stream does not
+     * start recording automatically.
      */
     public RecordingSession start(
             UUID cameraId,
@@ -274,7 +275,7 @@ public class RecordingManager implements RecordingListener {
     /**
      * Stops recording.
      * <p>
-     * Called when StreamStoppedEvent received.
+     * Called by an explicit recording command or when its source stream stops.
      */
     public synchronized void stop(UUID cameraId, Instant eventTime) {
 

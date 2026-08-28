@@ -9,6 +9,7 @@ import type { AnalyticsJob } from "@/types/AnalyticsControl";
 
 const props = defineProps<{
   cameraId: string;
+  streamActive: boolean;
 }>();
 
 const sourceUrl = ref(
@@ -25,6 +26,33 @@ const active = computed(() =>
     ["REQUESTED", "RUNNING", "RETRYING", "STOP_REQUESTED"]
         .includes(job.value?.status ?? "")
 );
+
+const statusLabel = computed(() => {
+  switch (job.value?.status) {
+    case "REQUESTED": return "Waiting for worker";
+    case "RUNNING": return "Analysis running";
+    case "RETRYING": return "Reconnecting to video";
+    case "STOP_REQUESTED": return "Stopping analysis";
+    case "STOPPED": return "Analysis stopped";
+    case "COMPLETED": return "Completed";
+    case "FAILED": return "Analysis failed";
+    case "REJECTED": return "Start rejected";
+    default: return "Not started";
+  }
+});
+
+const stageDescription = computed(() => {
+  if (!props.streamActive && !active.value) return "Start the stream to enable realtime analysis.";
+  switch (job.value?.status) {
+    case "REQUESTED": return "The job was accepted and is waiting for an inference worker.";
+    case "RUNNING": return "The worker is receiving frames and tracking objects.";
+    case "RETRYING": return "Frames are unavailable; the worker is restoring the connection.";
+    case "STOP_REQUESTED": return "The worker is finishing the current operation.";
+    case "FAILED":
+    case "REJECTED": return String(job.value?.details?.error ?? "Open service logs for details.");
+    default: return "Configure the crossing line and start analysis.";
+  }
+});
 
 async function refresh(): Promise<void> {
   job.value = await findLatestRealtimeAnalyticsJob(props.cameraId);
@@ -111,7 +139,7 @@ onBeforeUnmount(() => {
     <div class="analytics-header">
       <strong>Realtime analytics</strong>
       <span class="analytics-status" :class="job?.status.toLowerCase()">
-        {{ job?.status ?? "NOT STARTED" }}
+        {{ statusLabel }}
       </span>
     </div>
 
@@ -147,7 +175,7 @@ onBeforeUnmount(() => {
       <button
           type="button"
           class="analytics-start"
-          :disabled="active || loading || !sourceUrl"
+          :disabled="active || loading || !sourceUrl || !streamActive"
           @click="start"
       >
         Start analytics
@@ -160,6 +188,8 @@ onBeforeUnmount(() => {
         Stop analytics
       </button>
     </div>
+
+    <small class="analytics-stage">{{ stageDescription }}</small>
 
     <small v-if="job?.workerId">Worker: {{ job.workerId }}</small>
     <small v-if="errorMessage" class="analytics-error">{{ errorMessage }}</small>
@@ -195,6 +225,12 @@ onBeforeUnmount(() => {
   color: #16a34a;
 }
 
+.analytics-status.retrying,
+.analytics-status.requested,
+.analytics-status.stop_requested {
+  color: #d97706;
+}
+
 .analytics-status.failed,
 .analytics-status.rejected {
   color: #dc2626;
@@ -221,6 +257,10 @@ small {
   display: block;
   margin-top: 6px;
   color: #64748b;
+}
+
+.analytics-stage {
+  line-height: 1.4;
 }
 
 .analytics-error {

@@ -8,4 +8,6 @@ export interface StreamEvent {
 
     error: string | null;
 
+    startedAt?: string | null;
+
 }

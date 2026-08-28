@@ -51,7 +51,7 @@ export const useStreamStore = defineStore(
                 status: event.status,
                 hlsUrl: event.hlsUrl,
                 error: event.error,
-                startedAt: old?.startedAt ?? null
+                startedAt: event.startedAt ?? old?.startedAt ?? null
             };
 
             console.log( event );

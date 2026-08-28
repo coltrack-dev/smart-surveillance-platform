@@ -360,7 +360,9 @@ function formatStatus(status?: RecordingStatus | null): string {
   }
 
   const labels: Record<RecordingStatus, string> = {
+    STARTING: "Starting",
     RECORDING: "Recording",
+    STOPPING: "Stopping",
     COMPLETED: "Completed",
     FAILED: "Failed",
     STOPPED: "Stopped"
