@@ -2,6 +2,7 @@ package com.coltrack.analyticsservice.controller;
 
 import com.coltrack.analyticsservice.dto.AnalyticsEventPagePositionResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
+import com.coltrack.analyticsservice.dto.AnalyticsEventTimelineItemResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
@@ -101,6 +102,13 @@ public class AnalyticsControlController {
             @RequestParam(defaultValue = "6") int size
     ) {
         return eventService.findEventPageForTime(jobId, videoTimeSeconds, size);
+    }
+
+    @GetMapping("/jobs/{jobId}/events/timeline")
+    public List<AnalyticsEventTimelineItemResponse> findEventTimeline(
+            @PathVariable UUID jobId
+    ) {
+        return eventService.findTimelineForJob(jobId);
     }
 
     @GetMapping("/jobs")

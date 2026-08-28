@@ -124,6 +124,38 @@ class AnalyticsEventServiceTest {
         assertThat(result.precedingEvents()).isEqualTo(13L);
     }
 
+    @Test
+    void shouldReturnRecordingEventsForTimeline() {
+        UUID jobId = UUID.randomUUID();
+        UUID recordingId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        var job = AnalyticsJobEntity.builder()
+                .jobId(jobId)
+                .jobType("RECORDING")
+                .recordingId(recordingId)
+                .build();
+        var event = AnalyticsEventEntity.builder()
+                .eventId(eventId)
+                .eventType("LINE_CROSSED")
+                .objectType("PERSON")
+                .videoTimeSeconds(new BigDecimal("42.5"))
+                .build();
+
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+        when(repository
+                .findAllByRecordingIdAndVideoTimeSecondsIsNotNullOrderByVideoTimeSecondsAsc(
+                        recordingId
+                ))
+                .thenReturn(java.util.List.of(event));
+
+        var result = service.findTimelineForJob(jobId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().eventId()).isEqualTo(eventId);
+        assertThat(result.getFirst().videoTimeSeconds())
+                .isEqualByComparingTo("42.5");
+    }
+
     private AnalyticsEvent event() {
         return new AnalyticsEvent(
                 UUID.randomUUID(), 1, "LINE_CROSSED", "camera-1",

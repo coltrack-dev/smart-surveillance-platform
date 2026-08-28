@@ -34,3 +34,10 @@ export interface AnalyticsEventsPage {
     totalElements: number;
     totalPages: number;
 }
+
+export interface AnalyticsEventTimelineItem {
+    eventId: string;
+    videoTimeSeconds: number;
+    eventType: string;
+    objectType: string | null;
+}

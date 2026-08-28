@@ -24,11 +24,15 @@ import {
 
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 import type {AnalyticsJob, AnalyticsJobStatus} from "@/types/AnalyticsControl";
-import type {AnalyticsEvent} from "@/types/AnalyticsEvent";
+import type {
+  AnalyticsEvent,
+  AnalyticsEventTimelineItem
+} from "@/types/AnalyticsEvent";
 import {
   findAnalyticsJob,
   findAnalyticsJobEvents,
   findAnalyticsEventPageForTime,
+  findAnalyticsEventTimeline,
   findLatestRecordingAnalyticsJob,
   startRecordingAnalytics,
   stopRecordingAnalytics
@@ -72,6 +76,10 @@ const analyticsEventsLoading = ref(false);
 const analyticsEventsError = ref<string | null>(null);
 const failedSnapshots = ref<Set<string>>(new Set());
 const enlargedSnapshotEvent = ref<AnalyticsEvent | null>(null);
+const analyticsTimeline = ref<AnalyticsEventTimelineItem[]>([]);
+const timelineLoading = ref(false);
+const timelineError = ref<string | null>(null);
+const archivePlayer = ref<InstanceType<typeof CameraPlayer> | null>(null);
 let analyticsPollingTimer: ReturnType<typeof setInterval> | null = null;
 
 const activeAnalyticsStatuses = new Set<AnalyticsJobStatus>([
@@ -124,6 +132,42 @@ const canAnalyzeSelectedRecording = computed(() =>
     && selectedRecording.value.status !== "RECORDING"
     && selectedRecording.value.finishedAt != null
 );
+
+function timelinePosition(event: AnalyticsEventTimelineItem): number {
+  const duration = selectedRecording.value?.durationSeconds;
+  if (!duration || duration <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, event.videoTimeSeconds / duration * 100));
+}
+
+async function loadAnalyticsTimeline(jobId: string, recordingId: string): Promise<void> {
+  timelineLoading.value = true;
+  timelineError.value = null;
+  try {
+    const events = await findAnalyticsEventTimeline(jobId);
+    if (
+        analyticsJob.value?.jobId !== jobId
+        || selectedRecording.value?.id !== recordingId
+    ) {
+      return;
+    }
+    analyticsTimeline.value = events;
+  } catch (error) {
+    console.error("Unable to load analytics timeline", error);
+    timelineError.value = "Unable to load event timeline.";
+  } finally {
+    timelineLoading.value = false;
+  }
+}
+
+async function seekArchiveTo(seconds: number | null): Promise<void> {
+  if (seconds == null || !Number.isFinite(seconds)) {
+    return;
+  }
+  closeAnalyticsResults();
+  await archivePlayer.value?.seekTo(seconds, true);
+}
 
 const playbackBaseUrl =
     import.meta.env.VITE_RECORDING_URL ??
@@ -518,6 +562,9 @@ function startAnalyticsPolling(jobId: string): void {
       analyticsJob.value = job;
       if (!activeAnalyticsStatuses.has(job.status)) {
         stopAnalyticsPolling();
+        if (job.status === "COMPLETED" && job.recordingId) {
+          void loadAnalyticsTimeline(job.jobId, job.recordingId);
+        }
       }
     } catch (error) {
       console.error("Unable to refresh analytics job", error);
@@ -537,6 +584,8 @@ async function loadRecordingAnalytics(recordingId: string): Promise<void> {
     analyticsJob.value = job;
     if (job && activeAnalyticsStatuses.has(job.status)) {
       startAnalyticsPolling(job.jobId);
+    } else if (job?.status === "COMPLETED" && job.recordingId) {
+      void loadAnalyticsTimeline(job.jobId, job.recordingId);
     }
   } catch (error) {
     console.error("Unable to load recording analytics", error);
@@ -551,6 +600,8 @@ async function runRecordingAnalytics(): Promise<void> {
   }
   analyticsLoading.value = true;
   analyticsError.value = null;
+  analyticsTimeline.value = [];
+  timelineError.value = null;
   try {
     const job = await startRecordingAnalytics(recording.id, {
       cameraId: recording.cameraId,
@@ -595,6 +646,8 @@ async function selectRecording(
   selectedRecording.value = recording;
   analyticsResultsOpen.value = false;
   enlargedSnapshotEvent.value = null;
+  analyticsTimeline.value = [];
+  timelineError.value = null;
   void loadRecordingAnalytics(recording.id);
 
   preparedPlaybackUrl.value = null;
@@ -922,6 +975,7 @@ onUnmounted(stopAnalyticsPolling);
 
               <CameraPlayer
                   v-else-if="preparedPlaybackUrl"
+                  ref="archivePlayer"
                   :key="preparedPlaybackUrl"
                   :url="preparedPlaybackUrl"
                   :connecting="false"
@@ -934,6 +988,34 @@ onUnmounted(stopAnalyticsPolling);
                   class="archive-video-empty"
               >
                 Select a recording to start playback.
+              </div>
+
+              <div
+                  v-if="preparedPlaybackUrl && analyticsJob?.status === 'COMPLETED'"
+                  class="event-timeline"
+              >
+                <div class="timeline-header">
+                  <span>Events timeline</span>
+                  <span v-if="timelineLoading">Loading...</span>
+                  <span v-else>{{ analyticsTimeline.length }} events</span>
+                </div>
+                <div class="timeline-track" aria-label="Detected events timeline">
+                  <button
+                      v-for="event in analyticsTimeline"
+                      :key="event.eventId"
+                      type="button"
+                      class="timeline-marker"
+                      :style="{ left: `${timelinePosition(event)}%` }"
+                      :title="`${formatDuration(Math.round(event.videoTimeSeconds))} Â· ${event.eventType} Â· ${event.objectType || 'Object'}`"
+                      :aria-label="`Play event at ${formatDuration(Math.round(event.videoTimeSeconds))}`"
+                      @click="seekArchiveTo(event.videoTimeSeconds)"
+                  />
+                </div>
+                <div class="timeline-scale">
+                  <span>00:00</span>
+                  <span>{{ formatDuration(selectedRecording?.durationSeconds ?? null) }}</span>
+                </div>
+                <div v-if="timelineError" class="timeline-error">{{ timelineError }}</div>
               </div>
 
             </div>
@@ -963,15 +1045,15 @@ onUnmounted(stopAnalyticsPolling);
           <div v-else-if="analyticsEvents.length === 0" class="empty">No events were detected.</div>
           <div v-else>
             <div class="results-list">
-              <button
+              <article
                   v-for="event in analyticsEvents"
                   :key="event.eventId"
-                  type="button"
                   class="result-card"
                   :class="{ 'without-snapshot': !snapshotAvailable(event) }"
-                  :disabled="!snapshotAvailable(event)"
+                  :tabindex="snapshotAvailable(event) ? 0 : undefined"
                   :aria-label="snapshotAvailable(event) ? `Open snapshot at ${formatDuration(event.videoTimeSeconds)}` : undefined"
                   @click="openEnlargedSnapshot(event)"
+                  @keyup.enter="openEnlargedSnapshot(event)"
               >
                 <div class="result-snapshot">
                   <img
@@ -988,8 +1070,15 @@ onUnmounted(stopAnalyticsPolling);
                   <span>{{ event.objectType || "Unknown object" }}</span>
                   <span>Confidence: {{ formatConfidence(event.confidence) }}</span>
                   <span>Direction: {{ eventDirection(event) }}</span>
+                  <button
+                      type="button"
+                      class="play-event-link"
+                      @click.stop="seekArchiveTo(event.videoTimeSeconds)"
+                  >
+                    Play from here
+                  </button>
                 </div>
-              </button>
+              </article>
             </div>
 
             <nav
@@ -1206,6 +1295,64 @@ onUnmounted(stopAnalyticsPolling);
   cursor: pointer;
 }
 
+.event-timeline {
+  padding: 12px 4px 4px;
+}
+
+.timeline-header,
+.timeline-scale {
+  display: flex;
+  justify-content: space-between;
+  color: #667085;
+  font-size: 12px;
+}
+
+.timeline-track {
+  position: relative;
+  height: 18px;
+  margin: 8px 7px 4px;
+  border-radius: 9px;
+  background: #dfe5ee;
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 1px #b42318;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+.timeline-marker:hover,
+.timeline-marker:focus-visible {
+  z-index: 1;
+  transform: translate(-50%, -50%) scale(1.4);
+}
+
+.timeline-error {
+  margin-top: 6px;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.play-event-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: fit-content;
+  margin-top: 4px;
+  color: #3978ff;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .results-backdrop {
   position: fixed;
   inset: 0;
@@ -1267,7 +1414,7 @@ onUnmounted(stopAnalyticsPolling);
   cursor: zoom-in;
 }
 
-.result-card:hover:not(:disabled) {
+.result-card:hover:not(.without-snapshot) {
   border-color: #3978ff;
   box-shadow: 0 2px 10px rgba(57, 120, 255, 0.16);
 }

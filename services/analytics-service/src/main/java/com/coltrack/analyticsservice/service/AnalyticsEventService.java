@@ -2,6 +2,7 @@ package com.coltrack.analyticsservice.service;
 
 import com.coltrack.analyticsservice.dto.AnalyticsEventPagePositionResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
+import com.coltrack.analyticsservice.dto.AnalyticsEventTimelineItemResponse;
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
 import com.coltrack.analyticsservice.mapper.AnalyticsEventMapper;
 import com.coltrack.analyticsservice.repository.AnalyticsEventRepository;
@@ -18,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -163,5 +165,27 @@ public class AnalyticsEventService {
         int page = Math.toIntExact(Math.min(precedingEvents / pageSize, lastPage));
 
         return new AnalyticsEventPagePositionResponse(page, precedingEvents);
+    }
+
+    public List<AnalyticsEventTimelineItemResponse> findTimelineForJob(UUID jobId) {
+        var job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Analytics job not found: " + jobId
+                ));
+        if (!"RECORDING".equals(job.getJobType()) || job.getRecordingId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Analytics job is not a recording analysis: " + jobId
+            );
+        }
+
+        return repository
+                .findAllByRecordingIdAndVideoTimeSecondsIsNotNullOrderByVideoTimeSecondsAsc(
+                        job.getRecordingId()
+                )
+                .stream()
+                .map(AnalyticsEventTimelineItemResponse::fromEntity)
+                .toList();
     }
 }

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 public interface AnalyticsEventRepository
@@ -23,5 +24,9 @@ public interface AnalyticsEventRepository
     long countByRecordingIdAndVideoTimeSecondsLessThan(
             UUID recordingId,
             BigDecimal videoTimeSeconds
+    );
+
+    List<AnalyticsEventEntity> findAllByRecordingIdAndVideoTimeSecondsIsNotNullOrderByVideoTimeSecondsAsc(
+            UUID recordingId
     );
 }

@@ -2,6 +2,7 @@ import http from "@/api/http";
 import type {
     AnalyticsEvent,
     AnalyticsEventFilters,
+    AnalyticsEventTimelineItem,
     AnalyticsEventsPage
 } from "@/types/AnalyticsEvent";
 import type {
@@ -125,6 +126,15 @@ export async function findAnalyticsEventPageForTime(
         { params: { videoTimeSeconds, size } }
     );
     return response.data.page;
+}
+
+export async function findAnalyticsEventTimeline(
+    jobId: string
+): Promise<AnalyticsEventTimelineItem[]> {
+    const response = await http.get<AnalyticsEventTimelineItem[]>(
+        `/analytics/jobs/${jobId}/events/timeline`
+    );
+    return response.data;
 }
 
 export async function startRealtimeAnalytics(
