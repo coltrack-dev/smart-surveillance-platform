@@ -15,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Optional;
@@ -94,6 +95,33 @@ class AnalyticsEventServiceTest {
 
         assertThat(result).isEmpty();
         verify(repository).findAllByRecordingId(recordingId, pageable);
+    }
+
+    @Test
+    void shouldFindPageContainingFirstEventAtVideoTime() {
+        UUID jobId = UUID.randomUUID();
+        UUID recordingId = UUID.randomUUID();
+        var job = AnalyticsJobEntity.builder()
+                .jobId(jobId)
+                .jobType("RECORDING")
+                .recordingId(recordingId)
+                .build();
+
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+        when(repository.countByRecordingIdAndVideoTimeSecondsLessThan(
+                recordingId,
+                new BigDecimal("90")
+        )).thenReturn(13L);
+        when(repository.countByRecordingId(recordingId)).thenReturn(25L);
+
+        var result = service.findEventPageForTime(
+                jobId,
+                new BigDecimal("90"),
+                6
+        );
+
+        assertThat(result.page()).isEqualTo(2);
+        assertThat(result.precedingEvents()).isEqualTo(13L);
     }
 
     private AnalyticsEvent event() {

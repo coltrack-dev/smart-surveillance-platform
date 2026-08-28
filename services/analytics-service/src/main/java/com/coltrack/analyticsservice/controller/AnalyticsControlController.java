@@ -1,7 +1,8 @@
 package com.coltrack.analyticsservice.controller;
 
-import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
+import com.coltrack.analyticsservice.dto.AnalyticsEventPagePositionResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
+import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
 import com.coltrack.analyticsservice.dto.RecordingAnalyticsStartRequest;
@@ -18,9 +19,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -89,6 +92,15 @@ public class AnalyticsControlController {
             ) Pageable pageable
     ) {
         return eventService.findEventsForJob(jobId, pageable);
+    }
+
+    @GetMapping("/jobs/{jobId}/events/page-for-time")
+    public AnalyticsEventPagePositionResponse findEventPageForTime(
+            @PathVariable UUID jobId,
+            @RequestParam BigDecimal videoTimeSeconds,
+            @RequestParam(defaultValue = "6") int size
+    ) {
+        return eventService.findEventPageForTime(jobId, videoTimeSeconds, size);
     }
 
     @GetMapping("/jobs")

@@ -28,6 +28,7 @@ import type {AnalyticsEvent} from "@/types/AnalyticsEvent";
 import {
   findAnalyticsJob,
   findAnalyticsJobEvents,
+  findAnalyticsEventPageForTime,
   findLatestRecordingAnalyticsJob,
   startRecordingAnalytics,
   stopRecordingAnalytics
@@ -61,9 +62,16 @@ const analyticsError = ref<string | null>(null);
 const analyticsResultsOpen = ref(false);
 const analyticsEvents = ref<AnalyticsEvent[]>([]);
 const analyticsEventsTotal = ref(0);
+const analyticsEventsPage = ref(0);
+const analyticsEventsTotalPages = ref(0);
+const analyticsEventsPageSize = 6;
+const analyticsPageInput = ref("1");
+const analyticsTimeInput = ref("");
+const analyticsNavigationError = ref<string | null>(null);
 const analyticsEventsLoading = ref(false);
 const analyticsEventsError = ref<string | null>(null);
 const failedSnapshots = ref<Set<string>>(new Set());
+const enlargedSnapshotEvent = ref<AnalyticsEvent | null>(null);
 let analyticsPollingTimer: ReturnType<typeof setInterval> | null = null;
 
 const activeAnalyticsStatuses = new Set<AnalyticsJobStatus>([
@@ -363,23 +371,28 @@ function handleSnapshotError(event: AnalyticsEvent): void {
   failedSnapshots.value = new Set([...failedSnapshots.value, event.eventId]);
 }
 
-async function openAnalyticsResults(): Promise<void> {
+async function loadAnalyticsResultsPage(page: number): Promise<void> {
   const job = analyticsJob.value;
   if (!job || job.status !== "COMPLETED") {
     return;
   }
-  analyticsResultsOpen.value = true;
   analyticsEventsLoading.value = true;
   analyticsEventsError.value = null;
-  analyticsEvents.value = [];
-  failedSnapshots.value = new Set();
   try {
-    const result = await findAnalyticsJobEvents(job.jobId);
+    const result = await findAnalyticsJobEvents(
+        job.jobId,
+        page,
+        analyticsEventsPageSize
+    );
     if (analyticsJob.value?.jobId !== job.jobId) {
       return;
     }
     analyticsEvents.value = result.content;
     analyticsEventsTotal.value = result.totalElements;
+    analyticsEventsPage.value = result.number;
+    analyticsEventsTotalPages.value = result.totalPages;
+    analyticsPageInput.value = String(result.number + 1);
+    analyticsNavigationError.value = null;
   } catch (error) {
     console.error("Unable to load analytics results", error);
     analyticsEventsError.value = "Unable to load analysis results.";
@@ -388,7 +401,88 @@ async function openAnalyticsResults(): Promise<void> {
   }
 }
 
+async function openAnalyticsResults(): Promise<void> {
+  analyticsResultsOpen.value = true;
+  analyticsEvents.value = [];
+  analyticsEventsTotal.value = 0;
+  analyticsEventsPage.value = 0;
+  analyticsEventsTotalPages.value = 0;
+  failedSnapshots.value = new Set();
+  await loadAnalyticsResultsPage(0);
+}
+
+async function changeAnalyticsResultsPage(page: number): Promise<void> {
+  if (
+      analyticsEventsLoading.value
+      || page < 0
+      || page >= analyticsEventsTotalPages.value
+  ) {
+    return;
+  }
+  await loadAnalyticsResultsPage(page);
+}
+
+async function jumpToAnalyticsPage(): Promise<void> {
+  const pageNumber = Number(analyticsPageInput.value);
+  if (
+      !Number.isInteger(pageNumber)
+      || pageNumber < 1
+      || pageNumber > analyticsEventsTotalPages.value
+  ) {
+    analyticsNavigationError.value = `Enter a page from 1 to ${analyticsEventsTotalPages.value}.`;
+    return;
+  }
+  await changeAnalyticsResultsPage(pageNumber - 1);
+}
+
+function parseVideoTime(value: string): number | null {
+  const parts = value.trim().split(":");
+  if (parts.length < 1 || parts.length > 3 || parts.some(part => !/^\d+$/.test(part))) {
+    return null;
+  }
+  const numbers = parts.map(Number);
+  if (numbers.length > 1 && numbers.slice(1).some(part => part >= 60)) {
+    return null;
+  }
+  return numbers.reduce((total, part) => total * 60 + part, 0);
+}
+
+async function jumpToAnalyticsTime(): Promise<void> {
+  const job = analyticsJob.value;
+  const seconds = parseVideoTime(analyticsTimeInput.value);
+  if (!job || seconds == null) {
+    analyticsNavigationError.value = "Enter time as MM:SS or HH:MM:SS.";
+    return;
+  }
+  analyticsEventsLoading.value = true;
+  analyticsNavigationError.value = null;
+  try {
+    const page = await findAnalyticsEventPageForTime(
+        job.jobId,
+        seconds,
+        analyticsEventsPageSize
+    );
+    await loadAnalyticsResultsPage(page);
+  } catch (error) {
+    console.error("Unable to find analytics events by video time", error);
+    analyticsNavigationError.value = "Unable to jump to the specified time.";
+  } finally {
+    analyticsEventsLoading.value = false;
+  }
+}
+
+function openEnlargedSnapshot(event: AnalyticsEvent): void {
+  if (snapshotAvailable(event)) {
+    enlargedSnapshotEvent.value = event;
+  }
+}
+
+function closeEnlargedSnapshot(): void {
+  enlargedSnapshotEvent.value = null;
+}
+
 function closeAnalyticsResults(): void {
+  closeEnlargedSnapshot();
   analyticsResultsOpen.value = false;
 }
 
@@ -500,6 +594,7 @@ async function selectRecording(
 
   selectedRecording.value = recording;
   analyticsResultsOpen.value = false;
+  enlargedSnapshotEvent.value = null;
   void loadRecordingAnalytics(recording.id);
 
   preparedPlaybackUrl.value = null;
@@ -866,25 +961,114 @@ onUnmounted(stopAnalyticsPolling);
           <div v-if="analyticsEventsLoading" class="loading">Loading results...</div>
           <div v-else-if="analyticsEventsError" class="error-message">{{ analyticsEventsError }}</div>
           <div v-else-if="analyticsEvents.length === 0" class="empty">No events were detected.</div>
-          <div v-else class="results-list">
-            <article v-for="event in analyticsEvents" :key="event.eventId" class="result-card">
-              <div class="result-snapshot">
-                <img
-                    v-if="snapshotAvailable(event)"
-                    :src="getSnapshotUrl(event)"
-                    :alt="`Snapshot ${event.eventId}`"
-                    @error="handleSnapshotError(event)"
+          <div v-else>
+            <div class="results-list">
+              <button
+                  v-for="event in analyticsEvents"
+                  :key="event.eventId"
+                  type="button"
+                  class="result-card"
+                  :class="{ 'without-snapshot': !snapshotAvailable(event) }"
+                  :disabled="!snapshotAvailable(event)"
+                  :aria-label="snapshotAvailable(event) ? `Open snapshot at ${formatDuration(event.videoTimeSeconds)}` : undefined"
+                  @click="openEnlargedSnapshot(event)"
+              >
+                <div class="result-snapshot">
+                  <img
+                      v-if="snapshotAvailable(event)"
+                      :src="getSnapshotUrl(event)"
+                      :alt="`Snapshot ${event.eventId}`"
+                      @error="handleSnapshotError(event)"
+                  >
+                  <span v-else>No snapshot</span>
+                </div>
+                <div class="result-details">
+                  <strong>{{ formatDuration(event.videoTimeSeconds == null ? null : Math.round(event.videoTimeSeconds)) }}</strong>
+                  <span>{{ event.eventType }}</span>
+                  <span>{{ event.objectType || "Unknown object" }}</span>
+                  <span>Confidence: {{ formatConfidence(event.confidence) }}</span>
+                  <span>Direction: {{ eventDirection(event) }}</span>
+                </div>
+              </button>
+            </div>
+
+            <nav
+                v-if="analyticsEventsTotalPages > 1"
+                class="results-pagination"
+                aria-label="Analysis results pages"
+            >
+              <button
+                  type="button"
+                  :disabled="analyticsEventsLoading || analyticsEventsPage === 0"
+                  @click="changeAnalyticsResultsPage(analyticsEventsPage - 1)"
+              >
+                Previous
+              </button>
+              <span>Page {{ analyticsEventsPage + 1 }} of {{ analyticsEventsTotalPages }}</span>
+              <button
+                  type="button"
+                  :disabled="analyticsEventsLoading || analyticsEventsPage + 1 >= analyticsEventsTotalPages"
+                  @click="changeAnalyticsResultsPage(analyticsEventsPage + 1)"
+              >
+                Next
+              </button>
+            </nav>
+
+            <div class="results-jump-controls">
+              <label>
+                <span>Page</span>
+                <input
+                    v-model="analyticsPageInput"
+                    type="number"
+                    min="1"
+                    :max="analyticsEventsTotalPages"
+                    @keyup.enter="jumpToAnalyticsPage"
                 >
-                <span v-else>No snapshot</span>
-              </div>
-              <div class="result-details">
-                <strong>{{ formatDuration(event.videoTimeSeconds == null ? null : Math.round(event.videoTimeSeconds)) }}</strong>
-                <span>{{ event.eventType }}</span>
-                <span>{{ event.objectType || "Unknown object" }}</span>
-                <span>Confidence: {{ formatConfidence(event.confidence) }}</span>
-                <span>Direction: {{ eventDirection(event) }}</span>
-              </div>
-            </article>
+                <button type="button" @click="jumpToAnalyticsPage">Go</button>
+              </label>
+              <label>
+                <span>Video time</span>
+                <input
+                    v-model="analyticsTimeInput"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="MM:SS"
+                    @keyup.enter="jumpToAnalyticsTime"
+                >
+                <button type="button" @click="jumpToAnalyticsTime">Go</button>
+              </label>
+              <span v-if="analyticsNavigationError" class="results-navigation-error">
+                {{ analyticsNavigationError }}
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div
+          v-if="enlargedSnapshotEvent"
+          class="snapshot-backdrop"
+          @click.self="closeEnlargedSnapshot"
+      >
+        <section class="snapshot-modal" role="dialog" aria-modal="true" aria-label="Event snapshot">
+          <button
+              type="button"
+              class="snapshot-close-button"
+              aria-label="Close snapshot"
+              @click="closeEnlargedSnapshot"
+          >
+            Ã—
+          </button>
+          <img
+              :src="getSnapshotUrl(enlargedSnapshotEvent)"
+              :alt="`Snapshot ${enlargedSnapshotEvent.eventId}`"
+              @error="handleSnapshotError(enlargedSnapshotEvent); closeEnlargedSnapshot()"
+          >
+          <div class="snapshot-caption">
+            <strong>{{ formatDuration(enlargedSnapshotEvent.videoTimeSeconds == null ? null : Math.round(enlargedSnapshotEvent.videoTimeSeconds)) }}</strong>
+            <span>{{ enlargedSnapshotEvent.eventType }}</span>
+            <span>{{ enlargedSnapshotEvent.objectType || "Unknown object" }}</span>
+            <span>{{ formatConfidence(enlargedSnapshotEvent.confidence) }}</span>
           </div>
         </section>
       </div>
@@ -1075,6 +1259,22 @@ onUnmounted(stopAnalyticsPolling);
   overflow: hidden;
   border: 1px solid #e2e5e9;
   border-radius: 8px;
+  padding: 0;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.result-card:hover:not(:disabled) {
+  border-color: #3978ff;
+  box-shadow: 0 2px 10px rgba(57, 120, 255, 0.16);
+}
+
+.result-card.without-snapshot {
+  cursor: default;
+  opacity: 1;
 }
 
 .result-snapshot {
@@ -1098,6 +1298,121 @@ onUnmounted(stopAnalyticsPolling);
   align-content: center;
   gap: 4px;
   padding: 12px 12px 12px 0;
+}
+
+.results-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 20px 20px;
+}
+
+.results-pagination button {
+  min-width: 88px;
+  padding: 7px 12px;
+  border: 1px solid #c9ced6;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
+  cursor: pointer;
+}
+
+.results-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.results-jump-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 0 20px 20px;
+}
+
+.results-jump-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.results-jump-controls input {
+  width: 78px;
+  padding: 7px 8px;
+  border: 1px solid #c9ced6;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.results-jump-controls button {
+  padding: 7px 10px;
+  border: 1px solid #3978ff;
+  border-radius: 6px;
+  background: #3978ff;
+  color: #fff;
+  cursor: pointer;
+}
+
+.results-navigation-error {
+  flex-basis: 100%;
+  color: #b42318;
+  font-size: 13px;
+  text-align: center;
+}
+
+.snapshot-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.snapshot-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 94vw;
+  max-height: 94vh;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #111;
+  color: #fff;
+}
+
+.snapshot-modal img {
+  display: block;
+  max-width: 94vw;
+  max-height: 82vh;
+  object-fit: contain;
+}
+
+.snapshot-close-button {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 28px;
+  line-height: 34px;
+  cursor: pointer;
+}
+
+.snapshot-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px;
 }
 
 .analytics-progress {

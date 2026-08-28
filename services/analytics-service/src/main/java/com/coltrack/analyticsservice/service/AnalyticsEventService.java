@@ -1,5 +1,6 @@
 package com.coltrack.analyticsservice.service;
 
+import com.coltrack.analyticsservice.dto.AnalyticsEventPagePositionResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
 import com.coltrack.analyticsservice.mapper.AnalyticsEventMapper;
@@ -15,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -118,5 +120,48 @@ public class AnalyticsEventService {
 
         return repository.findAllByRecordingId(job.getRecordingId(), pageable)
                 .map(AnalyticsEventResponse::fromEntity);
+    }
+
+    public AnalyticsEventPagePositionResponse findEventPageForTime(
+            UUID jobId,
+            BigDecimal videoTimeSeconds,
+            int pageSize
+    ) {
+        if (videoTimeSeconds == null || videoTimeSeconds.signum() < 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Parameter 'videoTimeSeconds' must not be negative"
+            );
+        }
+        if (pageSize < 1 || pageSize > 100) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Parameter 'size' must be between 1 and 100"
+            );
+        }
+
+        var job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Analytics job not found: " + jobId
+                ));
+        if (!"RECORDING".equals(job.getJobType()) || job.getRecordingId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Analytics job is not a recording analysis: " + jobId
+            );
+        }
+
+        UUID recordingId = job.getRecordingId();
+        long precedingEvents = repository
+                .countByRecordingIdAndVideoTimeSecondsLessThan(
+                        recordingId,
+                        videoTimeSeconds
+                );
+        long totalEvents = repository.countByRecordingId(recordingId);
+        long lastPage = totalEvents == 0 ? 0 : (totalEvents - 1) / pageSize;
+        int page = Math.toIntExact(Math.min(precedingEvents / pageSize, lastPage));
+
+        return new AnalyticsEventPagePositionResponse(page, precedingEvents);
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 public interface AnalyticsEventRepository
@@ -15,5 +16,12 @@ public interface AnalyticsEventRepository
     Page<AnalyticsEventEntity> findAllByRecordingId(
             UUID recordingId,
             Pageable pageable
+    );
+
+    long countByRecordingId(UUID recordingId);
+
+    long countByRecordingIdAndVideoTimeSecondsLessThan(
+            UUID recordingId,
+            BigDecimal videoTimeSeconds
     );
 }

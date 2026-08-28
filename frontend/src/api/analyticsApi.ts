@@ -115,6 +115,18 @@ export async function findAnalyticsJobEvents(
     };
 }
 
+export async function findAnalyticsEventPageForTime(
+    jobId: string,
+    videoTimeSeconds: number,
+    size: number
+): Promise<number> {
+    const response = await http.get<{ page: number }>(
+        `/analytics/jobs/${jobId}/events/page-for-time`,
+        { params: { videoTimeSeconds, size } }
+    );
+    return response.data.page;
+}
+
 export async function startRealtimeAnalytics(
     cameraId: string,
     request: RealtimeAnalyticsStartRequest
