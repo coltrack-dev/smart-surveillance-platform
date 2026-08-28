@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.coltrack.events.analytics.AnalyticsLine;
 
 public record RecordingAnalyticsStartRequest(
         UUID cameraId,
@@ -12,6 +13,7 @@ public record RecordingAnalyticsStartRequest(
         BigDecimal confidence,
         String devicePreference,
         BigDecimal linePosition,
+        List<AnalyticsLine> lines,
         BigDecimal targetFps,
         Map<String, Object> attributes
 ) {

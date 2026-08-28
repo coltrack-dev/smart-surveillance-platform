@@ -11,6 +11,8 @@ import com.coltrack.analyticsservice.repository.AnalyticsWorkerRepository;
 import com.coltrack.events.analytics.AnalyticsJob;
 import com.coltrack.events.analytics.AnalyticsJobStatusEvent;
 import com.coltrack.events.analytics.AnalyticsProfile;
+import com.coltrack.events.analytics.AnalyticsLine;
+import com.coltrack.events.analytics.NormalizedPoint;
 import com.coltrack.events.analytics.AnalyticsSource;
 import com.coltrack.events.analytics.AnalyticsWorkerHeartbeatEvent;
 import lombok.RequiredArgsConstructor;
@@ -90,6 +92,7 @@ public class AnalyticsControlService {
                 defaultDecimal(request.confidence(), "0.5"),
                 defaultString(request.devicePreference(), "auto"),
                 defaultDecimal(request.linePosition(), "0.5"),
+                defaultLines(request.lines(), request.linePosition()),
                 defaultDecimal(request.targetFps(), "10"),
                 request.attributes() == null ? Map.of() : request.attributes()
         );
@@ -145,6 +148,7 @@ public class AnalyticsControlService {
                 request.classes(),
                 request.confidence(),
                 request.linePosition(),
+                request.lines(),
                 request.targetFps()
         );
         jobRepository
@@ -166,6 +170,7 @@ public class AnalyticsControlService {
                 defaultDecimal(request.confidence(), "0.5"),
                 defaultString(request.devicePreference(), "auto"),
                 defaultDecimal(request.linePosition(), "0.5"),
+                defaultLines(request.lines(), request.linePosition()),
                 defaultDecimal(request.targetFps(), "10"),
                 request.attributes() == null ? Map.of() : request.attributes()
         );
@@ -401,6 +406,7 @@ public class AnalyticsControlService {
         result.put("confidence", profile.confidence());
         result.put("devicePreference", profile.devicePreference());
         result.put("linePosition", profile.linePosition());
+        result.put("lines", profile.lines());
         result.put("targetFps", profile.targetFps());
         result.put("attributes", profile.attributes());
         return result;
@@ -411,6 +417,7 @@ public class AnalyticsControlService {
                 request.classes(),
                 request.confidence(),
                 request.linePosition(),
+                request.lines(),
                 request.targetFps()
         );
     }
@@ -419,6 +426,7 @@ public class AnalyticsControlService {
             List<Integer> classes,
             BigDecimal confidence,
             BigDecimal linePosition,
+            List<AnalyticsLine> lines,
             BigDecimal targetFps
     ) {
         if (confidence != null
@@ -440,11 +448,83 @@ public class AnalyticsControlService {
                     HttpStatus.BAD_REQUEST, "targetFps must be positive"
             );
         }
+        if (lines != null) {
+            lines.forEach(AnalyticsControlService::validateLine);
+        }
         if (classes != null
                 && classes.stream().anyMatch(value -> value == null || value < 0)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "classes must contain non-negative ids"
             );
+        }
+    }
+
+    private static List<AnalyticsLine> defaultLines(
+            List<AnalyticsLine> lines,
+            BigDecimal legacyPosition
+    ) {
+        if (lines != null && !lines.isEmpty()) {
+            return List.copyOf(lines);
+        }
+        BigDecimal position = defaultDecimal(legacyPosition, "0.5");
+        return List.of(new AnalyticsLine(
+                "main-line",
+                new NormalizedPoint(BigDecimal.ZERO, position),
+                new NormalizedPoint(BigDecimal.ONE, position),
+                "BOTTOM_CENTER",
+                List.of(),
+                Map.of("A_TO_B", "DOWN", "B_TO_A", "UP"),
+                List.of(),
+                new BigDecimal("2"),
+                new BigDecimal("0.02"),
+                3
+        ));
+    }
+
+    private static void validateLine(AnalyticsLine line) {
+        if (line == null || line.start() == null || line.end() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "each line requires start and end");
+        }
+        validatePoint(line.start());
+        validatePoint(line.end());
+        if (line.start().equals(line.end())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line start and end must be different");
+        }
+        String anchor = defaultString(line.anchor(), "BOTTOM_CENTER").toUpperCase();
+        if (!Set.of("BOTTOM_CENTER", "CENTER").contains(anchor)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line anchor must be BOTTOM_CENTER or CENTER");
+        }
+        if (line.allowedDirections() != null && line.allowedDirections().stream()
+                .map(String::toUpperCase)
+                .anyMatch(value -> !Set.of("A_TO_B", "B_TO_A").contains(value))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "allowedDirections must contain A_TO_B or B_TO_A");
+        }
+        if (line.hysteresis() != null
+                && (line.hysteresis().signum() < 0
+                || line.hysteresis().compareTo(new BigDecimal("0.5")) >= 0)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line hysteresis must be between 0 and 0.5");
+        }
+        if (line.cooldownSeconds() != null && line.cooldownSeconds().signum() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line cooldownSeconds must not be negative");
+        }
+        if (line.minimumTrackAgeFrames() != null && line.minimumTrackAgeFrames() < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line minimumTrackAgeFrames must be positive");
+        }
+    }
+
+    private static void validatePoint(NormalizedPoint point) {
+        if (point.x() == null || point.y() == null
+                || point.x().signum() < 0 || point.x().compareTo(BigDecimal.ONE) > 0
+                || point.y().signum() < 0 || point.y().compareTo(BigDecimal.ONE) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "line coordinates must be between 0 and 1");
         }
     }
 

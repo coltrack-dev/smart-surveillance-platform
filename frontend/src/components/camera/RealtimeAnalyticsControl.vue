@@ -17,6 +17,8 @@ const sourceUrl = ref(
 const job = ref<AnalyticsJob | null>(null);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
+const lineOrientation = ref<"HORIZONTAL" | "VERTICAL">("HORIZONTAL");
+const linePosition = ref(0.5);
 let pollTimer: number | undefined;
 
 const active = computed(() =>
@@ -35,6 +37,7 @@ async function start(): Promise<void> {
   loading.value = true;
   errorMessage.value = null;
   try {
+    const vertical = lineOrientation.value === "VERTICAL";
     job.value = await startRealtimeAnalytics(props.cameraId, {
       sourceUrl: sourceUrl.value,
       transport: "tcp",
@@ -42,6 +45,24 @@ async function start(): Promise<void> {
       confidence: 0.5,
       devicePreference: "cuda:0",
       linePosition: 0.5,
+      lines: [{
+        id: "main-line",
+        start: vertical
+            ? { x: linePosition.value, y: 0.05 }
+            : { x: 0.05, y: linePosition.value },
+        end: vertical
+            ? { x: linePosition.value, y: 0.95 }
+            : { x: 0.95, y: linePosition.value },
+        anchor: "BOTTOM_CENTER",
+        allowedDirections: [],
+        directionLabels: vertical
+            ? { A_TO_B: "RIGHT_TO_LEFT", B_TO_A: "LEFT_TO_RIGHT" }
+            : { A_TO_B: "DOWN", B_TO_A: "UP" },
+        allowedClasses: [0],
+        cooldownSeconds: 5,
+        hysteresis: 0.02,
+        minimumTrackAgeFrames: 3
+      }],
       targetFps: 10
     });
   } catch (error) {
@@ -100,6 +121,27 @@ onBeforeUnmount(() => {
         placeholder="rtsp://host:8554/path"
         :disabled="active || loading"
     >
+
+    <div class="line-settings">
+      <label>
+        Crossing line
+        <select v-model="lineOrientation" :disabled="active || loading">
+          <option value="HORIZONTAL">Horizontal</option>
+          <option value="VERTICAL">Vertical</option>
+        </select>
+      </label>
+      <label>
+        Position
+        <input
+            v-model.number="linePosition"
+            type="number"
+            min="0.05"
+            max="0.95"
+            step="0.05"
+            :disabled="active || loading"
+        >
+      </label>
+    </div>
 
     <div class="analytics-buttons">
       <button

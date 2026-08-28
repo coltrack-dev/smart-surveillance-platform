@@ -10,6 +10,7 @@ public record AnalyticsProfile(
         BigDecimal confidence,
         String devicePreference,
         BigDecimal linePosition,
+        List<AnalyticsLine> lines,
         BigDecimal targetFps,
         Map<String, Object> attributes
 ) {

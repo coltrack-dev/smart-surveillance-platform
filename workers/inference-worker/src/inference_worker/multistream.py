@@ -22,6 +22,11 @@ from inference_worker.frame_buffer import FrameEnvelope, LatestFrameBuffer
 from inference_worker.job import AnalyticsJob
 from inference_worker.realtime_main import create_event
 from inference_worker.snapshot_storage import SnapshotStorage
+from inference_worker.line_crossing import (
+    LineCrossingDetector,
+    default_horizontal_line,
+    draw_lines,
+)
 
 
 log = logging.getLogger(__name__)
@@ -31,14 +36,12 @@ log = logging.getLogger(__name__)
 class CameraRuntime:
     job: AnalyticsJob
     target_fps: float
-    line_position: float
+    crossing_detector: LineCrossingDetector
     transport: str
     buffer: LatestFrameBuffer = field(default_factory=LatestFrameBuffer)
     stop_event: threading.Event = field(default_factory=threading.Event)
     capture_thread: threading.Thread | None = None
     tracker: BYTETracker | None = None
-    previous_y_by_track: dict[int, int] = field(default_factory=dict)
-    last_crossing_at_by_track: dict[int, float] = field(default_factory=dict)
     started_at: float = field(default_factory=time.monotonic)
     source_frames: int = 0
     processed_frames: int = 0
@@ -146,8 +149,14 @@ class MultistreamManager:
                 job=job,
                 target_fps=job.profile.target_fps
                 or float(os.getenv("ANALYTICS_TARGET_FPS", "10")),
-                line_position=job.profile.line_position
-                or float(os.getenv("LINE_POSITION", "0.5")),
+                crossing_detector=LineCrossingDetector(
+                    job.profile.lines or (
+                        default_horizontal_line(
+                            job.profile.line_position
+                            or float(os.getenv("LINE_POSITION", "0.5"))
+                        ),
+                    )
+                ),
                 transport=(job.source.transport or "tcp").lower(),
             )
             runtime.tracker = self._new_tracker(runtime.target_fps)
@@ -246,8 +255,7 @@ class MultistreamManager:
                         runtime.stop_event.wait(backoff)
                         backoff = min(backoff * 2, self.reconnect_max_seconds)
                         continue
-                    runtime.previous_y_by_track.clear()
-                    runtime.last_crossing_at_by_track.clear()
+                    runtime.crossing_detector.clear()
                     runtime.tracker = self._new_tracker(runtime.target_fps)
                     backoff = 1.0
 
@@ -351,7 +359,6 @@ class MultistreamManager:
         tracks: Any,
     ) -> None:
         height, width = envelope.frame.shape[:2]
-        line_y = int(height * runtime.line_position)
         now = time.monotonic()
         for track in tracks:
             if len(track) < 6:
@@ -359,40 +366,37 @@ class MultistreamManager:
             x1, _y1, x2, y2 = (int(value) for value in track[:4])
             track_id = int(track[4])
             confidence = float(track[5])
-            previous_y = runtime.previous_y_by_track.get(track_id)
-            runtime.previous_y_by_track[track_id] = y2
-            if previous_y is None:
-                continue
-            crossed_down = previous_y < line_y <= y2
-            crossed_up = previous_y > line_y >= y2
-            last_crossing = runtime.last_crossing_at_by_track.get(track_id, 0.0)
-            if (
-                not (crossed_down or crossed_up)
-                or now - last_crossing < self.cooldown_seconds
-            ):
-                continue
-            event = create_event(
-                camera_id=runtime.job.camera_id,
-                job_id=runtime.job.job_id,
+            class_id = runtime.job.profile.classes[0]
+            for crossing in runtime.crossing_detector.update(
                 track_id=track_id,
-                direction="DOWN" if crossed_down else "UP",
-                confidence=confidence,
-                frame_number=envelope.sequence,
-                stream_time_seconds=now - runtime.started_at,
-            )
-            annotated = result.plot()
-            cv2.rectangle(annotated, (x1, int(track[1])), (x2, y2), (0, 255, 0), 2)
-            cv2.line(annotated, (0, line_y), (width, line_y), (0, 0, 255), 2)
-            runtime.last_crossing_at_by_track[track_id] = now
-            runtime.crossings += 1
-            self._snapshot_executor.submit(self._store_and_publish, event, annotated)
-            log.info(
-                "Batched crossing eventId=%s cameraId=%s trackId=%s direction=%s",
-                event["eventId"],
-                runtime.job.camera_id,
-                track_id,
-                event["attributes"]["direction"],
-            )
+                class_id=class_id,
+                box=(x1, int(track[1]), x2, y2),
+                width=width,
+                height=height,
+                now=now,
+            ):
+                event = create_event(
+                    camera_id=runtime.job.camera_id,
+                    job_id=runtime.job.job_id,
+                    track_id=track_id,
+                    direction=crossing.direction,
+                    direction_code=crossing.direction_code,
+                    line_id=crossing.line_id,
+                    confidence=confidence,
+                    frame_number=envelope.sequence,
+                    stream_time_seconds=now - runtime.started_at,
+                )
+                annotated = result.plot()
+                cv2.rectangle(annotated, (x1, int(track[1])), (x2, y2), (0, 255, 0), 2)
+                draw_lines(annotated, runtime.crossing_detector.lines)
+                runtime.crossings += 1
+                self._snapshot_executor.submit(self._store_and_publish, event, annotated)
+                log.info(
+                    "Batched crossing eventId=%s cameraId=%s trackId=%s "
+                    "lineId=%s direction=%s",
+                    event["eventId"], runtime.job.camera_id, track_id,
+                    crossing.line_id, event["attributes"]["direction"],
+                )
 
     def _store_and_publish(self, event: dict[str, Any], frame: Any) -> None:
         with tempfile.NamedTemporaryFile(

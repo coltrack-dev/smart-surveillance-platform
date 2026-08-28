@@ -61,6 +61,7 @@ class AnalyticsControlServiceTest {
                 new BigDecimal("0.5"),
                 "auto",
                 new BigDecimal("0.5"),
+                List.of(),
                 BigDecimal.TEN,
                 Map.of()
         );
@@ -91,6 +92,8 @@ class AnalyticsControlServiceTest {
         AnalyticsJob event = (AnalyticsJob) eventCaptor.getValue();
         assertThat(event.recordingId()).isEqualTo(recordingId);
         assertThat(event.jobType()).isEqualTo("RECORDING");
+        assertThat(event.profile().lines()).hasSize(1);
+        assertThat(event.profile().lines().getFirst().id()).isEqualTo("main-line");
         assertThat(response.recordingId()).isEqualTo(recordingId);
     }
 }

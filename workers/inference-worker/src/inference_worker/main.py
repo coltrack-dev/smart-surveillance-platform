@@ -16,6 +16,11 @@ from inference_worker.event_producer import (
 from inference_worker.snapshot_storage import (
     SnapshotStorage,
 )
+from inference_worker.line_crossing import (
+    LineCrossingDetector,
+    draw_lines,
+    lines_from_environment,
+)
 
 
 INPUT_FILE = Path(
@@ -97,6 +102,8 @@ LINE_POSITION = float(
         "0.5",
     )
 )
+
+ANALYTICS_LINES = lines_from_environment()
 
 CROSSING_COOLDOWN_SECONDS = float(
     os.getenv(
@@ -264,6 +271,8 @@ def log_inference_device(
 def create_line_crossing_event(
     track_id: int,
     direction: str,
+    direction_code: str,
+    line_id: str,
     confidence: float,
     frame_number: int,
     video_time_seconds: float,
@@ -280,7 +289,7 @@ def create_line_crossing_event(
         NAMESPACE_URL,
         (
             f"{recording_id}:LINE_CROSSED:"
-            f"{track_id}:{frame_number}"
+            f"{line_id}:{track_id}:{frame_number}"
         ),
     )
 
@@ -306,7 +315,8 @@ def create_line_crossing_event(
         ).isoformat(),
         "attributes": {
             "direction": direction,
-            "lineId": "main-line",
+            "directionCode": direction_code,
+            "lineId": line_id,
         },
     }
 
@@ -366,11 +376,6 @@ def validate_configuration() -> None:
     if not OBJECT_CLASSES:
         raise ValueError(
             "YOLO_CLASSES must contain at least one class id"
-        )
-
-    if not 0.0 < LINE_POSITION < 1.0:
-        raise ValueError(
-            "LINE_POSITION must be between 0 and 1"
         )
 
     if not 0.0 <= CONFIDENCE <= 1.0:
@@ -499,27 +504,7 @@ def main() -> None:
             f"{OUTPUT_VIDEO_FILE.resolve()}"
         )
 
-    line_y = int(
-        height * LINE_POSITION
-    )
-
-    crossing_cooldown_frames = max(
-        1,
-        int(
-            fps
-            * CROSSING_COOLDOWN_SECONDS
-        ),
-    )
-
-    previous_y_by_track: dict[
-        int,
-        int,
-    ] = {}
-
-    last_crossing_frame_by_track: dict[
-        int,
-        int,
-    ] = {}
+    crossing_detector = LineCrossingDetector(ANALYTICS_LINES)
 
     frame_number = 0
     crossing_count = 0
@@ -542,12 +527,12 @@ def main() -> None:
     logging.info(
         "Processing video=%s "
         "fps=%.2f size=%sx%s "
-        "lineY=%s device=%s",
+        "lines=%s device=%s",
         INPUT_FILE.resolve(),
         fps,
         width,
         height,
-        line_y,
+        [line.id for line in ANALYTICS_LINES],
         device,
     )
 
@@ -581,44 +566,7 @@ def main() -> None:
                 result.plot()
             )
 
-            cv2.line(
-                annotated_frame,
-                (
-                    0,
-                    line_y,
-                ),
-                (
-                    width,
-                    line_y,
-                ),
-                (
-                    0,
-                    0,
-                    255,
-                ),
-                2,
-            )
-
-            cv2.putText(
-                annotated_frame,
-                "COUNTING LINE",
-                (
-                    20,
-                    max(
-                        30,
-                        line_y - 10,
-                    ),
-                ),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (
-                    0,
-                    0,
-                    255,
-                ),
-                2,
-                cv2.LINE_AA,
-            )
+            draw_lines(annotated_frame, ANALYTICS_LINES)
 
             boxes = result.boxes
 
@@ -626,6 +574,7 @@ def main() -> None:
                 boxes is not None
                 and boxes.id is not None
                 and boxes.conf is not None
+                and boxes.cls is not None
             ):
                 track_ids = (
                     boxes.id
@@ -647,179 +596,70 @@ def main() -> None:
                     .tolist()
                 )
 
+                class_ids = (
+                    boxes.cls
+                    .int()
+                    .cpu()
+                    .tolist()
+                )
+
                 for (
                     track_id,
                     coordinates_for_track,
                     confidence,
+                    class_id,
                 ) in zip(
                     track_ids,
                     coordinates,
                     confidences,
+                    class_ids,
                 ):
-                    (
-                        x1,
-                        _y1,
-                        x2,
-                        y2,
-                    ) = coordinates_for_track
-
-                    # Нижняя центральная точка рамки:
-                    # приблизительное положение ног.
-                    point_x = (
-                        x1 + x2
-                    ) // 2
-
-                    point_y = y2
-
-                    previous_y = (
-                        previous_y_by_track.get(
-                            track_id
-                        )
-                    )
-
-                    if previous_y is not None:
-                        crossed_down = (
-                            previous_y
-                            < line_y
-                            <= point_y
+                    x1, y1, x2, y2 = coordinates_for_track
+                    for crossing in crossing_detector.update(
+                        track_id=track_id,
+                        class_id=class_id,
+                        box=(x1, y1, x2, y2),
+                        width=width,
+                        height=height,
+                        now=frame_number / fps,
+                    ):
+                        event = create_line_crossing_event(
+                            track_id=track_id,
+                            direction=crossing.direction,
+                            direction_code=crossing.direction_code,
+                            line_id=crossing.line_id,
+                            confidence=confidence,
+                            frame_number=frame_number,
+                            video_time_seconds=frame_number / fps,
+                            recording_id=RECORDING_ID,
                         )
 
-                        crossed_up = (
-                            previous_y
-                            > line_y
-                            >= point_y
-                        )
-
-                        last_crossing_frame = (
-                            last_crossing_frame_by_track.get(
-                                track_id,
-                                -crossing_cooldown_frames,
-                            )
-                        )
-
-                        cooldown_finished = (
-                            frame_number
-                            - last_crossing_frame
-                            >= crossing_cooldown_frames
-                        )
-
-                        if (
-                            (
-                                crossed_down
-                                or crossed_up
-                            )
-                            and cooldown_finished
+                        snapshot_name = f"{event['eventId']}.jpg"
+                        snapshot_file = SNAPSHOTS_DIRECTORY / snapshot_name
+                        if not cv2.imwrite(
+                            str(snapshot_file), annotated_frame,
+                            [cv2.IMWRITE_JPEG_QUALITY, SNAPSHOT_JPEG_QUALITY],
                         ):
-                            direction = (
-                                "DOWN"
-                                if crossed_down
-                                else "UP"
+                            raise RuntimeError(
+                                f"Cannot save snapshot: {snapshot_file.resolve()}"
                             )
-
-                            video_time_seconds = (
-                                frame_number
-                                / fps
-                            )
-
-                            event = (
-                                create_line_crossing_event(
-                                    track_id=track_id,
-                                    direction=direction,
-                                    confidence=confidence,
-                                    frame_number=(
-                                        frame_number
-                                    ),
-                                    video_time_seconds=(
-                                        video_time_seconds
-                                    ),
-                                    recording_id=(
-                                        RECORDING_ID
-                                    ),
-                                )
-                            )
-
-                            snapshot_name = (
-                                f"{event['eventId']}.jpg"
-                            )
-
-                            snapshot_file = (
-                                SNAPSHOTS_DIRECTORY
-                                / snapshot_name
-                            )
-
-                            snapshot_saved = cv2.imwrite(
-                                str(snapshot_file),
-                                annotated_frame,
-                                [
-                                    cv2.IMWRITE_JPEG_QUALITY,
-                                    SNAPSHOT_JPEG_QUALITY,
-                                ],
-                            )
-
-                            if not snapshot_saved:
-                                raise RuntimeError(
-                                    "Cannot save snapshot: "
-                                    f"{snapshot_file.resolve()}"
-                                )
-
-                            snapshot_key = (
-                                snapshot_storage.upload(
-                                    event["eventId"],
-                                    snapshot_file,
-                                )
-                            )
-
-                            snapshot_file.unlink(
-                                missing_ok=True
-                            )
-
-                            event["attributes"][
-                                "snapshotUrl"
-                            ] = (
-                                f"{SNAPSHOTS_PUBLIC_PATH}/"
-                                f"{snapshot_name}"
-                            )
-
-                            event["attributes"][
-                                "snapshotKey"
-                            ] = snapshot_key
-
-                            write_event(
-                                event,
-                                events_file,
-                            )
-
-                            if (
-                                event_producer
-                                is not None
-                            ):
-                                event_producer.publish(
-                                    event
-                                )
-
-                            last_crossing_frame_by_track[
-                                track_id
-                            ] = frame_number
-
-                            crossing_count += 1
-
-                    previous_y_by_track[
-                        track_id
-                    ] = point_y
+                        snapshot_key = snapshot_storage.upload(
+                            event["eventId"], snapshot_file
+                        )
+                        snapshot_file.unlink(missing_ok=True)
+                        event["attributes"]["snapshotUrl"] = (
+                            f"{SNAPSHOTS_PUBLIC_PATH}/{snapshot_name}"
+                        )
+                        event["attributes"]["snapshotKey"] = snapshot_key
+                        write_event(event, events_file)
+                        if event_producer is not None:
+                            event_producer.publish(event)
+                        crossing_count += 1
 
                     cv2.circle(
                         annotated_frame,
-                        (
-                            point_x,
-                            point_y,
-                        ),
-                        5,
-                        (
-                            255,
-                            0,
-                            0,
-                        ),
-                        -1,
+                        ((x1 + x2) // 2, y2),
+                        5, (255, 0, 0), -1,
                     )
 
             cv2.putText(

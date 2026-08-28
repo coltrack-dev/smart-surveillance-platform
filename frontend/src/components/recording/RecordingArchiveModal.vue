@@ -63,6 +63,8 @@ const analyticsJob = ref<AnalyticsJob | null>(null);
 const analyticsLoading = ref(false);
 const analyticsStopping = ref(false);
 const analyticsError = ref<string | null>(null);
+const analyticsLineOrientation = ref<"HORIZONTAL" | "VERTICAL">("HORIZONTAL");
+const analyticsLinePosition = ref(0.5);
 const analyticsResultsOpen = ref(false);
 const analyticsEvents = ref<AnalyticsEvent[]>([]);
 const analyticsEventsTotal = ref(0);
@@ -603,12 +605,31 @@ async function runRecordingAnalytics(): Promise<void> {
   analyticsTimeline.value = [];
   timelineError.value = null;
   try {
+    const vertical = analyticsLineOrientation.value === "VERTICAL";
     const job = await startRecordingAnalytics(recording.id, {
       cameraId: recording.cameraId,
       classes: [0],
       confidence: 0.5,
       devicePreference: "auto",
       linePosition: 0.5,
+      lines: [{
+        id: "main-line",
+        start: vertical
+            ? { x: analyticsLinePosition.value, y: 0.05 }
+            : { x: 0.05, y: analyticsLinePosition.value },
+        end: vertical
+            ? { x: analyticsLinePosition.value, y: 0.95 }
+            : { x: 0.95, y: analyticsLinePosition.value },
+        anchor: "BOTTOM_CENTER",
+        allowedDirections: [],
+        directionLabels: vertical
+            ? { A_TO_B: "RIGHT_TO_LEFT", B_TO_A: "LEFT_TO_RIGHT" }
+            : { A_TO_B: "DOWN", B_TO_A: "UP" },
+        allowedClasses: [0],
+        cooldownSeconds: 5,
+        hysteresis: 0.02,
+        minimumTrackAgeFrames: 3
+      }],
       targetFps: 10
     });
     analyticsJob.value = job;
@@ -871,6 +892,25 @@ onUnmounted(stopAnalyticsPolling);
                 v-if="selectedRecording"
                 class="analytics-controls"
             >
+              <select
+                  v-model="analyticsLineOrientation"
+                  :disabled="analyticsRunning || analyticsLoading"
+                  aria-label="Crossing line orientation"
+              >
+                <option value="HORIZONTAL">Horizontal line</option>
+                <option value="VERTICAL">Vertical line</option>
+              </select>
+
+              <input
+                  v-model.number="analyticsLinePosition"
+                  type="number"
+                  min="0.05"
+                  max="0.95"
+                  step="0.05"
+                  :disabled="analyticsRunning || analyticsLoading"
+                  aria-label="Crossing line position"
+              >
+
               <button
                   type="button"
                   class="analytics-button"

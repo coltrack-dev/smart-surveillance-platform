@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from inference_worker.line_crossing import LineDefinition
 
 
 class UnsupportedAnalyticsJob(ValueError):
@@ -15,6 +16,7 @@ class AnalyticsProfile:
     confidence: float | None = None
     device_preference: str | None = None
     line_position: float | None = None
+    lines: tuple[LineDefinition, ...] = ()
     target_fps: float | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
@@ -38,6 +40,10 @@ class AnalyticsProfile:
             confidence=_optional_float(value.get("confidence")),
             device_preference=value.get("devicePreference"),
             line_position=_optional_float(value.get("linePosition")),
+            lines=tuple(
+                LineDefinition.from_dict(item)
+                for item in (value.get("lines") or [])
+            ),
             target_fps=_optional_float(value.get("targetFps")),
             attributes=dict(value.get("attributes") or {}),
         )

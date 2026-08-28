@@ -43,6 +43,15 @@ class AnalyticsJobTest(unittest.TestCase):
                     "confidence": 0.4,
                     "devicePreference": "cuda:0",
                     "linePosition": 0.6,
+                    "lines": [{
+                        "id": "entrance",
+                        "start": {"x": 0.5, "y": 0.0},
+                        "end": {"x": 0.5, "y": 1.0},
+                        "directionLabels": {
+                            "A_TO_B": "RIGHT_TO_LEFT",
+                            "B_TO_A": "LEFT_TO_RIGHT",
+                        },
+                    }],
                     "targetFps": 10,
                 },
             }
@@ -58,6 +67,7 @@ class AnalyticsJobTest(unittest.TestCase):
         self.assertEqual(0.4, job.profile.confidence)
         self.assertEqual("cuda:0", job.profile.device_preference)
         self.assertEqual(0.6, job.profile.line_position)
+        self.assertEqual("entrance", job.profile.lines[0].id)
         self.assertEqual(10.0, job.profile.target_fps)
 
     def test_parses_realtime_job_contract(self) -> None:

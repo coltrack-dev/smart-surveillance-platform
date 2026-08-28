@@ -32,6 +32,7 @@ export interface RecordingAnalyticsStartRequest {
     confidence: number;
     devicePreference: string;
     linePosition: number;
+    lines?: AnalyticsLine[];
     targetFps: number;
 }
 
@@ -43,5 +44,24 @@ export interface RealtimeAnalyticsStartRequest {
     confidence: number;
     devicePreference: string;
     linePosition: number;
+    lines?: AnalyticsLine[];
     targetFps: number;
+}
+
+export interface AnalyticsPoint {
+    x: number;
+    y: number;
+}
+
+export interface AnalyticsLine {
+    id: string;
+    start: AnalyticsPoint;
+    end: AnalyticsPoint;
+    anchor: "BOTTOM_CENTER" | "CENTER";
+    allowedDirections: Array<"A_TO_B" | "B_TO_A">;
+    directionLabels: Record<string, string>;
+    allowedClasses: number[];
+    cooldownSeconds: number;
+    hysteresis: number;
+    minimumTrackAgeFrames: number;
 }

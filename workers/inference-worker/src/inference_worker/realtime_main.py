@@ -16,6 +16,11 @@ from ultralytics import YOLO
 
 from inference_worker.event_producer import AnalyticsEventProducer
 from inference_worker.snapshot_storage import SnapshotStorage
+from inference_worker.line_crossing import (
+    LineCrossingDetector,
+    draw_lines,
+    lines_from_environment,
+)
 
 
 log = logging.getLogger(__name__)
@@ -43,6 +48,8 @@ def create_event(
     job_id: str,
     track_id: int,
     direction: str,
+    direction_code: str,
+    line_id: str,
     confidence: float,
     frame_number: int,
     stream_time_seconds: float,
@@ -61,7 +68,8 @@ def create_event(
         "occurredAt": datetime.now(timezone.utc).isoformat(),
         "attributes": {
             "direction": direction,
-            "lineId": "main-line",
+            "directionCode": direction_code,
+            "lineId": line_id,
             "source": "REALTIME",
             "jobId": job_id,
         },
@@ -84,10 +92,9 @@ def run_stream() -> None:
     transport = os.getenv("RTSP_TRANSPORT", "tcp").lower()
     model_file = os.getenv("YOLO_MODEL", "yolo11n.pt")
     confidence = env_float("YOLO_CONFIDENCE", 0.5)
-    line_position = env_float("LINE_POSITION", 0.5)
+    lines = lines_from_environment()
     target_fps = env_float("ANALYTICS_TARGET_FPS", 10.0)
     reconnect_seconds = env_float("RTSP_RECONNECT_SECONDS", 5.0)
-    cooldown_seconds = env_float("CROSSING_COOLDOWN_SECONDS", 2.0)
     jpeg_quality = int(os.getenv("ANALYTICS_SNAPSHOT_JPEG_QUALITY", "75"))
     classes = tuple(
         int(value.strip())
@@ -101,8 +108,6 @@ def run_stream() -> None:
         raise ValueError("YOLO_CLASSES must not be empty")
     if target_fps <= 0:
         raise ValueError("ANALYTICS_TARGET_FPS must be positive")
-    if not 0 < line_position < 1:
-        raise ValueError("LINE_POSITION must be between 0 and 1")
 
     device = resolve_device()
     if (device.startswith("cuda") or device.isdigit()) and not torch.cuda.is_available():
@@ -135,8 +140,7 @@ def run_stream() -> None:
         "ANALYTICS_SNAPSHOTS_PUBLIC_PATH", "/api/v1/analytics/snapshots"
     ).rstrip("/")
 
-    previous_y_by_track: dict[int, int] = {}
-    last_crossing_at_by_track: dict[int, float] = {}
+    crossing_detector = LineCrossingDetector(lines)
     frame_number = 0
     processed_frames = 0
     crossings = 0
@@ -155,7 +159,7 @@ def run_stream() -> None:
                     log.warning("RTSP connection failed; retrying in %.1fs", reconnect_seconds)
                     stop_requested.wait(reconnect_seconds)
                     continue
-                previous_y_by_track.clear()
+                crossing_detector.clear()
                 log.info("RTSP connected url=%s", url)
 
             success, frame = capture.read()
@@ -174,7 +178,6 @@ def run_stream() -> None:
             processed_frames += 1
 
             height, width = frame.shape[:2]
-            line_y = int(height * line_position)
             results = model.track(
                 frame,
                 persist=True,
@@ -186,73 +189,73 @@ def run_stream() -> None:
             )
             result = results[0]
             boxes = result.boxes
-            if boxes is None or boxes.id is None or boxes.conf is None:
+            if (boxes is None or boxes.id is None
+                    or boxes.conf is None or boxes.cls is None):
                 continue
 
             track_ids = boxes.id.int().cpu().tolist()
             coordinates = boxes.xyxy.int().cpu().tolist()
             confidences = boxes.conf.cpu().tolist()
+            class_ids = boxes.cls.int().cpu().tolist()
 
-            for track_id, coordinates_for_track, detected_confidence in zip(
-                track_ids, coordinates, confidences
+            for track_id, coordinates_for_track, detected_confidence, class_id in zip(
+                track_ids, coordinates, confidences, class_ids
             ):
-                x1, _y1, x2, y2 = coordinates_for_track
-                point_y = y2
-                previous_y = previous_y_by_track.get(track_id)
-                previous_y_by_track[track_id] = point_y
-                if previous_y is None:
-                    continue
-
-                crossed_down = previous_y < line_y <= point_y
-                crossed_up = previous_y > line_y >= point_y
-                last_crossing_at = last_crossing_at_by_track.get(track_id, 0.0)
-                if not (crossed_down or crossed_up) or now - last_crossing_at < cooldown_seconds:
-                    continue
-
-                event = create_event(
-                    camera_id=camera_id,
-                    job_id=job_id,
+                box = tuple(int(value) for value in coordinates_for_track)
+                for crossing in crossing_detector.update(
                     track_id=track_id,
-                    direction="DOWN" if crossed_down else "UP",
-                    confidence=detected_confidence,
-                    frame_number=frame_number,
-                    stream_time_seconds=now - started_at,
-                )
-                annotated = result.plot()
-                cv2.line(annotated, (0, line_y), (width, line_y), (0, 0, 255), 2)
+                    class_id=class_id,
+                    box=box,
+                    width=width,
+                    height=height,
+                    now=now,
+                ):
+                    event = create_event(
+                        camera_id=camera_id,
+                        job_id=job_id,
+                        track_id=track_id,
+                        direction=crossing.direction,
+                        direction_code=crossing.direction_code,
+                        line_id=crossing.line_id,
+                        confidence=detected_confidence,
+                        frame_number=frame_number,
+                        stream_time_seconds=now - started_at,
+                    )
+                    annotated = result.plot()
+                    draw_lines(annotated, lines)
 
-                with tempfile.NamedTemporaryFile(
-                    prefix=f"{event['eventId']}-",
-                    suffix=".jpg",
-                    dir=snapshot_directory,
-                    delete=False,
-                ) as temporary_snapshot:
-                    snapshot_path = Path(temporary_snapshot.name)
-                try:
-                    if not cv2.imwrite(
-                        str(snapshot_path),
-                        annotated,
-                        [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality],
-                    ):
-                        raise RuntimeError(f"Cannot save snapshot: {snapshot_path}")
-                    snapshot_key = snapshot_storage.upload(event["eventId"], snapshot_path)
-                finally:
-                    snapshot_path.unlink(missing_ok=True)
+                    with tempfile.NamedTemporaryFile(
+                        prefix=f"{event['eventId']}-",
+                        suffix=".jpg",
+                        dir=snapshot_directory,
+                        delete=False,
+                    ) as temporary_snapshot:
+                        snapshot_path = Path(temporary_snapshot.name)
+                    try:
+                        if not cv2.imwrite(
+                            str(snapshot_path),
+                            annotated,
+                            [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality],
+                        ):
+                            raise RuntimeError(f"Cannot save snapshot: {snapshot_path}")
+                        snapshot_key = snapshot_storage.upload(
+                            event["eventId"], snapshot_path
+                        )
+                    finally:
+                        snapshot_path.unlink(missing_ok=True)
 
-                event["attributes"]["snapshotKey"] = snapshot_key
-                event["attributes"]["snapshotUrl"] = (
-                    f"{public_path}/{event['eventId']}.jpg"
-                )
-                producer.publish(event)
-                crossings += 1
-                last_crossing_at_by_track[track_id] = now
-                log.info(
-                    "Realtime crossing eventId=%s trackId=%s direction=%s crossings=%s",
-                    event["eventId"],
-                    track_id,
-                    event["attributes"]["direction"],
-                    crossings,
-                )
+                    event["attributes"]["snapshotKey"] = snapshot_key
+                    event["attributes"]["snapshotUrl"] = (
+                        f"{public_path}/{event['eventId']}.jpg"
+                    )
+                    producer.publish(event)
+                    crossings += 1
+                    log.info(
+                        "Realtime crossing eventId=%s trackId=%s "
+                        "lineId=%s direction=%s crossings=%s",
+                        event["eventId"], track_id, crossing.line_id,
+                        event["attributes"]["direction"], crossings,
+                    )
 
             if processed_frames % 100 == 0:
                 log.info(

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.request import Request, urlopen
@@ -184,6 +184,10 @@ def run_inference(
             str(value)
             for value in job.profile.classes
         )
+        if job.profile.lines:
+            environment["ANALYTICS_LINES_JSON"] = json.dumps(
+                [asdict(line) for line in job.profile.lines]
+            )
 
         optional_environment = {
             "YOLO_MODEL": job.profile.model,
@@ -261,6 +265,10 @@ def realtime_environment(job: AnalyticsJob) -> dict[str, str]:
         "LINE_POSITION": job.profile.line_position,
         "ANALYTICS_TARGET_FPS": job.profile.target_fps,
     }
+    if job.profile.lines:
+        environment["ANALYTICS_LINES_JSON"] = json.dumps(
+            [asdict(line) for line in job.profile.lines]
+        )
     for key, value in optional_environment.items():
         if value is not None:
             environment[key] = str(value)
