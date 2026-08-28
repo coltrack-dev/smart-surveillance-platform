@@ -94,6 +94,27 @@ export async function findAnalyticsEvent(eventId: string): Promise<AnalyticsEven
     return response.data;
 }
 
+export async function findAnalyticsJobEvents(
+    jobId: string,
+    page = 0,
+    size = 100
+): Promise<AnalyticsEventsPage> {
+    const response = await http.get<AnalyticsEventsApiPage>(
+        `/analytics/jobs/${jobId}/events`,
+        { params: { page, size, sort: "videoTimeSeconds,asc" } }
+    );
+    const data = response.data;
+    const metadata = data.page;
+
+    return {
+        content: data.content,
+        number: metadata?.number ?? data.number ?? page,
+        size: metadata?.size ?? data.size ?? size,
+        totalElements: metadata?.totalElements ?? data.totalElements ?? 0,
+        totalPages: metadata?.totalPages ?? data.totalPages ?? 0
+    };
+}
+
 export async function startRealtimeAnalytics(
     cameraId: string,
     request: RealtimeAnalyticsStartRequest

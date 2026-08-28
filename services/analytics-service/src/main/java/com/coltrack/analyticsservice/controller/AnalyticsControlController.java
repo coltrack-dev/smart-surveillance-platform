@@ -1,10 +1,12 @@
 package com.coltrack.analyticsservice.controller;
 
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
+import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
 import com.coltrack.analyticsservice.dto.RecordingAnalyticsStartRequest;
 import com.coltrack.analyticsservice.service.AnalyticsControlService;
+import com.coltrack.analyticsservice.service.AnalyticsEventService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +30,7 @@ import java.util.UUID;
 public class AnalyticsControlController {
 
     private final AnalyticsControlService controlService;
+    private final AnalyticsEventService eventService;
 
     @PostMapping("/realtime/{cameraId}/start")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -74,6 +77,18 @@ public class AnalyticsControlController {
     @GetMapping("/jobs/{jobId}")
     public AnalyticsJobResponse findJob(@PathVariable UUID jobId) {
         return controlService.findJob(jobId);
+    }
+
+    @GetMapping("/jobs/{jobId}/events")
+    public Page<AnalyticsEventResponse> findJobEvents(
+            @PathVariable UUID jobId,
+            @PageableDefault(
+                    size = 50,
+                    sort = "videoTimeSeconds",
+                    direction = Sort.Direction.ASC
+            ) Pageable pageable
+    ) {
+        return eventService.findEventsForJob(jobId, pageable);
     }
 
     @GetMapping("/jobs")

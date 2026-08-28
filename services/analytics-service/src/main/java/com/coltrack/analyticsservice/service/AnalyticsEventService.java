@@ -4,6 +4,7 @@ import com.coltrack.analyticsservice.dto.AnalyticsEventResponse;
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
 import com.coltrack.analyticsservice.mapper.AnalyticsEventMapper;
 import com.coltrack.analyticsservice.repository.AnalyticsEventRepository;
+import com.coltrack.analyticsservice.repository.AnalyticsJobRepository;
 import com.coltrack.events.analytics.AnalyticsEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,7 @@ import static com.coltrack.analyticsservice.repository.AnalyticsEventSpecificati
 public class AnalyticsEventService {
 
     private final AnalyticsEventRepository repository;
+    private final AnalyticsJobRepository jobRepository;
     private final AnalyticsEventMapper mapper;
 
     /**
@@ -95,5 +97,26 @@ public class AnalyticsEventService {
                         HttpStatus.NOT_FOUND,
                         "Analytics event not found: " + eventId
                 ));
+    }
+
+    public Page<AnalyticsEventResponse> findEventsForJob(
+            UUID jobId,
+            Pageable pageable
+    ) {
+        var job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Analytics job not found: " + jobId
+                ));
+
+        if (!"RECORDING".equals(job.getJobType()) || job.getRecordingId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Analytics job is not a recording analysis: " + jobId
+            );
+        }
+
+        return repository.findAllByRecordingId(job.getRecordingId(), pageable)
+                .map(AnalyticsEventResponse::fromEntity);
     }
 }

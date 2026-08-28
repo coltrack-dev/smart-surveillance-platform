@@ -24,8 +24,10 @@ import {
 
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
 import type {AnalyticsJob, AnalyticsJobStatus} from "@/types/AnalyticsControl";
+import type {AnalyticsEvent} from "@/types/AnalyticsEvent";
 import {
   findAnalyticsJob,
+  findAnalyticsJobEvents,
   findLatestRecordingAnalyticsJob,
   startRecordingAnalytics,
   stopRecordingAnalytics
@@ -56,6 +58,12 @@ const analyticsJob = ref<AnalyticsJob | null>(null);
 const analyticsLoading = ref(false);
 const analyticsStopping = ref(false);
 const analyticsError = ref<string | null>(null);
+const analyticsResultsOpen = ref(false);
+const analyticsEvents = ref<AnalyticsEvent[]>([]);
+const analyticsEventsTotal = ref(0);
+const analyticsEventsLoading = ref(false);
+const analyticsEventsError = ref<string | null>(null);
+const failedSnapshots = ref<Set<string>>(new Set());
 let analyticsPollingTimer: ReturnType<typeof setInterval> | null = null;
 
 const activeAnalyticsStatuses = new Set<AnalyticsJobStatus>([
@@ -323,6 +331,67 @@ function close(): void {
   emit("close");
 }
 
+function formatConfidence(value: number | null): string {
+  return value == null ? "â€”" : `${(value * 100).toFixed(1)}%`;
+}
+
+function eventDirection(event: AnalyticsEvent): string {
+  const direction = event.attributes?.direction;
+  return typeof direction === "string" ? direction : "â€”";
+}
+
+function getSnapshotUrl(event: AnalyticsEvent): string | undefined {
+  const path = event.snapshotUrl;
+  if (!path) {
+    return undefined;
+  }
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+  return apiUrl?.startsWith("http")
+      ? `${new URL(apiUrl).origin}${normalizedPath}`
+      : normalizedPath;
+}
+
+function snapshotAvailable(event: AnalyticsEvent): boolean {
+  return Boolean(event.snapshotUrl) && !failedSnapshots.value.has(event.eventId);
+}
+
+function handleSnapshotError(event: AnalyticsEvent): void {
+  failedSnapshots.value = new Set([...failedSnapshots.value, event.eventId]);
+}
+
+async function openAnalyticsResults(): Promise<void> {
+  const job = analyticsJob.value;
+  if (!job || job.status !== "COMPLETED") {
+    return;
+  }
+  analyticsResultsOpen.value = true;
+  analyticsEventsLoading.value = true;
+  analyticsEventsError.value = null;
+  analyticsEvents.value = [];
+  failedSnapshots.value = new Set();
+  try {
+    const result = await findAnalyticsJobEvents(job.jobId);
+    if (analyticsJob.value?.jobId !== job.jobId) {
+      return;
+    }
+    analyticsEvents.value = result.content;
+    analyticsEventsTotal.value = result.totalElements;
+  } catch (error) {
+    console.error("Unable to load analytics results", error);
+    analyticsEventsError.value = "Unable to load analysis results.";
+  } finally {
+    analyticsEventsLoading.value = false;
+  }
+}
+
+function closeAnalyticsResults(): void {
+  analyticsResultsOpen.value = false;
+}
+
 function analyticsStatusLabel(status: AnalyticsJobStatus): string {
   const labels: Record<AnalyticsJobStatus, string> = {
     REQUESTED: "Waiting for worker",
@@ -430,6 +499,7 @@ async function selectRecording(
 ): Promise<void> {
 
   selectedRecording.value = recording;
+  analyticsResultsOpen.value = false;
   void loadRecordingAnalytics(recording.id);
 
   preparedPlaybackUrl.value = null;
@@ -688,6 +758,15 @@ onUnmounted(stopAnalyticsPolling);
                     : "Stop analysis" }}
               </button>
 
+              <button
+                  v-if="analyticsJob?.status === 'COMPLETED'"
+                  type="button"
+                  class="analytics-results-button"
+                  @click="openAnalyticsResults"
+              >
+                View results
+              </button>
+
               <span
                   v-if="analyticsError"
                   class="analytics-error"
@@ -768,6 +847,46 @@ onUnmounted(stopAnalyticsPolling);
 
         </main>
 
+      </div>
+
+      <div
+          v-if="analyticsResultsOpen"
+          class="results-backdrop"
+          @click.self="closeAnalyticsResults"
+      >
+        <section class="results-modal" role="dialog" aria-modal="true" aria-label="Analysis results">
+          <header class="results-header">
+            <div>
+              <h3>Analysis results</h3>
+              <span v-if="!analyticsEventsLoading">Found events: {{ analyticsEventsTotal }}</span>
+            </div>
+            <button type="button" class="close-button" aria-label="Close results" @click="closeAnalyticsResults">Ã—</button>
+          </header>
+
+          <div v-if="analyticsEventsLoading" class="loading">Loading results...</div>
+          <div v-else-if="analyticsEventsError" class="error-message">{{ analyticsEventsError }}</div>
+          <div v-else-if="analyticsEvents.length === 0" class="empty">No events were detected.</div>
+          <div v-else class="results-list">
+            <article v-for="event in analyticsEvents" :key="event.eventId" class="result-card">
+              <div class="result-snapshot">
+                <img
+                    v-if="snapshotAvailable(event)"
+                    :src="getSnapshotUrl(event)"
+                    :alt="`Snapshot ${event.eventId}`"
+                    @error="handleSnapshotError(event)"
+                >
+                <span v-else>No snapshot</span>
+              </div>
+              <div class="result-details">
+                <strong>{{ formatDuration(event.videoTimeSeconds == null ? null : Math.round(event.videoTimeSeconds)) }}</strong>
+                <span>{{ event.eventType }}</span>
+                <span>{{ event.objectType || "Unknown object" }}</span>
+                <span>Confidence: {{ formatConfidence(event.confidence) }}</span>
+                <span>Direction: {{ eventDirection(event) }}</span>
+              </div>
+            </article>
+          </div>
+        </section>
       </div>
 
     </section>
@@ -890,6 +1009,95 @@ onUnmounted(stopAnalyticsPolling);
   background: #fff;
   color: #b42318;
   cursor: pointer;
+}
+
+.analytics-results-button {
+  padding: 8px 12px;
+  border: 1px solid #18864b;
+  border-radius: 6px;
+  background: #fff;
+  color: #18864b;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.results-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.results-modal {
+  width: min(820px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.results-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #ddd;
+  background: #fff;
+}
+
+.results-header h3 {
+  margin: 0 0 4px;
+}
+
+.results-header span {
+  color: #667085;
+  font-size: 14px;
+}
+
+.results-list {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.result-card {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid #e2e5e9;
+  border-radius: 8px;
+}
+
+.result-snapshot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  background: #111;
+  color: #aaa;
+}
+
+.result-snapshot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.result-details {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 12px 12px 12px 0;
 }
 
 .analytics-progress {
@@ -1062,6 +1270,14 @@ onUnmounted(stopAnalyticsPolling);
   .dates-panel {
     border-right: 0;
     border-bottom: 1px solid #ddd;
+  }
+
+  .result-card {
+    grid-template-columns: 1fr;
+  }
+
+  .result-details {
+    padding: 12px;
   }
 }
 </style>

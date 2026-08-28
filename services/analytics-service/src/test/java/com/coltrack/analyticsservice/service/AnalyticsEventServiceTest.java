@@ -1,8 +1,10 @@
 package com.coltrack.analyticsservice.service;
 
 import com.coltrack.analyticsservice.entity.AnalyticsEventEntity;
+import com.coltrack.analyticsservice.entity.AnalyticsJobEntity;
 import com.coltrack.analyticsservice.mapper.AnalyticsEventMapper;
 import com.coltrack.analyticsservice.repository.AnalyticsEventRepository;
+import com.coltrack.analyticsservice.repository.AnalyticsJobRepository;
 import com.coltrack.events.analytics.AnalyticsEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,9 +12,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +31,9 @@ class AnalyticsEventServiceTest {
 
     @Mock
     private AnalyticsEventRepository repository;
+
+    @Mock
+    private AnalyticsJobRepository jobRepository;
 
     @Mock
     private AnalyticsEventMapper mapper;
@@ -65,6 +73,27 @@ class AnalyticsEventServiceTest {
                 .thenThrow(new DataIntegrityViolationException("duplicate key"));
 
         assertThat(service.saveIfAbsent(event)).isFalse();
+    }
+
+    @Test
+    void shouldFindEventsForRecordingJob() {
+        UUID jobId = UUID.randomUUID();
+        UUID recordingId = UUID.randomUUID();
+        var pageable = PageRequest.of(0, 50);
+        var job = AnalyticsJobEntity.builder()
+                .jobId(jobId)
+                .jobType("RECORDING")
+                .recordingId(recordingId)
+                .build();
+
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+        when(repository.findAllByRecordingId(recordingId, pageable))
+                .thenReturn(Page.empty(pageable));
+
+        var result = service.findEventsForJob(jobId, pageable);
+
+        assertThat(result).isEmpty();
+        verify(repository).findAllByRecordingId(recordingId, pageable);
     }
 
     private AnalyticsEvent event() {
