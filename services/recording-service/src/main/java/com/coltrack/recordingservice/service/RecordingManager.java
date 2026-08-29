@@ -288,6 +288,21 @@ public class RecordingManager implements RecordingListener {
             return;
         }
 
+        if (session.isStopRequested()
+                || session.getStatus() == RecordingStatus.STOPPING
+                || session.getStatus() == RecordingStatus.STOPPED
+                || session.getStatus() == RecordingStatus.COMPLETED
+                || session.getStatus() == RecordingStatus.FAILED) {
+
+            log.info(
+                    "Recording stop ignored because session is not active "
+                            + "camera={} status={}",
+                    cameraId,
+                    session.getStatus()
+            );
+            return;
+        }
+
         if (session.getStartedAt() != null &&
                 eventTime.isBefore(session.getStartedAt())) {
 
@@ -321,6 +336,11 @@ public class RecordingManager implements RecordingListener {
 
         session.setStatus(
                 RecordingStatus.STOPPED
+        );
+
+        sessions.remove(
+                session.getCameraId(),
+                session
         );
     }
 

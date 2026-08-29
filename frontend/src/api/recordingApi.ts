@@ -80,9 +80,23 @@ export async function stopRecording(
 export async function findActiveRecording(
     cameraId: string
 ): Promise<ActiveRecording | null> {
-    const response = await http.get<ActiveRecording | null>(
-        `/recordings/${cameraId}`
-    );
+    try {
+        const response = await http.get<ActiveRecording>(
+            `/recordings/${cameraId}`
+        );
 
-    return response.data || null;
+        return response.data;
+    } catch (error: unknown) {
+        if (
+            typeof error === "object"
+            && error !== null
+            && "response" in error
+            && (error as { response?: { status?: number } })
+                .response?.status === 404
+        ) {
+            return null;
+        }
+
+        throw error;
+    }
 }
