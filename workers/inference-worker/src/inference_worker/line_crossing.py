@@ -132,9 +132,14 @@ class LineCrossingDetector:
             side = 0 if abs(distance) <= line.hysteresis else (1 if distance > 0 else -1)
             previous_point = state.previous_point
             previous_side = state.stable_side
-            state.previous_point = point
             if side == 0:
                 continue
+            # Keep the last point outside the hysteresis band. Otherwise a
+            # slowly moving object can spend several frames inside the band,
+            # overwrite the actual pre-crossing point, and leave the band on
+            # the opposite side without the final short segment intersecting
+            # the configured line.
+            state.previous_point = point
             state.stable_side = side
             if previous_point is None or previous_side in {0, side}:
                 continue

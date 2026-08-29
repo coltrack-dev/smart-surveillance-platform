@@ -69,6 +69,45 @@ class LineCrossingDetectorTest(unittest.TestCase):
 
         self.assertEqual([], crossings)
 
+    def test_detects_slow_crossing_through_hysteresis_band(self) -> None:
+        line = LineDefinition(
+            id="entrance",
+            start=Point(0.5, 0.0),
+            end=Point(0.5, 1.0),
+            hysteresis=0.02,
+            minimum_track_age_frames=2,
+            cooldown_seconds=0,
+        )
+        detector = LineCrossingDetector([line])
+
+        for index, center_x in enumerate((0.45, 0.49, 0.51), start=1):
+            half_width = 0.05
+            self.assertEqual([], detector.update(
+                track_id=7,
+                class_id=0,
+                box=(
+                    round((center_x - half_width) * 100),
+                    10,
+                    round((center_x + half_width) * 100),
+                    50,
+                ),
+                width=100,
+                height=100,
+                now=float(index),
+            ))
+
+        crossings = detector.update(
+            track_id=7,
+            class_id=0,
+            box=(50, 10, 60, 50),
+            width=100,
+            height=100,
+            now=4.0,
+        )
+
+        self.assertEqual(1, len(crossings))
+        self.assertEqual("entrance", crossings[0].line_id)
+
     def test_respects_class_and_direction_filters(self) -> None:
         line = LineDefinition(
             id="people-only",
