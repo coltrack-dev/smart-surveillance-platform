@@ -25,6 +25,14 @@ export interface AnalyticsJob {
     finishedAt: string | null;
 }
 
+export interface AnalyticsProfileSettings {
+    model: string;
+    classes: number[];
+    confidence: number;
+    devicePreference: string;
+    targetFps: number;
+}
+
 export interface RecordingAnalyticsStartRequest {
     cameraId: string;
     model?: string;

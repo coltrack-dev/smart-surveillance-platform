@@ -23,7 +23,10 @@ import {
 } from "@/api/recordingApi";
 
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
+import AnalyticsProfileDialog from "@/components/analytics/AnalyticsProfileDialog.vue";
 import type {AnalyticsJob, AnalyticsJobStatus} from "@/types/AnalyticsControl";
+import type {AnalyticsProfileSettings} from "@/types/AnalyticsControl";
+import {loadDefaultAnalyticsProfile, saveDefaultAnalyticsProfile} from "@/services/analyticsProfileSettings";
 import type {
   AnalyticsEvent,
   AnalyticsEventTimelineItem
@@ -65,6 +68,8 @@ const analyticsStopping = ref(false);
 const analyticsError = ref<string | null>(null);
 const analyticsLineOrientation = ref<"HORIZONTAL" | "VERTICAL">("HORIZONTAL");
 const analyticsLinePosition = ref(0.5);
+const analyticsProfileDialogOpen = ref(false);
+const analyticsProfile = ref(loadDefaultAnalyticsProfile());
 const analyticsResultsOpen = ref(false);
 const analyticsEvents = ref<AnalyticsEvent[]>([]);
 const analyticsEventsTotal = ref(0);
@@ -170,24 +175,6 @@ async function seekArchiveTo(seconds: number | null): Promise<void> {
   closeAnalyticsResults();
   await archivePlayer.value?.seekTo(seconds, true);
 }
-
-const playbackBaseUrl =
-    import.meta.env.VITE_RECORDING_URL ??
-    `${window.location.protocol}//${window.location.hostname}:8080`;
-
-const playbackUrl = computed(() => {
-
-  const url =
-      selectedRecording.value?.playbackUrl;
-
-  if (!url) {
-    return undefined;
-  }
-
-  return url.startsWith("http")
-      ? url
-      : `${playbackBaseUrl}${url}`;
-});
 
 async function loadDates(): Promise<void> {
 
@@ -597,12 +584,18 @@ async function loadRecordingAnalytics(recordingId: string): Promise<void> {
   }
 }
 
-async function runRecordingAnalytics(): Promise<void> {
+async function runRecordingAnalytics(
+    selectedProfile: AnalyticsProfileSettings,
+    saveAsDefault: boolean
+): Promise<void> {
   const recording = selectedRecording.value;
   if (!recording || !canAnalyzeSelectedRecording.value || analyticsRunning.value) {
     return;
   }
   analyticsLoading.value = true;
+  analyticsProfileDialogOpen.value = false;
+  analyticsProfile.value = selectedProfile;
+  if (saveAsDefault) saveDefaultAnalyticsProfile(selectedProfile);
   analyticsError.value = null;
   analyticsTimeline.value = [];
   timelineError.value = null;
@@ -610,9 +603,10 @@ async function runRecordingAnalytics(): Promise<void> {
     const vertical = analyticsLineOrientation.value === "VERTICAL";
     const job = await startRecordingAnalytics(recording.id, {
       cameraId: recording.cameraId,
-      classes: [0],
-      confidence: 0.5,
-      devicePreference: "auto",
+      model: selectedProfile.model,
+      classes: selectedProfile.classes,
+      confidence: selectedProfile.confidence,
+      devicePreference: selectedProfile.devicePreference,
       linePosition: 0.5,
       lines: [{
         id: "main-line",
@@ -627,12 +621,12 @@ async function runRecordingAnalytics(): Promise<void> {
         directionLabels: vertical
             ? { A_TO_B: "RIGHT_TO_LEFT", B_TO_A: "LEFT_TO_RIGHT" }
             : { A_TO_B: "DOWN", B_TO_A: "UP" },
-        allowedClasses: [0],
+        allowedClasses: selectedProfile.classes,
         cooldownSeconds: 5,
         hysteresis: 0.02,
         minimumTrackAgeFrames: 3
       }],
-      targetFps: 10
+      targetFps: selectedProfile.targetFps
     });
     analyticsJob.value = job;
     startAnalyticsPolling(job.jobId);
@@ -917,7 +911,7 @@ onUnmounted(stopAnalyticsPolling);
                   type="button"
                   class="analytics-button"
                   :disabled="analyticsLoading || analyticsRunning || !canAnalyzeSelectedRecording"
-                  @click="runRecordingAnalytics"
+                  @click="analyticsProfileDialogOpen = true"
               >
                 {{ analyticsLoading
                     ? "Starting..."
@@ -1067,6 +1061,13 @@ onUnmounted(stopAnalyticsPolling);
         </main>
 
       </div>
+
+      <AnalyticsProfileDialog
+          :open="analyticsProfileDialogOpen"
+          :initial-profile="analyticsProfile"
+          @close="analyticsProfileDialogOpen = false"
+          @run="runRecordingAnalytics"
+      />
 
       <div
           v-if="analyticsResultsOpen"

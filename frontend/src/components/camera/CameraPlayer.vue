@@ -296,6 +296,14 @@ onMounted(
 onUnmounted(
     stopPlayer
 );
+
+async function seekTo(seconds: number, autoplay = false): Promise<void> {
+  if (!video.value || !Number.isFinite(seconds)) return;
+  video.value.currentTime = Math.max(0, seconds);
+  if (autoplay) await video.value.play();
+}
+
+defineExpose({ seekTo });
 </script>
 
 <template>

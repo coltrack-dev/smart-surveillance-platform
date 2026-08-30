@@ -6,6 +6,9 @@ import {
   stopRealtimeAnalytics
 } from "@/api/analyticsApi";
 import type { AnalyticsJob } from "@/types/AnalyticsControl";
+import type { AnalyticsProfileSettings } from "@/types/AnalyticsControl";
+import AnalyticsProfileDialog from "@/components/analytics/AnalyticsProfileDialog.vue";
+import { loadDefaultAnalyticsProfile, saveDefaultAnalyticsProfile } from "@/services/analyticsProfileSettings";
 
 const props = defineProps<{
   cameraId: string;
@@ -18,6 +21,8 @@ const sourceUrl = ref(
 const job = ref<AnalyticsJob | null>(null);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
+const profileDialogOpen = ref(false);
+const profile = ref(loadDefaultAnalyticsProfile());
 const lineOrientation = ref<"HORIZONTAL" | "VERTICAL">("HORIZONTAL");
 const linePosition = ref(0.5);
 let pollTimer: number | undefined;
@@ -61,7 +66,10 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function start(): Promise<void> {
+async function start(selected: AnalyticsProfileSettings, saveAsDefault: boolean): Promise<void> {
+  profileDialogOpen.value = false;
+  profile.value = selected;
+  if (saveAsDefault) saveDefaultAnalyticsProfile(selected);
   loading.value = true;
   errorMessage.value = null;
   try {
@@ -69,9 +77,10 @@ async function start(): Promise<void> {
     job.value = await startRealtimeAnalytics(props.cameraId, {
       sourceUrl: sourceUrl.value,
       transport: "tcp",
-      classes: [0],
-      confidence: 0.5,
-      devicePreference: "cuda:0",
+      model: selected.model,
+      classes: selected.classes,
+      confidence: selected.confidence,
+      devicePreference: selected.devicePreference,
       linePosition: 0.5,
       lines: [{
         id: "main-line",
@@ -91,7 +100,7 @@ async function start(): Promise<void> {
         hysteresis: 0.02,
         minimumTrackAgeFrames: 3
       }],
-      targetFps: 10
+      targetFps: selected.targetFps
     });
   } catch (error) {
     console.error("Unable to start realtime analytics", error);
@@ -176,7 +185,7 @@ onBeforeUnmount(() => {
           type="button"
           class="analytics-start"
           :disabled="active || loading || !sourceUrl || !streamActive"
-          @click="start"
+          @click="profileDialogOpen = true"
       >
         Start analytics
       </button>
@@ -194,6 +203,12 @@ onBeforeUnmount(() => {
     <small v-if="job?.workerId">Worker: {{ job.workerId }}</small>
     <small v-if="errorMessage" class="analytics-error">{{ errorMessage }}</small>
   </section>
+  <AnalyticsProfileDialog
+      :open="profileDialogOpen"
+      :initial-profile="profile"
+      @close="profileDialogOpen = false"
+      @run="start"
+  />
 </template>
 
 <style scoped>
