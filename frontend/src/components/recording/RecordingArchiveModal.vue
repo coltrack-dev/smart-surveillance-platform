@@ -1997,22 +1997,27 @@ onUnmounted(stopAnalyticsPolling);
 }
 
 .recording-list.cards {
-  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .recording-list.cards .recording-row {
-  grid-template-columns: 1fr 1fr;
-  align-content: start;
-  min-height: 180px;
-  padding: 16px;
-  border-radius: 11px;
-  box-shadow: 0 2px 8px rgba(20, 34, 58, 0.08);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  width: auto;
+  min-width: 190px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+  box-shadow: none;
 }
 
-.recording-list.cards .recording-time,
-.recording-list.cards .recording-actions {
-  grid-column: 1 / -1;
+.recording-list.cards .recording-row:hover {
+  background: #1d4ed8;
 }
 
 .recording-list.cards .recording-time {
@@ -2020,38 +2025,48 @@ onUnmounted(stopAnalyticsPolling);
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e5e8ed;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 .recording-list.cards .recording-time strong {
-  font-size: 20px;
+  font-size: 16px;
+}
+
+.recording-list.cards .recording-duration,
+.recording-list.cards .recording-size {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recording-list.cards .field-label {
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .recording-list.cards .recording-status {
-  align-self: end;
-  justify-self: end;
+  justify-self: start;
+  color: #fff;
 }
 
 .recording-list.cards .recording-actions {
-  align-self: end;
   justify-content: space-between;
-  padding-top: 8px;
+  padding-top: 4px;
 }
 
 .recording-list.cards .recording-row.protected {
-  border-color: #d9a514;
-  background: #fff4c7;
-  box-shadow: inset 4px 0 #d59b00, 0 2px 9px rgba(145, 101, 0, 0.16);
+  background: #b7791f;
+  color: #fff;
+  box-shadow: inset 4px 0 #fbd38d;
 }
 
-.recording-list.cards .recording-row.protected .recording-time {
-  border-bottom-color: #e5c45f;
+.recording-list.cards .recording-row.protected:hover {
+  background: #975a16;
 }
 
 .recording-list.cards .recording-row.selected {
-  outline: 2px solid #3978ff;
-  outline-offset: 1px;
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
 }
 
 .recording-time,
