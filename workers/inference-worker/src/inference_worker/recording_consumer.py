@@ -22,6 +22,7 @@ from confluent_kafka import (
 from inference_worker.job import (
     AnalyticsJob,
     UnsupportedAnalyticsJob,
+    stop_targets_running_job,
 )
 from inference_worker.worker_events import (
     WorkerEventPublisher,
@@ -317,6 +318,8 @@ def process_recording_job(
     while not stop_event.is_set():
         try:
             final_progress = run_inference(job, stop_event, publish_progress)
+            if stop_event.is_set():
+                raise RecordingStopped()
             worker_events.publish_status(
                 job_id=job.job_id,
                 camera_id=job.camera_id,
@@ -534,14 +537,21 @@ def main() -> None:
                 current_job = running.job if running is not None else batched_job
 
                 if job.action == "STOP":
-                    if current_job is None:
+                    if not stop_targets_running_job(job, current_job):
                         worker_events.publish_status(
                             job_id=job.job_id,
                             camera_id=job.camera_id,
                             recording_id=None,
                             job_type="REALTIME",
-                            status="REJECTED",
-                            details={"errorCode": "JOB_NOT_RUNNING"},
+                            status="STOPPED",
+                            details={
+                                "alreadyStopped": True,
+                                "runningJobId": (
+                                    current_job.job_id
+                                    if current_job is not None
+                                    else None
+                                ),
+                            },
                         )
                     else:
                         if multistream is not None:
@@ -658,13 +668,38 @@ def main() -> None:
             if job.action == "STOP":
                 if (
                     recording_task is not None
-                    and recording_task.job.recording_id == job.recording_id
+                    and stop_targets_running_job(job, recording_task.job)
                 ):
                     recording_task.stop_event.set()
                     log.info(
                         "Recording inference stop requested jobId=%s recordingId=%s",
                         recording_task.job.job_id,
                         recording_task.job.recording_id,
+                    )
+                    if not recording_task.thread.is_alive():
+                        worker_events.publish_status(
+                            job_id=job.job_id,
+                            camera_id=job.camera_id,
+                            recording_id=job.recording_id,
+                            job_type=job.job_type,
+                            status="STOPPED",
+                            details={"alreadyStopped": True},
+                        )
+                else:
+                    worker_events.publish_status(
+                        job_id=job.job_id,
+                        camera_id=job.camera_id,
+                        recording_id=job.recording_id,
+                        job_type=job.job_type,
+                        status="STOPPED",
+                        details={
+                            "alreadyStopped": True,
+                            "runningJobId": (
+                                recording_task.job.job_id
+                                if recording_task is not None
+                                else None
+                            ),
+                        },
                     )
                 consumer.commit(message=message, asynchronous=False)
                 continue

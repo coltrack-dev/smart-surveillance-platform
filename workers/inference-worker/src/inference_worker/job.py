@@ -153,6 +153,20 @@ class AnalyticsJob:
         )
 
 
+def stop_targets_running_job(
+    stop_job: AnalyticsJob,
+    running_job: AnalyticsJob | None,
+) -> bool:
+    if running_job is None:
+        return False
+    return (
+        stop_job.job_id == running_job.job_id
+        and stop_job.job_type == running_job.job_type
+        and stop_job.camera_id == running_job.camera_id
+        and stop_job.recording_id == running_job.recording_id
+    )
+
+
 def _required_string(
     value: dict[str, Any],
     key: str,

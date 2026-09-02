@@ -16,12 +16,15 @@ import com.coltrack.events.analytics.NormalizedPoint;
 import com.coltrack.events.analytics.AnalyticsSource;
 import com.coltrack.events.analytics.AnalyticsWorkerHeartbeatEvent;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -37,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AnalyticsControlService {
 
     private static final Set<String> ACTIVE_STATUSES = Set.of(
@@ -44,6 +48,25 @@ public class AnalyticsControlService {
     );
     private static final Set<String> FINISHED_STATUSES = Set.of(
             "COMPLETED", "STOPPED", "FAILED", "REJECTED"
+    );
+    private static final Set<String> KNOWN_STATUSES = Set.of(
+            "REQUESTED", "RUNNING", "RETRYING", "STOP_REQUESTED",
+            "COMPLETED", "STOPPED", "FAILED", "REJECTED"
+    );
+    private static final Map<String, Set<String>> ALLOWED_TRANSITIONS = Map.of(
+            "REQUESTED", Set.of(
+                    "RUNNING", "RETRYING", "STOP_REQUESTED",
+                    "COMPLETED", "STOPPED", "FAILED", "REJECTED"
+            ),
+            "RUNNING", Set.of(
+                    "RETRYING", "STOP_REQUESTED", "COMPLETED",
+                    "STOPPED", "FAILED", "REJECTED"
+            ),
+            "RETRYING", Set.of(
+                    "RUNNING", "STOP_REQUESTED", "COMPLETED",
+                    "STOPPED", "FAILED", "REJECTED"
+            ),
+            "STOP_REQUESTED", Set.of("STOPPED", "FAILED")
     );
 
     private final AnalyticsJobRepository jobRepository;
@@ -122,7 +145,7 @@ public class AnalyticsControlService {
                 .updatedAt(now)
                 .build();
         // The worker may answer immediately, so the status consumer must see the job first.
-        jobRepository.saveAndFlush(entity);
+        saveNewJob(entity, "Realtime analytics is already active for camera " + cameraId);
 
         try {
             send(cameraId, job);
@@ -199,7 +222,7 @@ public class AnalyticsControlService {
                 .build();
 
         // Commit the job before Kafka delivery to avoid a status-before-create race.
-        jobRepository.saveAndFlush(entity);
+        saveNewJob(entity, "Recording analytics is already active for recording " + recordingId);
         try {
             send(request.cameraId(), job);
         } catch (RuntimeException exception) {
@@ -213,9 +236,10 @@ public class AnalyticsControlService {
         return AnalyticsJobResponse.fromEntity(entity);
     }
 
+    @Transactional
     public AnalyticsJobResponse stopRealtime(UUID cameraId) {
         AnalyticsJobEntity entity = jobRepository
-                .findFirstByCameraIdAndJobTypeAndStatusInOrderByCreatedAtDesc(
+                .findActiveCameraJobForUpdate(
                         cameraId, "REALTIME", ACTIVE_STATUSES
                 )
                 .orElseThrow(() -> new ResponseStatusException(
@@ -234,7 +258,7 @@ public class AnalyticsControlService {
         jobRepository.save(entity);
 
         AnalyticsJob stop = new AnalyticsJob(
-                UUID.randomUUID(),
+                entity.getJobId(),
                 1,
                 "ANALYTICS_JOB",
                 "REALTIME",
@@ -256,9 +280,10 @@ public class AnalyticsControlService {
         return AnalyticsJobResponse.fromEntity(entity);
     }
 
+    @Transactional
     public AnalyticsJobResponse stopRecording(UUID recordingId) {
         AnalyticsJobEntity entity = jobRepository
-                .findFirstByRecordingIdAndJobTypeAndStatusInOrderByCreatedAtDesc(
+                .findActiveRecordingJobForUpdate(
                         recordingId, "RECORDING", ACTIVE_STATUSES
                 )
                 .orElseThrow(() -> new ResponseStatusException(
@@ -342,29 +367,84 @@ public class AnalyticsControlService {
                 .toList();
     }
 
+    @Transactional
     public void applyStatus(AnalyticsJobStatusEvent event) {
-        AnalyticsJobEntity entity = jobRepository.findById(event.jobId())
+        AnalyticsJobEntity entity = jobRepository.findByIdForUpdate(event.jobId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Status received before analytics job was committed: " + event.jobId()
                 ));
+        if (!KNOWN_STATUSES.contains(event.status())) {
+            log.warn(
+                    "Ignoring unknown analytics status jobId={} current={} incoming={}",
+                    event.jobId(), entity.getStatus(), event.status()
+            );
+            return;
+        }
+        if (!matchesJobIdentity(entity, event)) {
+            log.warn(
+                    "Ignoring analytics status with mismatched identity jobId={} workerId={}",
+                    event.jobId(), event.workerId()
+            );
+            return;
+        }
+        String currentStatus = entity.getStatus();
+        String incomingStatus = event.status();
+        if (FINISHED_STATUSES.contains(currentStatus)) {
+            log.debug(
+                    "Ignoring status for finished analytics job jobId={} current={} incoming={}",
+                    event.jobId(), currentStatus, incomingStatus
+            );
+            return;
+        }
+        if (!currentStatus.equals(incomingStatus)
+                && !ALLOWED_TRANSITIONS
+                .getOrDefault(currentStatus, Set.of())
+                .contains(incomingStatus)) {
+            log.warn(
+                    "Ignoring invalid analytics status transition jobId={} current={} incoming={}",
+                    event.jobId(), currentStatus, incomingStatus
+            );
+            return;
+        }
         OffsetDateTime occurredAt = event.occurredAt() == null
                 ? OffsetDateTime.now(ZoneOffset.UTC)
                 : event.occurredAt();
-        if ("STOP_REQUESTED".equals(entity.getStatus())
-                && ("RUNNING".equals(event.status()) || "RETRYING".equals(event.status()))) {
-            return;
+        entity.setStatus(incomingStatus);
+        if (event.workerId() != null) {
+            entity.setWorkerId(event.workerId());
         }
-        entity.setStatus(event.status());
-        entity.setWorkerId(event.workerId());
         entity.setUpdatedAt(occurredAt);
         entity.setDetails(event.details() == null ? new HashMap<>() : event.details());
-        if ("RUNNING".equals(event.status()) && entity.getStartedAt() == null) {
+        if ("RUNNING".equals(incomingStatus) && entity.getStartedAt() == null) {
             entity.setStartedAt(occurredAt);
         }
-        if (FINISHED_STATUSES.contains(event.status())) {
+        if (FINISHED_STATUSES.contains(incomingStatus)) {
             entity.setFinishedAt(occurredAt);
         }
         jobRepository.save(entity);
+    }
+
+    private boolean matchesJobIdentity(
+            AnalyticsJobEntity entity,
+            AnalyticsJobStatusEvent event
+    ) {
+        return entity.getCameraId().equals(event.cameraId())
+                && entity.getJobType().equals(event.jobType())
+                && (entity.getRecordingId() == null
+                ? event.recordingId() == null
+                : entity.getRecordingId().equals(event.recordingId()));
+    }
+
+    private void saveNewJob(AnalyticsJobEntity entity, String conflictMessage) {
+        try {
+            jobRepository.saveAndFlush(entity);
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    conflictMessage,
+                    exception
+            );
+        }
     }
 
     public void applyHeartbeat(AnalyticsWorkerHeartbeatEvent event) {
