@@ -2,6 +2,7 @@ package com.coltrack.recordingservice.service;
 
 import com.coltrack.recordingservice.config.RecordingPlaybackProperties;
 import com.coltrack.recordingservice.model.RecordingObjectEntity;
+import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.repository.RecordingObjectRepository;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 
@@ -23,8 +24,10 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -158,37 +161,10 @@ public class RecordingPlaybackService {
                     cacheDirectory
             );
 
-            /*
-             * Получаем список частей записи,
-             * загруженных в S3.
-             */
-            List<RecordingObjectEntity> objects =
-                    recordingObjectRepository
-                            .findByRecordingIdOrderBySequenceNumberAsc(
-                                    recordingId
-                            );
-
-            if (objects.isEmpty()) {
-
-                throw new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "Recording contains no uploaded "
-                                + "S3 objects"
-                );
-            }
-
-            /*
-             * Скачиваем части записи из S3:
-             *
-             * source-00000.mkv
-             * source-00001.mkv
-             * ...
-             */
-            List<Path> localFiles =
-                    downloadObjects(
-                            cacheDirectory,
-                            objects
-                    );
+            List<Path> localFiles = resolveSourceFiles(
+                    recordingId,
+                    cacheDirectory
+            );
 
             /*
              * Создаём concat.txt для FFmpeg.
@@ -257,9 +233,9 @@ public class RecordingPlaybackService {
 
             log.info(
                     "Playback cache prepared "
-                            + "recordingId={}, objects={}",
+                            + "recordingId={}, sourceFiles={}",
                     recordingId,
-                    objects.size()
+                    localFiles.size()
             );
 
             return buildPlaybackUrl(
@@ -387,6 +363,59 @@ public class RecordingPlaybackService {
         }
 
         return localFiles;
+    }
+
+    private List<Path> resolveSourceFiles(
+            UUID recordingId,
+            Path cacheDirectory
+    ) throws IOException {
+
+        RecordingEntity recording = recordingRepository.findById(recordingId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Recording not found"
+                ));
+
+        List<Path> localFiles = listLocalFiles(recording.getFilePath());
+        if (!localFiles.isEmpty()) {
+            return localFiles;
+        }
+
+        List<RecordingObjectEntity> objects = recordingObjectRepository
+                .findByRecordingIdOrderBySequenceNumberAsc(recordingId);
+
+        if (!objects.isEmpty()) {
+            return downloadObjects(cacheDirectory, objects);
+        }
+
+        throw new ResponseStatusException(
+                HttpStatus.NOT_FOUND,
+                "Recording contains no media files"
+        );
+    }
+
+    private List<Path> listLocalFiles(String filePath) throws IOException {
+
+        if (filePath == null || filePath.isBlank()) {
+            return List.of();
+        }
+
+        Path directory = Path.of(filePath);
+        if (!Files.isDirectory(directory)) {
+            return List.of();
+        }
+
+        try (Stream<Path> stream = Files.list(directory)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName()
+                            .toString()
+                            .toLowerCase()
+                            .endsWith(".mkv"))
+                    .sorted(Comparator.comparing(path ->
+                            path.getFileName().toString()))
+                    .toList();
+        }
     }
 
     private Path createConcatFile(
@@ -935,9 +964,18 @@ public class RecordingPlaybackService {
             UUID recordingId
     ) {
 
-        verifyRecordingExists(
-                recordingId
-        );
+        RecordingEntity recording = recordingRepository.findById(recordingId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Recording not found"
+                ));
+
+        if (recording.getFinishedAt() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Recording is still active"
+            );
+        }
 
         ReentrantLock lock =
                 locks.computeIfAbsent(
@@ -976,25 +1014,10 @@ public class RecordingPlaybackService {
                     cacheDirectory
             );
 
-            List<RecordingObjectEntity> objects =
-                    recordingObjectRepository
-                            .findByRecordingIdOrderBySequenceNumberAsc(
-                                    recordingId
-                            );
-
-            if (objects.isEmpty()) {
-
-                throw new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "Recording contains no uploaded S3 objects"
-                );
-            }
-
-            List<Path> localFiles =
-                    downloadObjects(
-                            cacheDirectory,
-                            objects
-                    );
+            List<Path> localFiles = resolveSourceFiles(
+                    recordingId,
+                    cacheDirectory
+            );
 
             Path concatFile =
                     createConcatFile(
@@ -1020,9 +1043,9 @@ public class RecordingPlaybackService {
             );
 
             log.info(
-                    "Inference source prepared recordingId={}, objects={}",
+                    "Combined source prepared recordingId={}, sourceFiles={}",
                     recordingId,
-                    objects.size()
+                    localFiles.size()
             );
 
             return source;

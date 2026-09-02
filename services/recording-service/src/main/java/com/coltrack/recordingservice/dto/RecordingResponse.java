@@ -2,6 +2,7 @@ package com.coltrack.recordingservice.dto;
 
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
+import com.coltrack.recordingservice.model.RecordingStorageType;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -20,14 +21,33 @@ public record RecordingResponse(
 
         Long sizeBytes,
 
+        Integer segmentsCount,
+
+        Integer width,
+
+        Integer height,
+
+        Integer fps,
+
+        String codec,
+
         RecordingStatus status,
 
-        String playbackUrl
+        String reason,
+
+        boolean protectedFromDeletion,
+
+        RecordingStorageType storageType,
+
+        String playbackUrl,
+
+        String downloadUrl
 
 ) {
 
     public static RecordingResponse from(
-            RecordingEntity entity
+            RecordingEntity entity,
+            RecordingStorageType storageType
     ) {
 
         return new RecordingResponse(
@@ -38,14 +58,30 @@ public record RecordingResponse(
                 entity.getFinishedAt(),
                 entity.getDurationSeconds(),
                 entity.getSizeBytes(),
+                entity.getSegmentsCount(),
+                entity.getWidth(),
+                entity.getHeight(),
+                entity.getFps(),
+                entity.getCodec(),
                 entity.getStatus(),
+                entity.getReason(),
+                entity.isProtectedFromDeletion(),
+                storageType,
 
                 "/recordings/" +
                         entity.getId() +
-                        "/index.m3u8"
+                        "/index.m3u8",
+
+                "/api/v1/recordings/" +
+                        entity.getId() +
+                        "/download"
 
         );
 
+    }
+
+    public static RecordingResponse from(RecordingEntity entity) {
+        return from(entity, RecordingStorageType.MISSING);
     }
 
 }

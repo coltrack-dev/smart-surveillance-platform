@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.FileStore;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -256,5 +257,58 @@ public class RecordingStorageService {
 
             return null;
         }
+    }
+
+    public boolean hasRecordingFiles(String directory) {
+
+        if (directory == null || directory.isBlank()) {
+            return false;
+        }
+
+        Path path = Path.of(directory);
+
+        if (!Files.isDirectory(path)) {
+            return false;
+        }
+
+        try (Stream<Path> stream = Files.list(path)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .anyMatch(file -> file.getFileName()
+                            .toString()
+                            .toLowerCase()
+                            .endsWith(".mkv"));
+        } catch (IOException exception) {
+            log.warn("Unable to inspect recording directory {}", path, exception);
+            return false;
+        }
+    }
+
+    public StorageCapacity getCapacity() {
+
+        try {
+            Files.createDirectories(storageRoot);
+            FileStore fileStore = Files.getFileStore(storageRoot);
+            long totalBytes = fileStore.getTotalSpace();
+            long usableBytes = fileStore.getUsableSpace();
+
+            return new StorageCapacity(
+                    totalBytes,
+                    usableBytes,
+                    Math.max(0, totalBytes - usableBytes)
+            );
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Unable to read recording storage capacity",
+                    exception
+            );
+        }
+    }
+
+    public record StorageCapacity(
+            long totalBytes,
+            long usableBytes,
+            long usedBytes
+    ) {
     }
 }

@@ -10,6 +10,12 @@ export type RecordingStatus =
     | "FAILED"
     | "STOPPED";
 
+export type RecordingStorageType =
+    | "LOCAL"
+    | "S3"
+    | "HYBRID"
+    | "MISSING";
+
 export interface ActiveRecording {
     id: string;
     cameraId: string;
@@ -35,7 +41,41 @@ export interface Recording {
 
     sizeBytes: number | null;
 
+    segmentsCount: number | null;
+
+    width: number | null;
+
+    height: number | null;
+
+    fps: number | null;
+
+    codec: string | null;
+
     status: RecordingStatus;
 
+    reason: string | null;
+
+    protectedFromDeletion: boolean;
+
+    storageType: RecordingStorageType;
+
     playbackUrl: string;
+
+    downloadUrl: string;
+}
+
+export interface RecordingPage {
+    content: Recording[];
+    page: number;
+    size: number;
+    totalElements: number;
+    totalPages: number;
+}
+
+export interface RecordingStorageStatus {
+    totalBytes: number;
+    usableBytes: number;
+    usedBytes: number;
+    catalogedRecordingBytes: number;
+    usedPercent: number;
 }

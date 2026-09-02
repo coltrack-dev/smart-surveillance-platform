@@ -7,7 +7,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "recording_sessions")
+@Table(
+        name = "recording_sessions",
+        indexes = @Index(
+                name = "idx_recording_sessions_camera_started_at",
+                columnList = "camera_id, started_at"
+        )
+)
 @Getter
 @Setter
 @Builder
@@ -76,4 +82,15 @@ public class RecordingEntity {
      */
     @Column(length = 2000)
     private String reason;
+
+    /**
+     * Protected recordings are never eligible for retention cleanup.
+     */
+    @Builder.Default
+    @Column(
+            name = "protected_from_deletion",
+            nullable = false,
+            columnDefinition = "boolean default false"
+    )
+    private boolean protectedFromDeletion = false;
 }

@@ -23,7 +23,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/recording-sources")
+@RequestMapping("/api")
 @RequiredArgsConstructor
 public class RecordingSourceController {
 
@@ -35,7 +35,10 @@ public class RecordingSourceController {
     private final RecordingPlaybackService
             recordingPlaybackService;
 
-    @GetMapping("/{recordingId}")
+    @GetMapping({
+            "/recording-sources/{recordingId}",
+            "/recordings/{recordingId}/download"
+    })
     public ResponseEntity<Resource> download(
             @PathVariable UUID recordingId
     ) throws MalformedURLException {

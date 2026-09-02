@@ -3,8 +3,68 @@ import http from "@/api/http";
 import type {
     ActiveRecording,
     Recording,
-    RecordingDate
+    RecordingDate,
+    RecordingPage,
+    RecordingStatus,
+    RecordingStorageStatus
 } from "@/types/Recording";
+
+export interface RecordingSearchParameters {
+    cameraId?: string;
+    from?: string;
+    to?: string;
+    statuses?: RecordingStatus[];
+    protected?: boolean;
+    page?: number;
+    size?: number;
+}
+
+export async function findRecordings(
+    parameters: RecordingSearchParameters
+): Promise<RecordingPage> {
+    const response = await http.get<RecordingPage>(
+        "/recordings",
+        { params: parameters }
+    );
+
+    return response.data;
+}
+
+export async function setRecordingProtection(
+    recordingId: string,
+    protectedFromDeletion: boolean
+): Promise<Recording> {
+    const response = await http.patch<Recording>(
+        `/recordings/${recordingId}/protection`,
+        { protected: protectedFromDeletion }
+    );
+
+    return response.data;
+}
+
+export async function getRecordingStorageStatus(): Promise<RecordingStorageStatus> {
+    const response = await http.get<RecordingStorageStatus>(
+        "/recordings/storage"
+    );
+
+    return response.data;
+}
+
+export function resolveRecordingDownloadUrl(recording: Recording): string {
+    if (recording.downloadUrl.startsWith("http")) {
+        return recording.downloadUrl;
+    }
+
+    const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+    const gatewayOrigin = configuredApiUrl?.startsWith("http")
+        ? new URL(configuredApiUrl).origin
+        : `${window.location.protocol}//${window.location.hostname}:8080`;
+    const path = recording.downloadUrl.startsWith("/")
+        ? recording.downloadUrl
+        : `/${recording.downloadUrl}`;
+
+    return `${gatewayOrigin}${path}`;
+}
 
 /**
  * Получить даты, за которые у камеры имеются записи.

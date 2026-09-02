@@ -18,4 +18,8 @@ public interface RecordingObjectRepository
             String s3Key
     );
 
+    boolean existsByRecordingId(
+            UUID recordingId
+    );
+
 }

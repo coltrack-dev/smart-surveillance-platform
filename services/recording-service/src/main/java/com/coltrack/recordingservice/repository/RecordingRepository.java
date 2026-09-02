@@ -4,6 +4,7 @@ import com.coltrack.recordingservice.dto.RecordingDateProjection;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -15,7 +16,8 @@ import java.util.UUID;
 
 @Repository
 public interface RecordingRepository
-        extends JpaRepository<RecordingEntity, UUID> {
+        extends JpaRepository<RecordingEntity, UUID>,
+        JpaSpecificationExecutor<RecordingEntity> {
 
     @Query(
             value = """
@@ -44,4 +46,7 @@ public interface RecordingRepository
     List<RecordingEntity> findByStatusIn(
             Collection<RecordingStatus> statuses
     );
+
+    @Query("select coalesce(sum(r.sizeBytes), 0) from RecordingEntity r")
+    long sumCatalogedSizeBytes();
 }

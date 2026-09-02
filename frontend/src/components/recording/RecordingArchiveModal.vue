@@ -9,17 +9,18 @@ import {
 import type {Camera} from "@/types/Сamera";
 import type {
   Recording,
-  RecordingDate, RecordingStatus
+  RecordingDate,
+  RecordingStatus,
+  RecordingStorageStatus
 } from "@/types/Recording";
 
 import {
-  prepareRecordingPlayback
-} from "@/api/recordingApi";
-
-
-import {
+  findRecordings,
   findRecordingDates,
-  findRecordingsByDate
+  getRecordingStorageStatus,
+  prepareRecordingPlayback,
+  resolveRecordingDownloadUrl,
+  setRecordingProtection
 } from "@/api/recordingApi";
 
 import CameraPlayer from "@/components/camera/CameraPlayer.vue";
@@ -51,6 +52,18 @@ const emit = defineEmits<{
 
 const dates = ref<RecordingDate[]>([]);
 const recordings = ref<Recording[]>([]);
+const recordingsPage = ref(0);
+const recordingsTotalPages = ref(0);
+const recordingsTotal = ref(0);
+const recordingsPageSize = 10;
+const storageStatus = ref<RecordingStorageStatus | null>(null);
+const protectionLoadingIds = ref<Set<string>>(new Set());
+type RecordingView = "cards" | "table";
+const RECORDING_VIEW_STORAGE_KEY = "recording-archive-view";
+const storedRecordingView = localStorage.getItem(RECORDING_VIEW_STORAGE_KEY);
+const recordingView = ref<RecordingView>(
+    storedRecordingView === "table" ? "table" : "cards"
+);
 
 const selectedDate = ref<string | null>(null);
 const selectedRecording = ref<Recording | null>(null);
@@ -206,11 +219,16 @@ async function loadDates(): Promise<void> {
 }
 
 async function selectDate(
-    date: string
+    date: string,
+    page = 0
 ): Promise<void> {
 
   selectedDate.value = date;
   selectedRecording.value = null;
+  preparedPlaybackUrl.value = null;
+  analyticsJob.value = null;
+  analyticsTimeline.value = [];
+  stopAnalyticsPolling();
   recordings.value = [];
 
   recordingsLoading.value = true;
@@ -218,17 +236,28 @@ async function selectDate(
 
   try {
 
-    recordings.value =
-        await findRecordingsByDate(
-            props.camera.id,
-            date
-        );
+    const from = new Date(`${date}T00:00:00.000Z`);
+    const to = new Date(from);
+    to.setUTCDate(to.getUTCDate() + 1);
+
+    const result = await findRecordings({
+      cameraId: props.camera.id,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      page,
+      size: recordingsPageSize
+    });
+
+    recordings.value = result.content;
+    recordingsPage.value = result.page;
+    recordingsTotalPages.value = result.totalPages;
+    recordingsTotal.value = result.totalElements;
 
     /*
      * Если за день одна запись,
      * сразу открываем её.
      */
-    if (recordings.value.length === 1) {
+    if (result.totalElements === 1) {
       const recording = recordings.value[0];
       if (recording) {
         await selectRecording(recording);
@@ -250,6 +279,64 @@ async function selectDate(
     recordingsLoading.value = false;
 
   }
+}
+
+async function changeRecordingsPage(page: number): Promise<void> {
+  if (
+      !selectedDate.value
+      || recordingsLoading.value
+      || page < 0
+      || page >= recordingsTotalPages.value
+  ) {
+    return;
+  }
+
+  await selectDate(selectedDate.value, page);
+}
+
+async function toggleRecordingProtection(recording: Recording): Promise<void> {
+  if (protectionLoadingIds.value.has(recording.id)) {
+    return;
+  }
+
+  protectionLoadingIds.value = new Set([
+    ...protectionLoadingIds.value,
+    recording.id
+  ]);
+  errorMessage.value = null;
+
+  try {
+    const updated = await setRecordingProtection(
+        recording.id,
+        !recording.protectedFromDeletion
+    );
+    recordings.value = recordings.value.map(item =>
+        item.id === updated.id ? updated : item
+    );
+    if (selectedRecording.value?.id === updated.id) {
+      selectedRecording.value = updated;
+    }
+  } catch (error) {
+    console.error("Unable to update recording protection", error);
+    errorMessage.value = "Unable to update recording protection.";
+  } finally {
+    const ids = new Set(protectionLoadingIds.value);
+    ids.delete(recording.id);
+    protectionLoadingIds.value = ids;
+  }
+}
+
+async function loadStorageStatus(): Promise<void> {
+  try {
+    storageStatus.value = await getRecordingStorageStatus();
+  } catch (error) {
+    console.error("Unable to load recording storage status", error);
+  }
+}
+
+function setRecordingView(view: RecordingView): void {
+  recordingView.value = view;
+  localStorage.setItem(RECORDING_VIEW_STORAGE_KEY, view);
 }
 
 function formatTime(
@@ -716,9 +803,10 @@ async function selectRecording(
   }
 }
 
-onMounted(
-    loadDates
-);
+onMounted(() => {
+  void loadDates();
+  void loadStorageStatus();
+});
 
 onUnmounted(stopAnalyticsPolling);
 </script>
@@ -759,6 +847,29 @@ onUnmounted(stopAnalyticsPolling);
         </button>
 
       </header>
+
+      <div
+          v-if="storageStatus"
+          class="storage-status"
+      >
+        <div class="storage-status-header">
+          <span>Recording storage</span>
+          <strong>{{ storageStatus.usedPercent.toFixed(1) }}% used</strong>
+        </div>
+        <div
+            class="storage-progress"
+            role="progressbar"
+            :aria-valuenow="storageStatus.usedPercent"
+            aria-valuemin="0"
+            aria-valuemax="100"
+        >
+          <div :style="{ width: `${Math.min(100, storageStatus.usedPercent)}%` }" />
+        </div>
+        <div class="storage-details">
+          <span>{{ formatSize(storageStatus.usableBytes) }} free of {{ formatSize(storageStatus.totalBytes) }}</span>
+          <span>{{ formatSize(storageStatus.catalogedRecordingBytes) }} in recording catalog</span>
+        </div>
+      </div>
 
       <div
           v-if="errorMessage"
@@ -839,18 +950,43 @@ onUnmounted(stopAnalyticsPolling);
 
           <template v-else>
 
-            <div class="recording-list">
+            <div class="recording-view-toolbar">
+              <span>View</span>
+              <div class="recording-view-toggle" role="group" aria-label="Recording view">
+                <button
+                    type="button"
+                    :class="{ active: recordingView === 'cards' }"
+                    :aria-pressed="recordingView === 'cards'"
+                    @click="setRecordingView('cards')"
+                >
+                  Cards
+                </button>
+                <button
+                    type="button"
+                    :class="{ active: recordingView === 'table' }"
+                    :aria-pressed="recordingView === 'table'"
+                    @click="setRecordingView('table')"
+                >
+                  Table
+                </button>
+              </div>
+            </div>
 
-              <button
+            <div class="recording-list" :class="recordingView">
+
+              <article
                   v-for="recording in recordings"
                   :key="recording.id"
-                  type="button"
                   class="recording-row"
                   :class="{
       selected:
-        selectedRecording?.id === recording.id
+        selectedRecording?.id === recording.id,
+      protected: recording.protectedFromDeletion
     }"
+                  role="button"
+                  tabindex="0"
                   @click="selectRecording(recording)"
+                  @keyup.enter="selectRecording(recording)"
               >
 
                 <div class="recording-time">
@@ -879,8 +1015,84 @@ onUnmounted(stopAnalyticsPolling);
                   {{ formatStatus(recording.status) }}
                 </div>
 
-              </button>
+                <div class="recording-actions">
+                  <button
+                      type="button"
+                      class="protection-button"
+                      :class="{ active: recording.protectedFromDeletion }"
+                      :disabled="protectionLoadingIds.has(recording.id)"
+                      :title="recording.protectedFromDeletion ? 'Remove deletion protection' : 'Protect from deletion'"
+                      @click.stop="toggleRecordingProtection(recording)"
+                  >
+                    {{ protectionLoadingIds.has(recording.id)
+                        ? "..."
+                        : recording.protectedFromDeletion
+                            ? "Protected"
+                            : "Protect" }}
+                  </button>
+                  <a
+                      v-if="recording.finishedAt && recording.storageType !== 'MISSING'"
+                      class="download-link"
+                      :href="resolveRecordingDownloadUrl(recording)"
+                      :download="`${recording.id}.mkv`"
+                      @click.stop
+                  >
+                    Download
+                  </a>
+                  <span
+                      v-else
+                      class="download-unavailable"
+                      title="Download is available after recording completes"
+                  >
+                    Unavailable
+                  </span>
+                </div>
 
+              </article>
+
+            </div>
+
+            <nav
+                v-if="recordingsTotalPages > 1"
+                class="recordings-pagination"
+                aria-label="Archive pages"
+            >
+              <button
+                  type="button"
+                  :disabled="recordingsLoading || recordingsPage === 0"
+                  @click="changeRecordingsPage(recordingsPage - 1)"
+              >
+                Previous
+              </button>
+              <span>
+                Page {{ recordingsPage + 1 }} of {{ recordingsTotalPages }}
+                · {{ recordingsTotal }} recordings
+              </span>
+              <button
+                  type="button"
+                  :disabled="recordingsLoading || recordingsPage + 1 >= recordingsTotalPages"
+                  @click="changeRecordingsPage(recordingsPage + 1)"
+              >
+                Next
+              </button>
+            </nav>
+
+            <div
+                v-if="selectedRecording"
+                class="recording-metadata"
+            >
+              <span><strong>Storage:</strong> {{ selectedRecording.storageType }}</span>
+              <span v-if="selectedRecording.codec"><strong>Codec:</strong> {{ selectedRecording.codec }}</span>
+              <span v-if="selectedRecording.width && selectedRecording.height">
+                <strong>Video:</strong> {{ selectedRecording.width }}×{{ selectedRecording.height }}
+                <template v-if="selectedRecording.fps"> · {{ selectedRecording.fps }} FPS</template>
+              </span>
+              <span v-if="selectedRecording.segmentsCount != null">
+                <strong>Segments:</strong> {{ selectedRecording.segmentsCount }}
+              </span>
+              <span v-if="selectedRecording.reason" class="recording-reason">
+                <strong>Reason:</strong> {{ selectedRecording.reason }}
+              </span>
             </div>
 
 
@@ -1248,6 +1460,42 @@ onUnmounted(stopAnalyticsPolling);
 
 .modal-header h2 {
   margin: 0;
+}
+
+.storage-status {
+  padding: 12px 24px;
+  border-bottom: 1px solid #e3e6eb;
+  background: #f8fafc;
+}
+
+.storage-status-header,
+.storage-details {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.storage-status-header {
+  margin-bottom: 7px;
+  font-size: 14px;
+}
+
+.storage-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #dfe5ec;
+}
+
+.storage-progress > div {
+  height: 100%;
+  background: #3978ff;
+}
+
+.storage-details {
+  margin-top: 6px;
+  color: #667085;
+  font-size: 12px;
 }
 
 .camera-name {
@@ -1682,12 +1930,210 @@ onUnmounted(stopAnalyticsPolling);
   padding: 20px;
 }
 
-.recording-list {
+.recording-view-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.recording-view-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #b8c0cc;
+  border-radius: 7px;
+}
+
+.recording-view-toggle button {
+  padding: 7px 12px;
+  border: 0;
+  border-right: 1px solid #b8c0cc;
+  background: #fff;
+  color: #4b5565;
+  font: inherit;
+  cursor: pointer;
+}
+
+.recording-view-toggle button:last-child {
+  border-right: 0;
+}
+
+.recording-view-toggle button.active {
+  background: #3978ff;
+  color: #fff;
+}
+
+.recording-list {
+  display: grid;
   gap: 8px;
 
   margin-bottom: 16px;
+}
+
+.recording-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) 100px 100px 100px minmax(170px, auto);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.recording-row:hover,
+.recording-row.selected {
+  border-color: #3978ff;
+  background: #f4f7ff;
+}
+
+.recording-row.protected {
+  box-shadow: inset 3px 0 #d59b00;
+}
+
+.recording-list.cards {
+  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+  gap: 12px;
+}
+
+.recording-list.cards .recording-row {
+  grid-template-columns: 1fr 1fr;
+  align-content: start;
+  min-height: 180px;
+  padding: 16px;
+  border-radius: 11px;
+  box-shadow: 0 2px 8px rgba(20, 34, 58, 0.08);
+}
+
+.recording-list.cards .recording-time,
+.recording-list.cards .recording-actions {
+  grid-column: 1 / -1;
+}
+
+.recording-list.cards .recording-time {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e8ed;
+}
+
+.recording-list.cards .recording-time strong {
+  font-size: 20px;
+}
+
+.recording-list.cards .recording-status {
+  align-self: end;
+  justify-self: end;
+}
+
+.recording-list.cards .recording-actions {
+  align-self: end;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.recording-list.cards .recording-row.protected {
+  border-color: #d9a514;
+  background: #fff4c7;
+  box-shadow: inset 4px 0 #d59b00, 0 2px 9px rgba(145, 101, 0, 0.16);
+}
+
+.recording-list.cards .recording-row.protected .recording-time {
+  border-bottom-color: #e5c45f;
+}
+
+.recording-list.cards .recording-row.selected {
+  outline: 2px solid #3978ff;
+  outline-offset: 1px;
+}
+
+.recording-time,
+.recording-duration,
+.recording-size {
+  display: grid;
+  gap: 2px;
+}
+
+.field-label {
+  color: #7a8491;
+  font-size: 11px;
+}
+
+.recording-status {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recording-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.protection-button,
+.download-link,
+.recordings-pagination button {
+  padding: 7px 9px;
+  border: 1px solid #b8c0cc;
+  border-radius: 6px;
+  background: #fff;
+  color: #243047;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.protection-button.active {
+  border-color: #d59b00;
+  background: #fff8dc;
+  color: #755400;
+}
+
+.download-unavailable {
+  align-self: center;
+  color: #8a94a3;
+  font-size: 12px;
+}
+
+.protection-button:disabled,
+.recordings-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recordings-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: -4px 0 16px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.recording-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: #f5f7fa;
+  color: #4b5565;
+  font-size: 13px;
+}
+
+.recording-reason {
+  flex-basis: 100%;
+  color: #9b2c2c;
 }
 
 .recording-button {
@@ -1775,6 +2221,25 @@ onUnmounted(stopAnalyticsPolling);
   .dates-panel {
     border-right: 0;
     border-bottom: 1px solid #ddd;
+  }
+
+  .recording-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .recording-time,
+  .recording-actions {
+    grid-column: 1 / -1;
+  }
+
+  .recording-actions {
+    justify-content: flex-start;
+  }
+
+  .storage-details,
+  .recordings-pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .result-card {
