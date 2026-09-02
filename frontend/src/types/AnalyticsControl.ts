@@ -45,7 +45,7 @@ export interface RecordingAnalyticsStartRequest {
 }
 
 export interface RealtimeAnalyticsStartRequest {
-    sourceUrl: string;
+    sourceUrl?: string;
     transport: "tcp" | "udp";
     model?: string;
     classes: number[];

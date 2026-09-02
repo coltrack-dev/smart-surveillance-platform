@@ -28,6 +28,11 @@ stream:
   hls:
     #path: /opt/surveillance/hls
     path: ./data/hls
+  rtsp:
+    probe-timeout: ${STREAM_RTSP_PROBE_TIMEOUT:10s}
+    playlist-timeout: ${STREAM_RTSP_PLAYLIST_TIMEOUT:30s}
+    stale-playlist-timeout: ${STREAM_RTSP_STALE_PLAYLIST_TIMEOUT:15s}
+    reconnect-max-delay: ${STREAM_RTSP_RECONNECT_MAX_DELAY:30s}
 
 management:
   endpoints:

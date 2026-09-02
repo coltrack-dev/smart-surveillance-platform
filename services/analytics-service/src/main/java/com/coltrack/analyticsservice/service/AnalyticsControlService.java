@@ -1,5 +1,7 @@
 package com.coltrack.analyticsservice.service;
 
+import com.coltrack.analyticsservice.client.CameraConnectionClient;
+
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
 import com.coltrack.analyticsservice.dto.AnalyticsWorkerResponse;
 import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
@@ -72,6 +74,7 @@ public class AnalyticsControlService {
     private final AnalyticsJobRepository jobRepository;
     private final AnalyticsWorkerRepository workerRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final CameraConnectionClient cameraConnectionClient;
 
     @Value("${analytics.kafka.jobs-topic:analytics.jobs}")
     private String jobsTopic;
@@ -83,11 +86,15 @@ public class AnalyticsControlService {
             UUID cameraId,
             RealtimeAnalyticsStartRequest request
     ) {
-        if (request == null || request.sourceUrl() == null || request.sourceUrl().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sourceUrl is required");
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request is required");
         }
-        if (!request.sourceUrl().startsWith("rtsp://")
-                && !request.sourceUrl().startsWith("rtsps://")) {
+        String sourceUrl = request.sourceUrl();
+        if (sourceUrl == null || sourceUrl.isBlank()) {
+            sourceUrl = cameraConnectionClient.connection(cameraId).rtspUrl();
+        }
+        if (!sourceUrl.startsWith("rtsp://")
+                && !sourceUrl.startsWith("rtsps://")) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "sourceUrl must use rtsp:// or rtsps://"
@@ -127,7 +134,7 @@ public class AnalyticsControlService {
                 "START",
                 cameraId,
                 null,
-                new AnalyticsSource("RTSP", request.sourceUrl(), transport),
+                new AnalyticsSource("RTSP", sourceUrl, transport),
                 profile,
                 now
         );
@@ -137,7 +144,7 @@ public class AnalyticsControlService {
                 .cameraId(cameraId)
                 .jobType("REALTIME")
                 .status("REQUESTED")
-                .sourceUrl(request.sourceUrl())
+                .sourceUrl(sourceUrl)
                 .sourceTransport(transport)
                 .profile(profileAsMap(profile))
                 .details(new HashMap<>())

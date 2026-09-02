@@ -37,7 +37,7 @@ public record AnalyticsJobResponse(
                 entity.getJobType(),
                 entity.getStatus(),
                 entity.getWorkerId(),
-                entity.getSourceUrl(),
+                redactCredentials(entity.getSourceUrl()),
                 entity.getSourceTransport(),
                 entity.getProfile(),
                 entity.getDetails(),
@@ -46,5 +46,14 @@ public record AnalyticsJobResponse(
                 entity.getStartedAt(),
                 entity.getFinishedAt()
         );
+    }
+
+    private static String redactCredentials(String sourceUrl) {
+        if (sourceUrl == null) {
+            return null;
+        }
+        return sourceUrl
+                .replaceAll("(?i)(rtsp[s]?://[^:/\\s]+:)[^@\\s]+@", "$1***@")
+                .replaceAll("(?i)(_password=)[^_/?&\\s]+", "$1***");
     }
 }

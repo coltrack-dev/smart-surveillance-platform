@@ -15,12 +15,45 @@ const video = ref<HTMLVideoElement>();
 const loading = ref(false);
 const error = ref(false);
 const playing = ref(false);
+const autoplayBlocked = ref(false);
 
 // Экземпляр hls.js
 let hls: Hls | null = null;
 let networkRetryTimer: number | null = null;
 let networkRetryCount = 0;
 const MAX_NETWORK_RETRIES = 10;
+let mediaRetryCount = 0;
+const MAX_MEDIA_RETRIES = 3;
+let firstFrameTimer: number | null = null;
+let loadGeneration = 0;
+
+function clearTimers() {
+  if (networkRetryTimer !== null) {
+    window.clearTimeout(networkRetryTimer);
+    networkRetryTimer = null;
+  }
+  if (firstFrameTimer !== null) {
+    window.clearTimeout(firstFrameTimer);
+    firstFrameTimer = null;
+  }
+}
+
+function markPlaying() {
+  clearTimers();
+  loading.value = false;
+  error.value = false;
+  autoplayBlocked.value = false;
+  playing.value = true;
+}
+
+function armFirstFrameTimeout(generation: number) {
+  if (firstFrameTimer !== null) window.clearTimeout(firstFrameTimer);
+  firstFrameTimer = window.setTimeout(() => {
+    if (generation !== loadGeneration || playing.value || props.connecting) return;
+    loading.value = false;
+    error.value = true;
+  }, 15000);
+}
 
 /**
  * Загрузка HLS потока.
@@ -34,7 +67,22 @@ async function loadPlayer() {
   loading.value = true;
   error.value = false;
   playing.value = false;
+  autoplayBlocked.value = false;
   networkRetryCount = 0;
+  mediaRetryCount = 0;
+  clearTimers();
+  const generation = ++loadGeneration;
+  armFirstFrameTimeout(generation);
+
+  const onVideoStarted = () => {
+    if (generation === loadGeneration) markPlaying();
+  };
+  video.value.onplaying = onVideoStarted;
+  video.value.oncanplay = onVideoStarted;
+  video.value.onloadeddata = onVideoStarted;
+  video.value.onwaiting = () => {
+    if (generation === loadGeneration && !props.connecting) loading.value = true;
+  };
 
   // Уничтожаем предыдущий поток
   if (hls) {
@@ -66,6 +114,11 @@ async function loadPlayer() {
           e
       );
 
+      if (generation === loadGeneration) {
+        loading.value = false;
+        autoplayBlocked.value = true;
+      }
+
     }
 
     return;
@@ -89,7 +142,11 @@ async function loadPlayer() {
 
   hls = new Hls({
     enableWorker: true,
-    lowLatencyMode: true
+    lowLatencyMode: true,
+    manifestLoadingMaxRetry: 6,
+    manifestLoadingRetryDelay: 1000,
+    levelLoadingMaxRetry: 6,
+    fragLoadingMaxRetry: 6
   });
 
   /*
@@ -125,16 +182,17 @@ async function loadPlayer() {
 
           await video.value?.play();
 
-          loading.value = false;
-          error.value = false;
-          playing.value = true;
-
         } catch (e) {
 
           console.warn(
               "Autoplay blocked",
               e
           );
+
+          if (generation === loadGeneration) {
+            loading.value = false;
+            autoplayBlocked.value = true;
+          }
 
         }
 
@@ -153,7 +211,7 @@ async function loadPlayer() {
             data
         );
 
-        if (!data.fatal) return;
+        if (!data.fatal || generation !== loadGeneration) return;
 
         if (
             data.type === Hls.ErrorTypes.NETWORK_ERROR &&
@@ -166,12 +224,17 @@ async function loadPlayer() {
             window.clearTimeout(networkRetryTimer);
           }
           networkRetryTimer = window.setTimeout(() => {
+            if (generation !== loadGeneration) return;
+            hls?.loadSource(props.url!);
             hls?.startLoad();
+            armFirstFrameTimeout(generation);
           }, 2000);
           return;
         }
 
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR
+            && mediaRetryCount < MAX_MEDIA_RETRIES) {
+          mediaRetryCount += 1;
           hls?.recoverMediaError();
           return;
         }
@@ -185,35 +248,6 @@ async function loadPlayer() {
   /*
    * Видео действительно начало воспроизводиться.
    */
-  function onVideoStarted() {
-
-    console.log(
-        "VIDEO STARTED"
-    );
-
-    loading.value = false;
-    error.value = false;
-    playing.value = true;
-
-  }
-
-
-  video.value.addEventListener(
-      "playing",
-      onVideoStarted,
-      {
-        once: true
-      }
-  );
-
-  video.value.addEventListener(
-      "canplay",
-      onVideoStarted,
-      {
-        once: true
-      }
-  );
-
 //  video.value.addEventListener(
 //      "timeupdate",
 //      () => {
@@ -235,14 +269,14 @@ async function loadPlayer() {
  */
 function stopPlayer() {
 
+  loadGeneration += 1;
+
   loading.value = false;
   error.value = false;
   playing.value = false;
+  autoplayBlocked.value = false;
 
-  if (networkRetryTimer !== null) {
-    window.clearTimeout(networkRetryTimer);
-    networkRetryTimer = null;
-  }
+  clearTimers();
 
   if (hls) {
 
@@ -252,6 +286,11 @@ function stopPlayer() {
   }
 
   if (video.value) {
+
+    video.value.onplaying = null;
+    video.value.oncanplay = null;
+    video.value.onloadeddata = null;
+    video.value.onwaiting = null;
 
     video.value.pause();
     video.value.removeAttribute(
@@ -282,6 +321,27 @@ watch(
 
     }
 );
+
+/* A backend reconnect normally keeps the same HLS URL. Reload explicitly
+ * when RECONNECTING/STARTING changes back to RUNNING. */
+watch(
+    () => props.connecting,
+    (connecting, wasConnecting) => {
+      if (!connecting && wasConnecting && props.url) void loadPlayer();
+    }
+);
+
+function retryPlayer() {
+  void loadPlayer();
+}
+
+async function resumePlayback() {
+  try {
+    await video.value?.play();
+  } catch (playError) {
+    console.warn("Unable to resume video", playError);
+  }
+}
 
 /*
  * Первичная загрузка.
@@ -323,7 +383,7 @@ defineExpose({ seekTo });
         :class="{ proportional: props.proportional }"
     />
 
-    <div v-if="loading" class="overlay">
+    <div v-if="loading && !connecting" class="overlay">
       <div class="spinner"></div>
       <div class="message">
         Connecting video stream...
@@ -342,7 +402,7 @@ defineExpose({ seekTo });
     </div>
 
     <div
-        v-if="!connecting && !loading && !playing && !error"
+        v-if="!connecting && !loading && !playing && !error && !autoplayBlocked"
         class="overlay"
     >
       <div class="message">
@@ -350,14 +410,24 @@ defineExpose({ seekTo });
       </div>
     </div>
 
+    <div v-if="autoplayBlocked && !playing" class="overlay">
+      <button type="button" class="retry-button" @click="resumePlayback">
+        Play video
+      </button>
+    </div>
+
     <div
-        v-if="error"
+        v-if="error && !connecting"
         class="overlay error"
     >
 
       <div class="message">
         Stream unavailable
       </div>
+
+      <button type="button" class="retry-button" @click="retryPlayer">
+        Retry
+      </button>
 
     </div>
 
@@ -438,6 +508,15 @@ defineExpose({ seekTo });
 
   animation: spin 1s linear infinite;
 
+}
+
+.retry-button {
+  padding: 8px 14px;
+  border: 1px solid #7aa7ff;
+  border-radius: 6px;
+  background: #1d4ed8;
+  color: white;
+  cursor: pointer;
 }
 
 @keyframes spin {

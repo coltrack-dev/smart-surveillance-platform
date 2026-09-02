@@ -45,6 +45,9 @@ spring:
 server:
   port: 8097
 
+camera-service:
+  url: ${CAMERA_SERVICE_URL:http://localhost:8091}
+
 analytics:
   kafka:
     topic: ${ANALYTICS_KAFKA_TOPIC:analytics.events}

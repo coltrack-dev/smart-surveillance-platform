@@ -35,7 +35,8 @@ const streamRunning = computed(() =>
     ["RUNNING", "RECONNECTING"].includes(streamInfo.value?.status ?? "")
 );
 const streamConnecting = computed(() =>
-    streamStore.isStarting(props.camera.id) || streamInfo.value?.status === "STARTING"
+    streamStore.isStarting(props.camera.id)
+    || ["STARTING", "RECONNECTING"].includes(streamInfo.value?.status ?? "")
 );
 const recordingActive = computed(() =>
     ["STARTING", "RECORDING", "STOPPING"].includes(recording.value?.status ?? "")

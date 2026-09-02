@@ -15,9 +15,10 @@ const props = defineProps<{
   streamActive: boolean;
 }>();
 
-const sourceUrl = ref(
-    `rtsp://${window.location.hostname}:8554/${props.cameraId}`
-);
+// Empty means: resolve the private camera URL server-side. Browser, Docker
+// and WSL have different meanings for "localhost", and credentials must not
+// be copied into the browser merely to start analytics.
+const sourceUrl = ref("");
 const job = ref<AnalyticsJob | null>(null);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
@@ -61,9 +62,6 @@ const stageDescription = computed(() => {
 
 async function refresh(): Promise<void> {
   job.value = await findLatestRealtimeAnalyticsJob(props.cameraId);
-  if (job.value?.sourceUrl) {
-    sourceUrl.value = job.value.sourceUrl;
-  }
 }
 
 async function start(selected: AnalyticsProfileSettings, saveAsDefault: boolean): Promise<void> {
@@ -75,7 +73,7 @@ async function start(selected: AnalyticsProfileSettings, saveAsDefault: boolean)
   try {
     const vertical = lineOrientation.value === "VERTICAL";
     job.value = await startRealtimeAnalytics(props.cameraId, {
-      sourceUrl: sourceUrl.value,
+      sourceUrl: sourceUrl.value || undefined,
       transport: "tcp",
       model: selected.model,
       classes: selected.classes,
@@ -158,6 +156,9 @@ onBeforeUnmount(() => {
         placeholder="rtsp://host:8554/path"
         :disabled="active || loading"
     >
+    <small class="analytics-stage">
+      Leave empty to use the RTSP address configured for this camera.
+    </small>
 
     <div class="line-settings">
       <label>
@@ -184,7 +185,7 @@ onBeforeUnmount(() => {
       <button
           type="button"
           class="analytics-start"
-          :disabled="active || loading || !sourceUrl || !streamActive"
+          :disabled="active || loading || !streamActive"
           @click="profileDialogOpen = true"
       >
         Start analytics

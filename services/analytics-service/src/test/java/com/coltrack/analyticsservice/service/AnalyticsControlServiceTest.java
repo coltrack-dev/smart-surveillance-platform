@@ -1,6 +1,8 @@
 package com.coltrack.analyticsservice.service;
 
+import com.coltrack.analyticsservice.client.CameraConnectionClient;
 import com.coltrack.analyticsservice.dto.AnalyticsJobResponse;
+import com.coltrack.analyticsservice.dto.RealtimeAnalyticsStartRequest;
 import com.coltrack.analyticsservice.dto.RecordingAnalyticsStartRequest;
 import com.coltrack.analyticsservice.entity.AnalyticsJobEntity;
 import com.coltrack.analyticsservice.repository.AnalyticsJobRepository;
@@ -48,12 +50,46 @@ class AnalyticsControlServiceTest {
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
 
+    @Mock
+    private CameraConnectionClient cameraConnectionClient;
+
     private AnalyticsControlService service;
 
     @BeforeEach
     void setUp() {
-        service = new AnalyticsControlService(jobRepository, workerRepository, kafkaTemplate);
+        service = new AnalyticsControlService(
+                jobRepository, workerRepository, kafkaTemplate, cameraConnectionClient
+        );
         ReflectionTestUtils.setField(service, "jobsTopic", "analytics.jobs");
+    }
+
+    @Test
+    void shouldResolveRealtimeSourceFromCameraServiceWhenOverrideIsEmpty() {
+        UUID cameraId = UUID.randomUUID();
+        String resolvedUrl = "rtsp://nvr.lan:554/channel-8";
+        when(cameraConnectionClient.connection(cameraId)).thenReturn(
+                new CameraConnectionClient.CameraConnection(cameraId, resolvedUrl, "AUTO")
+        );
+        when(jobRepository
+                .findFirstByCameraIdAndJobTypeAndStatusInOrderByCreatedAtDesc(
+                        any(), anyString(), any()
+                ))
+                .thenReturn(Optional.empty());
+        when(kafkaTemplate.send(anyString(), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        RealtimeAnalyticsStartRequest request = new RealtimeAnalyticsStartRequest(
+                null, "tcp", null, List.of(0), new BigDecimal("0.5"),
+                "auto", new BigDecimal("0.5"), List.of(), BigDecimal.TEN, Map.of()
+        );
+
+        AnalyticsJobResponse response = service.startRealtime(cameraId, request);
+
+        assertThat(response.sourceUrl()).isEqualTo(resolvedUrl);
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(kafkaTemplate).send(anyString(), anyString(), eventCaptor.capture());
+        AnalyticsJob event = (AnalyticsJob) eventCaptor.getValue();
+        assertThat(event.source().url()).isEqualTo(resolvedUrl);
     }
 
     @Test

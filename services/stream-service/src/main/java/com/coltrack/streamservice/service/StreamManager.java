@@ -4,6 +4,7 @@ import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.client.dto.CameraConnectionDto;
+import com.coltrack.streamservice.config.RtspStreamProperties;
 import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
@@ -45,6 +46,7 @@ public class StreamManager implements StreamListener {
     private final HlsService hlsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final StreamMetricsService metricsService;
+    private final RtspStreamProperties rtspProperties;
     //private final StreamEventPublisher streamWebSocketPublisher;
     private final StreamWebSocketPublisher streamWebSocketPublisher;
 
@@ -103,7 +105,8 @@ public class StreamManager implements StreamListener {
                 CameraStreamWorker worker = new CameraStreamWorker(
                         session,
                         hlsService,
-                        this
+                        this,
+                        rtspProperties
                 );
                 log.info("Starting CameraStreamWorker camera={}", cameraId);
                 worker.run();

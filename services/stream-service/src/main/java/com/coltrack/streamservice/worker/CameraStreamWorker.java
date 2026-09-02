@@ -1,5 +1,6 @@
 package com.coltrack.streamservice.worker;
 
+import com.coltrack.streamservice.config.RtspStreamProperties;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.model.VideoProcessingMode;
@@ -33,29 +34,24 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class CameraStreamWorker implements Runnable {
 
-    private static final int PLAYLIST_TIMEOUT_SECONDS = 30;
-
-    /** Maximum acceptable age of the playlist while FFmpeg is alive. */
-    private static final int STALE_PLAYLIST_SECONDS = 15;
-
-    /** Upper bound for exponential reconnect backoff. */
-    private static final int MAX_RECONNECT_DELAY_SECONDS = 30;
-
     /** Number of recent FFmpeg lines attached to a failure description. */
     private static final int FFMPEG_LOG_LINES = 30;
 
     private final StreamSession session;
     private final HlsService hlsService;
     private final StreamListener listener;
+    private final RtspStreamProperties properties;
 
     public CameraStreamWorker(
             StreamSession session,
             HlsService hlsService,
-            StreamListener listener
+            StreamListener listener,
+            RtspStreamProperties properties
     ) {
         this.session = session;
         this.hlsService = hlsService;
         this.listener = listener;
+        this.properties = properties;
     }
 
     @Override
@@ -206,9 +202,9 @@ public class CameraStreamWorker implements Runnable {
                          */
                         Instant playlistModified = Files.getLastModifiedTime(playlist).toInstant();
                         if (Duration.between(playlistModified, Instant.now()).getSeconds()
-                                > STALE_PLAYLIST_SECONDS) {
+                                > properties.getStalePlaylistTimeout().toSeconds()) {
                             throw new IOException("HLS playlist has not changed for more than "
-                                    + STALE_PLAYLIST_SECONDS + " seconds");
+                                    + properties.getStalePlaylistTimeout().toSeconds() + " seconds");
                         }
                         session.setLastFrameTime(playlistModified);
 
@@ -357,7 +353,7 @@ public class CameraStreamWorker implements Runnable {
         );
 
         long started = System.currentTimeMillis();
-        long deadline = started + PLAYLIST_TIMEOUT_SECONDS * 1000L;
+        long deadline = started + properties.getPlaylistTimeout().toMillis();
 
         while (System.currentTimeMillis() < deadline) {
 
@@ -386,7 +382,7 @@ public class CameraStreamWorker implements Runnable {
         throw new IOException(
                 String.format(
                         "Timed out waiting for HLS playlist (%d s). Path=%s, exists=%s, processAlive=%s",
-                        PLAYLIST_TIMEOUT_SECONDS,
+                        properties.getPlaylistTimeout().toSeconds(),
                         playlist.toAbsolutePath(),
                         Files.exists(playlist),
                         process.isAlive()
@@ -407,7 +403,9 @@ public class CameraStreamWorker implements Runnable {
              * outage. The delay sequence is 1, 2, 4, 8, 16, 30 seconds.
              */
             int exponent = Math.min(Math.max(session.getReconnectCount() - 1, 0), 5);
-            long delaySeconds = Math.min(1L << exponent, MAX_RECONNECT_DELAY_SECONDS);
+            long delaySeconds = Math.min(
+                    1L << exponent, properties.getReconnectMaxDelay().toSeconds()
+            );
             log.info("Reconnect backoff camera={} delaySeconds={}",
                     session.getCameraId(), delaySeconds);
             Thread.sleep(delaySeconds * 1000L);
@@ -503,7 +501,9 @@ public class CameraStreamWorker implements Runnable {
                 session.getRtspUrl()
         ).redirectErrorStream(true).start();
 
-        boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(
+                properties.getProbeTimeout().toMillis(), TimeUnit.MILLISECONDS
+        );
         if (!finished) {
             process.destroyForcibly();
             throw new IOException("Timed out while probing RTSP video codec");
