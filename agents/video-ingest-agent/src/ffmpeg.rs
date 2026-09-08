@@ -223,7 +223,10 @@ mod tests {
     fn builds_hls_arguments_without_shell() {
         let args = build_args(&request(), Path::new("/data")).unwrap();
         assert!(args.contains(&"copy".to_string()));
-        assert!(args.last().unwrap().ends_with("/hls/00000000-0000-0000-0000-000000000000/index.m3u8"));
+        assert!(args
+            .last()
+            .unwrap()
+            .ends_with("/hls/00000000-0000-0000-0000-000000000000/index.m3u8"));
     }
 
     #[test]
