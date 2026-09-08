@@ -1,4 +1,35 @@
+# Rust build artifacts
 /target/
+**/*.rs.bk
+*.pdb
+*.profraw
+
+# Runtime data
 /data/
+/hls/
+/recordings/
+*.pid
 *.log
 
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+/secrets/
+*.pem
+*.key
+
+# Test and coverage output
+/coverage/
+*.lcov
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Operating system
+.DS_Store
+Thumbs.db
