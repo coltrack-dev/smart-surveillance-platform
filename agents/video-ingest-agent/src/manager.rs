@@ -1,3 +1,9 @@
+//! Жизненный цикл видеопайплайнов и дочерних FFmpeg-процессов.
+//!
+//! Центральный модуль агента. `PipelineManager` хранит реестр камер, а для
+//! каждой камеры отдельная Tokio task выполняет `supervise`: запускает FFmpeg,
+//! ждёт его завершения и при необходимости делает reconnect.
+
 use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -19,6 +25,7 @@ use crate::{
     model::{Output, PipelineState, PipelineStatus, StartPipelineRequest},
 };
 
+/// Ошибки, которые HTTP-слой может однозначно преобразовать в status code.
 #[derive(Debug, thiserror::Error)]
 pub enum ManagerError {
     #[error("pipeline for camera {0} already exists")]
@@ -29,17 +36,29 @@ pub enum ManagerError {
     Invalid(String),
 }
 
+/// Все управляющие объекты одного пайплайна.
+///
+/// Структура приватная: внешний код получает только безопасный `PipelineStatus`.
 struct PipelineControl {
+    /// RwLock допускает много одновременных читателей статуса или одного writer.
+    /// Arc позволяет manager и supervisor владеть ссылками на один статус.
     status: Arc<RwLock<PipelineStatus>>,
+    /// watch-канал хранит последнее bool-значение. `true` — команда остановки.
     stop_tx: watch::Sender<bool>,
+    /// JoinHandle представляет запущенную async-задачу supervisor.
+    /// Option нужен, чтобы извлечь handle ровно один раз методом `take()`.
     task: Mutex<Option<JoinHandle<()>>>,
+    /// Для RTSP-output равно None; для HLS указывает строго на каталог камеры.
     cleanup_dir: Option<std::path::PathBuf>,
 }
 
+/// Потокобезопасный реестр всех активных пайплайнов данного агента.
 #[derive(Clone)]
 pub struct PipelineManager {
     config: Config,
     metrics: Metrics,
+    // Аналог ConcurrentHashMap<UUID, PipelineControl> из Java, но доступ явно
+    // разделён на read().await и write().await.
     pipelines: Arc<RwLock<HashMap<Uuid, Arc<PipelineControl>>>>,
 }
 
@@ -56,23 +75,32 @@ impl PipelineManager {
         &self,
         request: StartPipelineRequest,
     ) -> Result<PipelineStatus, ManagerError> {
+        // Проверяем схему URL до захвата ресурсов и запуска фоновой задачи.
         validate_request(&request).map_err(|e| ManagerError::Invalid(e.to_string()))?;
 
+        // `mut` требуется, потому что ниже вызывается HashMap::insert.
+        // Write guard автоматически освободит lock при выходе из scope/drop.
         let mut pipelines = self.pipelines.write().await;
         if let Some(existing) = pipelines.get(&request.camera_id) {
             let status = existing.status.read().await.clone();
+            // Повтор той же commandId идемпотентен: возвращаем существующий
+            // результат. Другая команда для занятой камеры получает Conflict.
             if status.command_id == request.command_id {
                 return Ok(status);
             }
             return Err(ManagerError::AlreadyExists(request.camera_id));
         }
 
+        // `if let` удобен, когда интересует только один вариант enum.
+        // `&request.output` — заимствование: request остаётся целым для supervisor.
         let cleanup_dir = if let Output::Hls { .. } = &request.output {
             let directory = self
                 .config
                 .data_dir
                 .join("hls")
                 .join(request.camera_id.to_string());
+            // Удаляем старый playlist/segments, иначе новый поток мог бы
+            // продолжить устаревший HLS playlist.
             if directory.exists() {
                 fs::remove_dir_all(&directory).await.map_err(|e| {
                     ManagerError::Invalid(format!("cannot clean HLS directory: {e}"))
@@ -86,11 +114,13 @@ impl PipelineManager {
             None
         };
 
+        // Новый статус одновременно читается API и изменяется supervisor task.
         let status = Arc::new(RwLock::new(PipelineStatus::starting(
             self.config.agent_id.clone(),
             &request,
         )));
         let initial_status = status.read().await.clone();
+        // Канал разделяется на Sender в control и Receiver в supervisor.
         let (stop_tx, stop_rx) = watch::channel(false);
         let control = Arc::new(PipelineControl {
             status: status.clone(),
@@ -100,10 +130,14 @@ impl PipelineManager {
         });
         pipelines.insert(request.camera_id, control.clone());
         self.metrics.active_pipelines.inc();
+        // Освобождаем write lock до tokio::spawn и дальнейших await. Явный drop
+        // сокращает критическую секцию и позволяет другим HTTP-запросам работать.
         drop(pipelines);
 
         let config = self.config.clone();
         let metrics = self.metrics.clone();
+        // `async move` передаёт владение config/request/status/stop_rx фоновой
+        // задаче. Без move ссылки могли бы пережить stack frame метода start.
         let task = tokio::spawn(async move {
             supervise(config, metrics, request, status, stop_rx).await;
         });
@@ -113,6 +147,10 @@ impl PipelineManager {
     }
 
     pub async fn stop(&self, camera_id: Uuid) -> Result<PipelineStatus, ManagerError> {
+        // Извлекаем control из map, чтобы получить владение Arc и продолжить
+        // остановку без удержания lock. Следствие текущего MVP: параллельный
+        // start той же камеры уже сможет пройти; в production-версии лучше
+        // оставлять запись со статусом STOPPING до завершения дочернего процесса.
         let control = self
             .pipelines
             .write()
@@ -126,8 +164,11 @@ impl PipelineManager {
             status.state = PipelineState::Stopping;
             status.touch();
         }
+        // Ошибка send означает, что supervisor уже завершился. Для stop это не
+        // критично, поэтому Result намеренно игнорируется через `let _ =`.
         let _ = control.stop_tx.send(true);
         if let Some(task) = control.task.lock().await.take() {
+            // Ожидаем supervisor: после этого дочерний FFmpeg уже завершён/reaped.
             let _ = task.await;
         }
         if let Some(directory) = &control.cleanup_dir {
@@ -157,6 +198,8 @@ impl PipelineManager {
     }
 
     pub async fn list(&self) -> Vec<PipelineStatus> {
+        // Сначала клонируем Arc-контролы и отпускаем lock всей HashMap. Затем
+        // читаем статусы по одному, не блокируя start/stop на длительное время.
         let controls: Vec<_> = self.pipelines.read().await.values().cloned().collect();
         let mut result = Vec::with_capacity(controls.len());
         for control in controls {
@@ -167,6 +210,8 @@ impl PipelineManager {
     }
 
     pub async fn shutdown(&self) {
+        // Нельзя итерировать HashMap под read lock и одновременно вызывать stop,
+        // которому нужен write lock. Поэтому сначала копируем UUID в Vec.
         let camera_ids: Vec<_> = self.pipelines.read().await.keys().copied().collect();
         for camera_id in camera_ids {
             let _ = self.stop(camera_id).await;
@@ -174,6 +219,7 @@ impl PipelineManager {
     }
 }
 
+/// Фоновый supervisor ровно одного camera pipeline.
 async fn supervise(
     config: Config,
     metrics: Metrics,
@@ -181,6 +227,8 @@ async fn supervise(
     status: Arc<RwLock<PipelineStatus>>,
     mut stop_rx: watch::Receiver<bool>,
 ) {
+    // Ошибка probe не запрещает запуск: некоторые NVR нестабильно отвечают
+    // ffprobe, хотя последующий длительный FFmpeg успешно подключается.
     match ffmpeg::probe(&config.ffprobe_bin, &request, config.probe_timeout).await {
         Ok(probe) => status.write().await.probe = Some(probe),
         Err(error) => {
@@ -200,8 +248,10 @@ async fn supervise(
         }
     };
 
+    // mutable backoff увеличивается после каждой неудачи: 1, 2, 4...30 секунд.
     let mut backoff = Duration::from_secs(1);
     loop {
+        // borrow читает текущее значение watch-канала без ожидания изменения.
         if *stop_rx.borrow() {
             stopped_status(&status).await;
             return;
@@ -213,11 +263,14 @@ async fn supervise(
             "starting FFmpeg pipeline"
         );
 
+        // Command запускает программу напрямую, без `/bin/sh -c`.
         let mut child = match Command::new(&config.ffmpeg_bin)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
+            // Защита от orphan process: если объект Child неожиданно потерян,
+            // Tokio посылает дочернему процессу kill.
             .kill_on_drop(true)
             .spawn()
         {
@@ -235,6 +288,7 @@ async fn supervise(
                     return;
                 }
                 backoff = next_backoff(backoff);
+                // `continue` немедленно начинает следующую итерацию loop.
                 continue;
             }
         };
@@ -250,6 +304,9 @@ async fn supervise(
             current.touch();
         }
 
+        // `take()` перемещает stderr из Option внутри Child, оставляя None.
+        // Отдельная task читает pipe, чтобы его буфер не заполнился и не
+        // заблокировал FFmpeg. URL с credentials очищается перед логированием.
         let stderr_task = child.stderr.take().map(|stderr| {
             let camera_id = request.camera_id;
             let source_url = request.rtsp_url.clone();
@@ -262,6 +319,7 @@ async fn supervise(
             })
         });
 
+        // Гонка двух событий: команда stop или самостоятельное завершение FFmpeg.
         let exit_result = tokio::select! {
             changed = stop_rx.changed() => {
                 if changed.is_err() || *stop_rx.borrow() {
@@ -276,6 +334,7 @@ async fn supervise(
             result = child.wait() => result.ok(),
         };
 
+        // После завершения процесса дополнительный reader больше не нужен.
         if let Some(task) = stderr_task {
             task.abort();
         }
@@ -306,12 +365,15 @@ async fn supervise(
 }
 
 async fn terminate_child(child: &mut tokio::process::Child) -> Result<()> {
+    // start_kill инициирует завершение, а wait обязательно забирает exit status.
+    // Без wait в Unix мог бы временно остаться zombie process.
     child.start_kill().context("cannot send kill signal")?;
     child.wait().await.context("cannot reap FFmpeg process")?;
     Ok(())
 }
 
 async fn wait_or_stop(stop_rx: &mut watch::Receiver<bool>, duration: Duration) -> bool {
+    // Во время backoff агент остаётся отзывчивым к DELETE /pipelines/{id}.
     tokio::select! {
         _ = sleep(duration) => false,
         changed = stop_rx.changed() => changed.is_err() || *stop_rx.borrow(),
@@ -319,10 +381,12 @@ async fn wait_or_stop(stop_rx: &mut watch::Receiver<bool>, duration: Duration) -
 }
 
 fn next_backoff(current: Duration) -> Duration {
+    // saturating_mul не допускает integer overflow, min ограничивает задержку.
     current.saturating_mul(2).min(Duration::from_secs(30))
 }
 
 async fn reconnect_status(status: &RwLock<PipelineStatus>, error: String) {
+    // Guard от write().await освобождается автоматически в конце функции (RAII).
     let mut current = status.write().await;
     current.state = PipelineState::Reconnecting;
     current.pid = None;
@@ -347,6 +411,8 @@ async fn stopped_status(status: &RwLock<PipelineStatus>) {
 }
 
 fn validate_request(request: &StartPipelineRequest) -> Result<()> {
+    // Parse проверяет синтаксис, а отдельная проверка scheme запрещает случайно
+    // передать http/file URL туда, где ожидается RTSP-источник.
     let input = url::Url::parse(&request.rtsp_url).context("invalid rtspUrl")?;
     if input.scheme() != "rtsp" && input.scheme() != "rtsps" {
         anyhow::bail!("rtspUrl must use rtsp or rtsps scheme");

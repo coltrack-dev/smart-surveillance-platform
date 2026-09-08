@@ -1,3 +1,8 @@
+//! HTTP-слой агента на Axum.
+//!
+//! Handler-функции здесь намеренно тонкие: извлекают данные запроса,
+//! проверяют Bearer token и передают выполнение `PipelineManager`.
+
 use std::sync::Arc;
 
 use axum::{
@@ -18,6 +23,10 @@ use crate::{
     model::StartPipelineRequest,
 };
 
+/// Состояние приложения, доступное каждому HTTP handler.
+///
+/// `Arc<AppState>` — потокобезопасный reference counter. Каждый параллельный
+/// запрос получает дешёвую ссылку на общий объект, а не отдельный manager.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
@@ -25,14 +34,20 @@ pub struct AppState {
     pub metrics: Metrics,
 }
 
+/// Собирает таблицу маршрутов приложения.
 pub fn router(state: AppState) -> Router {
     let hls_dir = state.config.data_dir.join("hls");
     Router::new()
+        // GET /health и /metrics специально доступны без токена: их опрашивают
+        // Docker/Kubernetes health checks и Prometheus во внутренней сети.
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/v1/pipelines", post(start).get(list))
         .route("/v1/pipelines/{camera_id}", get(get_one).delete(stop))
+        // ServeDir раздаёт созданные FFmpeg файлы m3u8 и ts как HTTP-статику.
         .nest_service("/hls", ServeDir::new(hls_dir))
+        // with_state перемещает AppState внутрь Router. После этого локальная
+        // переменная state больше недоступна: владение передано Router.
         .with_state(Arc::new(state))
 }
 
@@ -63,11 +78,14 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn start(
+    // State, HeaderMap и Json — extractors Axum. Framework сам извлекает их
+    // соответственно из состояния приложения, заголовков и тела запроса.
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(request): Json<StartPipelineRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     authorize(&state.config, &headers)?;
+    // `?` здесь использует реализацию From<ManagerError> for ApiError ниже.
     let status = state.manager.start(request).await?;
     Ok((StatusCode::ACCEPTED, Json(status)))
 }
@@ -99,9 +117,13 @@ async fn stop(
 }
 
 fn authorize(config: &Config, headers: &HeaderMap) -> Result<(), ApiError> {
+    // Конструкция `let Some(x) = option else { ... }` распаковывает Option.
+    // Если AGENT_API_TOKEN отсутствует, защита отключена.
     let Some(expected) = &config.api_token else {
         return Ok(());
     };
+    // Цепочка Option не вызывает исключений: неверный UTF-8, отсутствующий
+    // заголовок или неправильный prefix в итоге дадут None.
     let supplied = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -132,6 +154,7 @@ impl ApiError {
 }
 
 impl From<ManagerError> for ApiError {
+    /// Преобразует ошибки прикладного слоя в семантически подходящие HTTP-коды.
     fn from(error: ManagerError) -> Self {
         let status = match error {
             ManagerError::AlreadyExists(_) => StatusCode::CONFLICT,
@@ -148,6 +171,7 @@ struct ErrorBody {
 }
 
 impl IntoResponse for ApiError {
+    /// Trait IntoResponse сообщает Axum, как превратить ошибку в HTTP response.
     fn into_response(self) -> Response {
         (
             self.status,

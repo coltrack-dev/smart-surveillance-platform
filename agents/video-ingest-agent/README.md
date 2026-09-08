@@ -4,6 +4,9 @@ Rust media-node agent for the Surveillance Platform. It owns FFmpeg
 processes; Java services remain responsible for authorization, business state,
 camera metadata and orchestration.
 
+Подробное объяснение Rust-конструкций и прохождения команды по коду приведено в
+[`docs/RUST_CODE_GUIDE_RU.md`](docs/RUST_CODE_GUIDE_RU.md).
+
 ## Implemented MVP
 
 - RTSP validation with `ffprobe`;

@@ -1,3 +1,8 @@
+//! Адаптер к внешним программам FFmpeg и ffprobe.
+//!
+//! Агент не реализует видеокодеки самостоятельно. Rust безопасно формирует
+//! массив аргументов и запускает готовые процессы без shell-интерпретации.
+
 use std::{path::Path, process::Stdio, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
@@ -7,6 +12,8 @@ use url::Url;
 
 use crate::model::{Output, ProbeInfo, StartPipelineRequest, VideoMode};
 
+// Эти приватные структуры повторяют только нужную часть JSON ffprobe.
+// Serde проигнорирует все остальные поля ответа.
 #[derive(Debug, Deserialize)]
 struct ProbeDocument {
     streams: Vec<ProbeStream>,
@@ -20,11 +27,14 @@ struct ProbeStream {
     avg_frame_rate: Option<String>,
 }
 
+/// Запускает ffprobe и возвращает характеристики первого видеопотока.
 pub async fn probe(
     ffprobe_bin: &str,
     request: &StartPipelineRequest,
     probe_timeout: Duration,
 ) -> Result<ProbeInfo> {
+    // timeout оборачивает Future запуска процесса. `kill_on_drop(true)` важен:
+    // если timeout истечёт, незавершённый дочерний ffprobe будет уничтожен.
     let output = timeout(
         probe_timeout,
         Command::new(ffprobe_bin)
@@ -39,12 +49,15 @@ pub async fn probe(
             .arg("-of")
             .arg("json")
             .arg(&request.rtsp_url)
+            // piped позволяет родительскому процессу получить stdout/stderr.
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .output(),
     )
     .await
+    // Здесь два Result подряд: внешний принадлежит timeout, внутренний —
+    // запуску процесса. Поэтому используются два `?` с разными context.
     .context("ffprobe timed out")?
     .context("failed to execute ffprobe")?;
 
@@ -56,6 +69,7 @@ pub async fn probe(
         ));
     }
 
+    // Тип слева явно указывает Serde, в какую структуру читать JSON.
     let document: ProbeDocument =
         serde_json::from_slice(&output.stdout).context("invalid ffprobe JSON")?;
     let stream = document
@@ -73,8 +87,12 @@ pub async fn probe(
 }
 
 pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec<String>> {
+    // URL проверяется до запуска процесса, чтобы вернуть HTTP 400 вместо
+    // неясной диагностической ошибки FFmpeg.
     Url::parse(&request.rtsp_url).context("rtspUrl must be a valid URL")?;
 
+    // Каждый элемент Vec<String> станет отдельным argv. Shell не используется,
+    // поэтому символы `;`, `$()` и пробелы внутри URL не выполняются как команды.
     let mut args = vec![
         "-hide_banner".into(),
         "-nostdin".into(),
@@ -91,8 +109,13 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
         "-an".into(),
     ];
 
+    // `match` требует обработать все варианты enum. При добавлении нового режима
+    // компилятор укажет все места, где логика ещё не реализована.
     match &request.video_mode {
+        // COPY почти не использует CPU, но сохраняет исходный H.265, который
+        // поддерживается не всеми браузерами.
         VideoMode::Copy => args.extend(["-c:v".into(), "copy".into()]),
+        // H264 выполняет полное декодирование/кодирование и требует больше CPU.
         VideoMode::H264 => args.extend([
             "-c:v".into(),
             "libx264".into(),
@@ -105,6 +128,7 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
         ]),
     }
 
+    // Заимствуем output через `&`, чтобы не перемещать String из request.
     match &request.output {
         Output::Rtsp { url } => {
             Url::parse(url).context("RTSP output URL must be a valid URL")?;
@@ -141,6 +165,8 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
 }
 
 pub fn output_url(request: &StartPipelineRequest) -> Option<String> {
+    // В текущей модели URL существует для обоих вариантов, но Option оставляет
+    // возможность позднее добавить output без публичного URL, например S3.
     match &request.output {
         Output::Rtsp { url } => Some(url.clone()),
         Output::Hls { .. } => Some(format!("/hls/{}/index.m3u8", request.camera_id)),
@@ -148,6 +174,7 @@ pub fn output_url(request: &StartPipelineRequest) -> Option<String> {
 }
 
 pub fn redact_url(value: &str) -> String {
+    // Не режем строку вручную: Url корректно понимает userinfo и escaping.
     match Url::parse(value) {
         Ok(mut url) => {
             if !url.username().is_empty() {
@@ -163,6 +190,8 @@ pub fn redact_url(value: &str) -> String {
 }
 
 pub fn sanitize_message(message: &str, source_url: &str) -> String {
+    // FFmpeg иногда повторяет полный URL в stderr. Заменяем его целиком и
+    // ограничиваем объём ошибки пятью строками.
     let redacted = redact_url(source_url);
     message
         .replace(source_url, &redacted)
@@ -173,6 +202,8 @@ pub fn sanitize_message(message: &str, source_url: &str) -> String {
 }
 
 fn parse_frame_rate(value: &str) -> Option<f64> {
+    // ffprobe возвращает FPS дробью, например 30000/1001. Любая ошибка parsing
+    // даёт None через `ok()?`, а не panic всего агента.
     let (numerator, denominator) = value.split_once('/')?;
     let numerator = numerator.parse::<f64>().ok()?;
     let denominator = denominator.parse::<f64>().ok()?;
@@ -181,6 +212,8 @@ fn parse_frame_rate(value: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    // Модуль tests компилируется только командой `cargo test`.
+    // `super` означает родительский модуль ffmpeg.
     use std::path::Path;
 
     use uuid::Uuid;

@@ -1,6 +1,12 @@
+//! Метрики агента в текстовом формате Prometheus.
+
 use anyhow::Result;
 use prometheus::{Encoder, IntCounter, IntGauge, Registry, TextEncoder};
 
+/// Набор metric handles.
+///
+/// Клонирование handle не создаёт новую метрику: копии указывают на один и тот
+/// же внутренний atomic-счётчик, поэтому их можно передавать в async-задачи.
 #[derive(Clone)]
 pub struct Metrics {
     registry: Registry,
@@ -12,6 +18,8 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new() -> Result<Self> {
+        // Отдельный Registry не загрязняет глобальный реестр процесса и делает
+        // набор экспортируемых метрик полностью явным.
         let registry = Registry::new();
         let active_pipelines = IntGauge::new(
             "video_ingest_active_pipelines",
@@ -30,6 +38,8 @@ impl Metrics {
             "Number of FFmpeg reconnect attempts",
         )?;
 
+        // Registry хранит trait object в heap (`Box`). Handle оставляем в
+        // структуре, чтобы затем вызывать inc/dec из менеджера.
         registry.register(Box::new(active_pipelines.clone()))?;
         registry.register(Box::new(process_starts.clone()))?;
         registry.register(Box::new(process_failures.clone()))?;
@@ -44,6 +54,7 @@ impl Metrics {
         })
     }
 
+    /// Собирает текущие значения и кодирует их для ответа `GET /metrics`.
     pub fn encode(&self) -> Result<String> {
         let families = self.registry.gather();
         let mut buffer = Vec::new();
