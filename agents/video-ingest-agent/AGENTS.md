@@ -40,4 +40,18 @@
   cargo check
   cargo test
   cargo clippy --all-targets
-  
+    ```
+
+- Do not automatically apply Clippy suggestions.
+- If validation requires broad rewriting or removal of comments, stop and
+  report the issue instead.
+
+## Diff requirements
+
+Before completing a task:
+
+1. Run `git diff --check`.
+2. Inspect `git diff -- agents/video-ingest-agent`.
+3. Confirm that explanatory comments remain present.
+4. Report any unavoidable formatting changes separately.
+ 
