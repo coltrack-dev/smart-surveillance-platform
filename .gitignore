@@ -140,3 +140,6 @@ temp/
 
 # Ignore Gradle build output directory
 build
+
+agents/*/target/
+agents/*/data/

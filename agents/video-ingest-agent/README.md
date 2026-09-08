@@ -1,6 +1,6 @@
 # video-ingest-agent
 
-Rust media-node agent for the Smart Surveillance Platform. It owns FFmpeg
+Rust media-node agent for the Surveillance Platform. It owns FFmpeg
 processes; Java services remain responsible for authorization, business state,
 camera metadata and orchestration.
 
