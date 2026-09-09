@@ -2,12 +2,12 @@
 
 Учебная и исследовательская платформа видеонаблюдения и видеоаналитики: подключение IP-камер и NVR по RTSP, просмотр в браузере, запись и воспроизведение архива, обнаружение объектов и пересечений линий с помощью YOLO.
 
-Backend построен на Java/Spring Boot и Kafka, интерфейс — на Vue, inference выполняется отдельным Python worker на CPU или GPU. Проект находится в активной разработке; конфигурация демо рассчитана на доверенную тестовую сеть, а не на открытое production-развёртывание.
+Backend построен на Java/Spring Boot и Kafka, управление медиапроцессами вынесено в Rust-агент, интерфейс — на Vue, inference выполняется отдельным Python worker на CPU или GPU. Проект находится в активной разработке; конфигурация демо рассчитана на доверенную тестовую сеть, а не на открытое production-развёртывание.
 
 ## Возможности
 
 - **Камеры:** создание и редактирование, категории, избранное, состояния и heartbeat; настройки RTSP, включая формат XM для совместимых NVR. Пароли камер хранятся с шифрованием AES-GCM при настроенном ключе.
-- **Прямой эфир:** RTSP → FFmpeg → HLS, просмотр через hls.js, мониторинг потока и повторное подключение. Режимы обработки видео `AUTO`, `COPY`, `TRANSCODE_H264` позволяют учитывать кодек источника и совместимость браузера.
+- **Прямой эфир:** RTSP → Rust video-ingest-agent → FFmpeg → MediaMTX → HLS, просмотр через hls.js, мониторинг потока и повторное подключение. Режимы обработки видео `AUTO`, `COPY`, `TRANSCODE_H264` позволяют учитывать кодек источника и совместимость браузера.
 - **Запись и архив:** управление записью отдельно от просмотра, метаданные в PostgreSQL, локальные файлы и экспорт в S3-совместимое хранилище, подготовка HLS для воспроизведения архива.
 - **Видеоаналитика:** анализ записи и real-time RTSP, детекция и трекинг объектов, события пересечения настраиваемых линий, направление движения и снимки событий.
 - **Управление заданиями:** запуск, остановка, статусы и прогресс; список worker-узлов, heartbeat и сведения об их нагрузке.
@@ -24,13 +24,15 @@ Backend построен на Java/Spring Boot и Kafka, интерфейс — 
 flowchart TD
     UI["Vue UI"] --> GW["API Gateway"]
     GW --> CAM["Camera service"]
-    GW --> STREAM["Stream service · FFmpeg"]
+    GW --> STREAM["Stream service · control plane"]
     GW --> REC["Recording service · FFmpeg"]
     GW --> ANA["Analytics service"]
-    SOURCE["IP-камера / NVR / MediaMTX"] --> STREAM
+    STREAM --> AGENT["Rust video-ingest-agent"]
+    SOURCE["IP-камера / NVR"] --> AGENT
+    AGENT --> MTX["MediaMTX"]
     SOURCE --> REC
     SOURCE --> WORKER["Python inference worker"]
-    STREAM -->|HLS через Gateway| UI
+    MTX -->|HLS через Gateway| UI
     REC --> STORE["Локальные файлы / S3"]
     STORE --> WORKER
     ANA -->|задания| KAFKA["Kafka"]
@@ -41,7 +43,7 @@ flowchart TD
     WORKER -->|снимки| STORE
 ```
 
-PostgreSQL хранит данные камер, записей и аналитики. `websocket-service` передаёт события Kafka в UI, а `search-service` обновляет индекс OpenSearch. MediaMTX используется для тестовых RTSP-источников; для подключения реальной камеры он не обязателен.
+PostgreSQL хранит данные камер, записей и аналитики. `websocket-service` передаёт события Kafka в UI, а `search-service` обновляет индекс OpenSearch. `stream-service` хранит управляющее состояние, Rust-агент владеет live FFmpeg-процессами, а MediaMTX раздаёт опубликованные потоки потребителям. Старый запуск FFmpeg внутри `stream-service` доступен при `STREAM_INGEST_AGENT_ENABLED=false`.
 
 ### Модули и порты
 
@@ -51,7 +53,8 @@ PostgreSQL хранит данные камер, записей и аналит�
 | `gateway/camera-gateway` | Маршрутизация REST, HLS и WebSocket | 8080 |
 | `services/camera-service` | Камеры, настройки подключения, состояния | 8091 |
 | `services/search-service` | Индексация и поиск камер | 8093 |
-| `services/stream-service` | FFmpeg, live HLS, восстановление потока | 8094 |
+| `services/stream-service` | Управление live-потоками и событиями | 8094 |
+| `agents/video-ingest-agent` | FFmpeg-процессы, RTSP probe и reconnect | 8098 (внутренний) |
 | `services/recording-service` | Запись, хранилище, архив и playback | 8095 |
 | `services/websocket-service` | WebSocket/STOMP | 8096 |
 | `services/analytics-service` | Задания, события, результаты и worker-узлы | 8097 |
@@ -65,7 +68,7 @@ PostgreSQL хранит данные камер, записей и аналит�
 
 | Область | Технологии |
 |---|---|
-| Backend | Java 21, Spring Boot 3.5.8, Spring Cloud Gateway, Spring Data JPA |
+| Backend | Java 21, Spring Boot 3.5.8, Rust, Tokio, Axum, Spring Cloud Gateway, Spring Data JPA |
 | Сборка | Gradle Wrapper, multi-project build |
 | Frontend | Vue 3, TypeScript, Vite, Pinia, hls.js, STOMP |
 | Видео | RTSP, FFmpeg/ffprobe, HLS, MediaMTX |
@@ -103,7 +106,7 @@ cp .env.example .env
 
 ```bash
 docker compose -f docker-compose.demo.yml up -d --build \
-  kafka mediamtx rtsp-test-publisher \
+  kafka mediamtx rtsp-test-publisher video-ingest-agent \
   camera-service stream-service recording-service websocket-service camera-gateway
 ```
 
@@ -224,6 +227,7 @@ Worker поддерживает режимы `process` и `batched`. В `batched
 | `/api/v1/analytics/jobs/{jobId}/events` | GET: страницы результатов |
 | `/api/v1/analytics/workers` | GET: inference-узлы |
 | `/hls/**` | Прямой эфир |
+| `/media-hls/**` | Прямой эфир через video-ingest-agent и MediaMTX |
 | `/recordings/**` | Ресурсы воспроизведения архива |
 | `/ws` | WebSocket/STOMP |
 

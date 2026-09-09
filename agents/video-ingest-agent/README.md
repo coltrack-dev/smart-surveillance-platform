@@ -118,8 +118,9 @@ curl http://127.0.0.1:8098/metrics
 
 `stream-service` calls this API and stores the desired/business state. The
 agent returns technical state (`STARTING`, `RUNNING`, `RECONNECTING`, `FAILED`,
-`STOPPED`). A later Kafka event adapter can publish status changes without
-moving business logic into this process.
+`STOPPED`). `IngestAgentStreamWorker` polls these states and publishes them
+through the existing Kafka and WebSocket lifecycle adapters. Demo Compose
+enables this mode with `STREAM_INGEST_AGENT_ENABLED=true`.
 
 Do not expose port 8098 publicly. Keep it on the internal service network and
 always configure `AGENT_API_TOKEN` outside local development.

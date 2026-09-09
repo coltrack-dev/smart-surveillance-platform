@@ -2,14 +2,17 @@ package com.coltrack.streamservice.service;
 
 import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.streamservice.client.CameraClient;
+import com.coltrack.streamservice.client.IngestAgentClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.client.dto.CameraConnectionDto;
+import com.coltrack.streamservice.config.IngestAgentProperties;
 import com.coltrack.streamservice.config.RtspStreamProperties;
 import com.coltrack.streamservice.metrics.StreamMetricsService;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.websocket.StreamWebSocketPublisher;
 import com.coltrack.streamservice.worker.CameraStreamWorker;
+import com.coltrack.streamservice.worker.IngestAgentStreamWorker;
 import com.coltrack.streamservice.worker.StreamEventPublisher;
 import com.coltrack.streamservice.worker.StreamListener;
 import lombok.Getter;
@@ -47,6 +50,8 @@ public class StreamManager implements StreamListener {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final StreamMetricsService metricsService;
     private final RtspStreamProperties rtspProperties;
+    private final IngestAgentProperties ingestAgentProperties;
+    private final IngestAgentClient ingestAgentClient;
     //private final StreamEventPublisher streamWebSocketPublisher;
     private final StreamWebSocketPublisher streamWebSocketPublisher;
 
@@ -74,9 +79,14 @@ public class StreamManager implements StreamListener {
              * waiting before a reconnect. The worker flag, rather than only
              * process.isAlive(), prevents two FFmpeg processes for one camera.
              */
-            if (existing.isWorkerRunning() && !existing.isStopRequested()) {
+            if (existing.isWorkerRunning()) {
 
-                log.info("Stream already running camera={}", cameraId);
+                log.info(
+                        "Stream worker already owns camera={} status={} stopRequested={}",
+                        cameraId,
+                        existing.getStatus(),
+                        existing.isStopRequested()
+                );
                 return existing;
             }
 
@@ -91,7 +101,16 @@ public class StreamManager implements StreamListener {
                 .rtspUrl(camera.rtspUrl())
                 .videoProcessingMode(camera.videoProcessingMode())
                 .status(StreamStatus.STARTING)
+                .agentManaged(ingestAgentProperties.isEnabled())
                 .build();
+
+        if (session.isAgentManaged()) {
+            session.setHlsUrl(ingestAgentProperties.publicHlsUrl(cameraId));
+        }
+
+        // Reserve the camera before the virtual thread starts. Otherwise a
+        // concurrent second start can observe workerRunning=false in this gap.
+        session.setWorkerRunning(true);
         sessions.put(cameraId, session);
 
         metricsService.registerSessionMetrics(
@@ -102,16 +121,27 @@ public class StreamManager implements StreamListener {
                 cameraId, camera.videoProcessingMode());
         Thread.startVirtualThread(() -> {
             try {
-                CameraStreamWorker worker = new CameraStreamWorker(
-                        session,
-                        hlsService,
-                        this,
-                        rtspProperties
-                );
-                log.info("Starting CameraStreamWorker camera={}", cameraId);
-                worker.run();
+                if (session.isAgentManaged()) {
+                    IngestAgentStreamWorker worker = new IngestAgentStreamWorker(
+                            session,
+                            ingestAgentClient,
+                            ingestAgentProperties,
+                            this
+                    );
+                    log.info("Starting IngestAgentStreamWorker camera={}", cameraId);
+                    worker.run();
+                } else {
+                    CameraStreamWorker worker = new CameraStreamWorker(
+                            session,
+                            hlsService,
+                            this,
+                            rtspProperties
+                    );
+                    log.info("Starting CameraStreamWorker camera={}", cameraId);
+                    worker.run();
+                }
             } catch (Exception e) {
-                log.error("CameraStreamWorker crashed camera={}", cameraId, e);
+                log.error("Stream worker crashed camera={}", cameraId, e);
                 failed(session);
             }
         });
@@ -136,10 +166,12 @@ public class StreamManager implements StreamListener {
         session.setStopRequested(true);
         session.setStatus(StreamStatus.STOPPING);
 
-        Process process = session.getFfmpegProcess();
-        if (process != null) {
-            log.info("Destroying ffmpeg process camera={}", cameraId);
-            process.destroyForcibly();
+        if (!session.isAgentManaged()) {
+            Process process = session.getFfmpegProcess();
+            if (process != null) {
+                log.info("Destroying ffmpeg process camera={}", cameraId);
+                process.destroyForcibly();
+            }
         }
     }
 

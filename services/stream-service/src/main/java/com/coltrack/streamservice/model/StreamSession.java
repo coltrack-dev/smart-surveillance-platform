@@ -84,6 +84,12 @@ public class StreamSession {
     @JsonIgnore
     private volatile boolean workerRunning;
 
+    /**
+     * True when FFmpeg is owned by video-ingest-agent rather than this JVM.
+     */
+    @JsonIgnore
+    private boolean agentManaged;
+
     public boolean isRunning() {
         return status == StreamStatus.RUNNING;
     }

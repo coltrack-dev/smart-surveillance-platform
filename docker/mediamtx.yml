@@ -13,3 +13,5 @@ paths:
   people: {}         # локальный файл people.mp4
   people-2: {}         # локальный файл people.mp4
   i287: {}           # дорожная камера
+  # UUID paths are created dynamically when video-ingest-agent publishes them.
+  all_others: {}

@@ -36,11 +36,7 @@ public class StreamController {
                 StreamResponse.builder()
                         .cameraId(session.getCameraId())
                         .status(session.getStatus())
-                        .hlsUrl(
-                                "/hls/"
-                                        + cameraId
-                                        + "/index.m3u8"
-                        )
+                        .hlsUrl(session.getHlsUrl())
                         .startedAt(session.getStartedAt())
                         .reconnectCount(
                                 session.getReconnectCount()
@@ -98,11 +94,7 @@ public class StreamController {
                 StreamResponse.builder()
                         .cameraId(cameraId)
                         .status(session.getStatus())
-                        .hlsUrl(
-                                "/hls/"
-                                        + cameraId
-                                        + "/index.m3u8"
-                        )
+                        .hlsUrl(session.getHlsUrl())
                         .startedAt(session.getStartedAt())
                         .reconnectCount(
                                 session.getReconnectCount()

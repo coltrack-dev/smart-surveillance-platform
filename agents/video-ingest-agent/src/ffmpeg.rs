@@ -132,7 +132,15 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
     match &request.output {
         Output::Rtsp { url } => {
             Url::parse(url).context("RTSP output URL must be a valid URL")?;
-            args.extend(["-f".into(), "rtsp".into(), url.clone()]);
+            // Output transport is an output option here. TCP avoids RTP/UDP
+            // connectivity problems between the agent and MediaMTX containers.
+            args.extend([
+                "-f".into(),
+                "rtsp".into(),
+                "-rtsp_transport".into(),
+                "tcp".into(),
+                url.clone(),
+            ]);
         }
         Output::Hls {
             segment_seconds,
@@ -260,6 +268,23 @@ mod tests {
             .last()
             .unwrap()
             .ends_with("/hls/00000000-0000-0000-0000-000000000000/index.m3u8"));
+    }
+
+    #[test]
+    fn publishes_rtsp_to_mediamtx_over_tcp() {
+        let mut request = request();
+        request.output = Output::Rtsp {
+            url: "rtsp://mediamtx:8554/camera".into(),
+        };
+
+        let args = build_args(&request, Path::new("/data")).unwrap();
+        let output_url_position = args
+            .iter()
+            .position(|arg| arg == "rtsp://mediamtx:8554/camera")
+            .unwrap();
+
+        assert_eq!(args[output_url_position - 2], "-rtsp_transport");
+        assert_eq!(args[output_url_position - 1], "tcp");
     }
 
     #[test]

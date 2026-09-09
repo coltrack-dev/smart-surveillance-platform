@@ -81,6 +81,30 @@ services:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     restart: unless-stopped
 
+  video-ingest-agent:
+    build:
+      context: ./agents/video-ingest-agent
+      dockerfile: Dockerfile
+    image: surveillance/video-ingest-agent:demo
+    container_name: surveillance-video-ingest-agent
+    environment:
+      AGENT_ID: media-node-01
+      AGENT_BIND: 0.0.0.0:8098
+      AGENT_DATA_DIR: /data
+      AGENT_API_TOKEN: ${VIDEO_INGEST_AGENT_TOKEN:-local-demo-token}
+      RUST_LOG: ${VIDEO_INGEST_AGENT_LOG_LEVEL:-info}
+    expose:
+      - "8098"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8098/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
   # Источник №1: настроечная таблица
   rtsp-test-publisher:
     image: linuxserver/ffmpeg:7.1.1
@@ -273,6 +297,13 @@ services:
       STREAM_RTSP_PLAYLIST_TIMEOUT: ${STREAM_RTSP_PLAYLIST_TIMEOUT:-30s}
       STREAM_RTSP_STALE_PLAYLIST_TIMEOUT: ${STREAM_RTSP_STALE_PLAYLIST_TIMEOUT:-15s}
       STREAM_RTSP_RECONNECT_MAX_DELAY: ${STREAM_RTSP_RECONNECT_MAX_DELAY:-30s}
+      STREAM_INGEST_AGENT_ENABLED: ${STREAM_INGEST_AGENT_ENABLED:-true}
+      STREAM_INGEST_AGENT_URL: http://video-ingest-agent:8098
+      STREAM_INGEST_AGENT_TOKEN: ${VIDEO_INGEST_AGENT_TOKEN:-local-demo-token}
+      STREAM_INGEST_AGENT_POLL_INTERVAL: ${STREAM_INGEST_AGENT_POLL_INTERVAL:-1s}
+      STREAM_INGEST_AGENT_PUBLISH_RTSP_BASE_URL: rtsp://mediamtx:8554
+      STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX: /media-hls
+      STREAM_INGEST_AGENT_AUTO_VIDEO_MODE: ${STREAM_INGEST_AGENT_AUTO_VIDEO_MODE:-H264}
       JAVA_OPTS: ${STREAM_JAVA_OPTS:--Xms128m -Xmx384m}
     volumes:
       - hls-data:/data/hls
@@ -285,6 +316,8 @@ services:
         condition: service_started
       mediamtx:
         condition: service_started
+      video-ingest-agent:
+        condition: service_healthy
     restart: unless-stopped
 
   recording-service:
@@ -365,6 +398,7 @@ services:
       JAVA_OPTS: ${GATEWAY_JAVA_OPTS:--Xms96m -Xmx256m}
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_SERVICE_URL: http://stream-service:8094
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
       RECORDING_SERVICE_URL: http://recording-service:8095
       WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
       ANALYTICS_SERVICE_URL: http://host.docker.internal:8097
@@ -378,6 +412,7 @@ services:
       - stream-service
       - recording-service
       - websocket-service
+      - mediamtx
     restart: unless-stopped
 
   analytics-service:

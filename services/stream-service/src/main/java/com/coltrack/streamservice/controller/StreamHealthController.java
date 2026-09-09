@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -71,16 +72,19 @@ public class StreamHealthController {
 
 
         boolean ffmpegAlive =
-                process != null &&
-                        process.isAlive();
+                session.isAgentManaged()
+                        ? session.getStatus() == StreamStatus.RUNNING
+                        : process != null && process.isAlive();
 
 
         boolean framesAvailable =
-                session.getLastFrameTime() != null &&
-                        Duration.between(
-                                session.getLastFrameTime(),
-                                Instant.now()
-                        ).getSeconds() < 10;
+                session.isAgentManaged()
+                        ? session.getStatus() == StreamStatus.RUNNING
+                        : session.getLastFrameTime() != null &&
+                            Duration.between(
+                                    session.getLastFrameTime(),
+                                    Instant.now()
+                            ).getSeconds() < 10;
 
 
         boolean healthy =
@@ -91,25 +95,15 @@ public class StreamHealthController {
                         framesAvailable;
 
 
-        return Map.of(
-
-                "cameraId",
-                cameraId,
-
-                "status",
-                session.getStatus(),
-
-                "ffmpegAlive",
-                ffmpegAlive,
-
-                "lastFrameTime",
-                session.getLastFrameTime(),
-
-                "reconnectCount",
-                session.getReconnectCount(),
-
-                "healthy",
-                healthy
-        );
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("cameraId", cameraId);
+        response.put("status", session.getStatus());
+        response.put("ffmpegAlive", ffmpegAlive);
+        // Remote agent status does not currently contain an actual frame timestamp.
+        response.put("lastFrameTime", session.getLastFrameTime());
+        response.put("reconnectCount", session.getReconnectCount());
+        response.put("managedBy", session.isAgentManaged() ? "VIDEO_INGEST_AGENT" : "STREAM_SERVICE");
+        response.put("healthy", healthy);
+        return response;
     }
 }

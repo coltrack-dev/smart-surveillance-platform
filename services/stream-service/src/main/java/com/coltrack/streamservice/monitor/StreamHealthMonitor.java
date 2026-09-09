@@ -47,6 +47,12 @@ public class StreamHealthMonitor {
             return;
         }
 
+        // The Rust agent owns the remote FFmpeg process. Its state is updated by
+        // IngestAgentStreamWorker and cannot be inspected through java.lang.Process.
+        if (session.isAgentManaged()) {
+            return;
+        }
+
         Process process = session.getFfmpegProcess();
 
         if (process == null || !process.isAlive()) {

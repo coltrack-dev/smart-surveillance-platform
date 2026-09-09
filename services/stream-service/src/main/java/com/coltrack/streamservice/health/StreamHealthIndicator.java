@@ -100,6 +100,10 @@ public class StreamHealthIndicator implements HealthIndicator {
             return false;
         }
 
+        if (session.isAgentManaged()) {
+            return true;
+        }
+
         Process process = session.getFfmpegProcess();
 
         if (process == null || !process.isAlive()) {

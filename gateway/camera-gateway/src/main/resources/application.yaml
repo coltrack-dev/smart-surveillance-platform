@@ -20,6 +20,15 @@ spring:
               predicates:
                 - Path=/hls/**
 
+            # HLS produced by MediaMTX from streams published by video-ingest-agent.
+            - id: media-hls-stream
+              uri: ${MEDIAMTX_HLS_URL:http://localhost:8888}
+              predicates:
+                - Path=/media-hls/**
+              filters:
+                # MediaMTX expects /{cameraId}/index.m3u8.
+                - StripPrefix=1
+
             #
             # Camera Service
             #
