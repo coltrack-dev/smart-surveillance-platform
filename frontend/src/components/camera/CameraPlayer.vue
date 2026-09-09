@@ -219,13 +219,19 @@ async function loadPlayer() {
   hls.on(
       Hls.Events.ERROR,
       (_, data) => {
+        if (generation !== loadGeneration) return;
 
-        console.error(
-            "HLS error",
-            data
-        );
+        /* A short buffer stall is a recoverable hls.js state, and is also
+         * expected while a live stream is being stopped. Keep fatal failures
+         * visible without reporting normal recovery as a console error. */
+        if (!data.fatal) {
+          if (data.details !== Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+            console.warn("Non-fatal HLS event", data);
+          }
+          return;
+        }
 
-        if (!data.fatal || generation !== loadGeneration) return;
+        console.error("Fatal HLS error", data);
 
         if (
             data.type === Hls.ErrorTypes.NETWORK_ERROR &&

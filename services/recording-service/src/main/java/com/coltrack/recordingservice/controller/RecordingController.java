@@ -125,7 +125,7 @@ public class RecordingController {
         );
 
         return response == null
-                ? ResponseEntity.notFound().build()
+                ? ResponseEntity.noContent().build()
                 : ResponseEntity.ok(response);
     }
 

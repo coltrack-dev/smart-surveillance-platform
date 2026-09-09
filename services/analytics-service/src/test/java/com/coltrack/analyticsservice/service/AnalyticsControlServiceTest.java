@@ -64,6 +64,26 @@ class AnalyticsControlServiceTest {
     }
 
     @Test
+    void shouldReturnEmptyOptionalWhenRealtimeJobDoesNotExist() {
+        UUID cameraId = UUID.randomUUID();
+        when(jobRepository.findFirstByCameraIdAndJobTypeOrderByCreatedAtDesc(
+                cameraId, "REALTIME"
+        )).thenReturn(Optional.empty());
+
+        assertThat(service.findLatestRealtimeJobOptional(cameraId)).isEmpty();
+    }
+
+    @Test
+    void shouldReturnEmptyOptionalWhenRecordingJobDoesNotExist() {
+        UUID recordingId = UUID.randomUUID();
+        when(jobRepository.findFirstByRecordingIdAndJobTypeOrderByCreatedAtDesc(
+                recordingId, "RECORDING"
+        )).thenReturn(Optional.empty());
+
+        assertThat(service.findLatestRecordingJobOptional(recordingId)).isEmpty();
+    }
+
+    @Test
     void shouldResolveRealtimeSourceFromCameraServiceWhenOverrideIsEmpty() {
         UUID cameraId = UUID.randomUUID();
         String resolvedUrl = "rtsp://nvr.lan:554/channel-8";

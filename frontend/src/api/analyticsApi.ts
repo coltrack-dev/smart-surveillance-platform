@@ -49,10 +49,10 @@ export async function findLatestRecordingAnalyticsJob(
     recordingId: string
 ): Promise<AnalyticsJob | null> {
     try {
-        const response = await http.get<AnalyticsJob>(
+        const response = await http.get<AnalyticsJob | null>(
             `/analytics/recordings/${recordingId}`
         );
-        return response.data;
+        return response.status === 204 ? null : response.data;
     } catch (error: unknown) {
         if (
             typeof error === "object"
@@ -159,10 +159,10 @@ export async function findLatestRealtimeAnalyticsJob(
     cameraId: string
 ): Promise<AnalyticsJob | null> {
     try {
-        const response = await http.get<AnalyticsJob>(
+        const response = await http.get<AnalyticsJob | null>(
             `/analytics/realtime/${cameraId}`
         );
-        return response.data;
+        return response.status === 204 ? null : response.data;
     } catch (error: unknown) {
         if (
             typeof error === "object"

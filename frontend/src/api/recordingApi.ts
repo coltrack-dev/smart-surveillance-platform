@@ -141,11 +141,11 @@ export async function findActiveRecording(
     cameraId: string
 ): Promise<ActiveRecording | null> {
     try {
-        const response = await http.get<ActiveRecording>(
+        const response = await http.get<ActiveRecording | null>(
             `/recordings/${cameraId}`
         );
 
-        return response.data;
+        return response.status === 204 ? null : response.data;
     } catch (error: unknown) {
         if (
             typeof error === "object"

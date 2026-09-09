@@ -36,6 +36,7 @@ import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -340,25 +341,33 @@ public class AnalyticsControlService {
     }
 
     public AnalyticsJobResponse findLatestRealtimeJob(UUID cameraId) {
-        return jobRepository
-                .findFirstByCameraIdAndJobTypeOrderByCreatedAtDesc(cameraId, "REALTIME")
-                .map(AnalyticsJobResponse::fromEntity)
+        return findLatestRealtimeJobOptional(cameraId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "No realtime analytics jobs for camera " + cameraId
                 ));
     }
 
-    public AnalyticsJobResponse findLatestRecordingJob(UUID recordingId) {
+    public Optional<AnalyticsJobResponse> findLatestRealtimeJobOptional(UUID cameraId) {
         return jobRepository
-                .findFirstByRecordingIdAndJobTypeOrderByCreatedAtDesc(
-                        recordingId, "RECORDING"
-                )
-                .map(AnalyticsJobResponse::fromEntity)
+                .findFirstByCameraIdAndJobTypeOrderByCreatedAtDesc(cameraId, "REALTIME")
+                .map(AnalyticsJobResponse::fromEntity);
+    }
+
+    public AnalyticsJobResponse findLatestRecordingJob(UUID recordingId) {
+        return findLatestRecordingJobOptional(recordingId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "No analytics jobs for recording " + recordingId
                 ));
+    }
+
+    public Optional<AnalyticsJobResponse> findLatestRecordingJobOptional(UUID recordingId) {
+        return jobRepository
+                .findFirstByRecordingIdAndJobTypeOrderByCreatedAtDesc(
+                        recordingId, "RECORDING"
+                )
+                .map(AnalyticsJobResponse::fromEntity);
     }
 
     public Page<AnalyticsJobResponse> findJobs(Pageable pageable) {
