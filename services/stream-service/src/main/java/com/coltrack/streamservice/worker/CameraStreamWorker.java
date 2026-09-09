@@ -479,7 +479,7 @@ public class CameraStreamWorker implements Runnable {
         command.addAll(List.of(
                 "-f", "hls",
                 "-hls_time", "2",
-                "-hls_list_size", "6",
+                "-hls_list_size", "10",
                 "-start_number", "0",
                 "-hls_segment_filename",
                 outputDir.resolve("segment%05d.ts").toString(),

@@ -150,6 +150,13 @@ async function loadPlayer() {
     // MediaMTX demo profile uses conventional MPEG-TS HLS. Disabling LL-HLS
     // avoids blocking playlist reloads while the stream is starting.
     lowLatencyMode: false,
+    // Start several segments behind the live edge and retain enough decoded
+    // data to absorb short pauses from an RTSP camera or HLS segment creation.
+    // With two-second segments this targets about eight seconds of latency.
+    liveSyncDurationCount: 4,
+    liveMaxLatencyDurationCount: 8,
+    maxBufferLength: 20,
+    maxMaxBufferLength: 40,
     manifestLoadingMaxRetry: 6,
     manifestLoadingRetryDelay: 1000,
     levelLoadingMaxRetry: 6,
@@ -329,12 +336,20 @@ watch(
     }
 );
 
-/* A backend reconnect normally keeps the same HLS URL. Reload explicitly
- * when RECONNECTING/STARTING changes back to RUNNING. */
+/* A backend reconnect keeps the same HLS URL. Let the existing hls.js
+ * instance continue loading that playlist instead of recreating the player
+ * and showing the initial connection overlay again. Native HLS has no hls.js
+ * instance, so Safari still needs the regular reload fallback. */
 watch(
     () => props.connecting,
     (connecting, wasConnecting) => {
-      if (!connecting && wasConnecting && props.url) void loadPlayer();
+      if (!connecting && wasConnecting && props.url) {
+        if (hls) {
+          hls.startLoad();
+        } else {
+          void loadPlayer();
+        }
+      }
     }
 );
 
