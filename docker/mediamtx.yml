@@ -8,6 +8,10 @@ logLevel: info
 rtsp: yes
 hls: yes
 
+# MediaMTX постоянно поддерживает HLS-плейлист для опубликованных потоков.
+# Браузеру не придётся ожидать появления следующего ключевого кадра.
+hlsAlwaysRemux: yes
+
 paths:
   test: {}
   people: {}         # локальный файл people.mp4
