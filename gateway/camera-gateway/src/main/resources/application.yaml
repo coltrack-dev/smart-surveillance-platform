@@ -28,6 +28,9 @@ spring:
               filters:
                 # MediaMTX expects /{cameraId}/index.m3u8.
                 - StripPrefix=1
+                # Both CorsWebFilter and MediaMTX add CORS response headers.
+                # Browsers reject duplicate Access-Control-Allow-Origin values.
+                - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin, RETAIN_FIRST
 
             #
             # Camera Service

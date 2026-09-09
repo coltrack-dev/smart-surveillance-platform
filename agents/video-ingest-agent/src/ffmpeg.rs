@@ -130,14 +130,17 @@ pub fn build_args(
         // H264 выполняет полное декодирование/кодирование и требует больше CPU.
         // H264 выполняет полное декодирование/кодирование и требует больше CPU.
         VideoMode::H264 => args.extend([
+            // NVR может присылать кадры с неравномерными timestamps.
+            // fps-filter восстанавливает ровный поток 15 FPS перед публикацией
+            // в MediaMTX. Это сохраняет поведение прежнего CameraStreamWorker.
+            "-vf".into(),
+            "fps=15,format=yuv420p".into(),
             "-c:v".into(),
             "libx264".into(),
             "-preset".into(),
             "veryfast".into(),
             "-tune".into(),
             "zerolatency".into(),
-            "-pix_fmt".into(),
-            "yuv420p".into(),
 
             // Создаём ключевой кадр каждые 30 кадров.
             // При 15 FPS это примерно один ключевой кадр каждые 2 секунды.
@@ -364,6 +367,17 @@ mod tests {
             .last()
             .unwrap()
             .ends_with("/hls/00000000-0000-0000-0000-000000000000/index.m3u8"));
+    }
+
+    #[test]
+    fn h264_transcoding_normalizes_nvr_frame_rate() {
+        let mut request = request();
+        request.video_mode = VideoMode::H264;
+
+        let args = build_args(&request, Path::new("/data"), Some("hevc")).unwrap();
+        let filter_position = args.iter().position(|arg| arg == "-vf").unwrap();
+
+        assert_eq!(args[filter_position + 1], "fps=15,format=yuv420p");
     }
 
     #[test]

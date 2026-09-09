@@ -49,7 +49,11 @@ export const useStreamStore = defineStore(
 
                 cameraId: event.cameraId,
                 status: event.status,
-                hlsUrl: event.hlsUrl,
+                // RECONNECTING event intentionally has no new URL. Keep the
+                // existing MediaMTX path so hls.js can resume from the same
+                // playlist instead of destroying and recreating the player.
+                hlsUrl: event.hlsUrl
+                    ?? (event.status === "RECONNECTING" ? old?.hlsUrl ?? null : null),
                 error: event.error,
                 startedAt: event.startedAt ?? old?.startedAt ?? null
             };

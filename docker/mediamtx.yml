@@ -12,6 +12,12 @@ hls: yes
 # Браузеру не придётся ожидать появления следующего ключевого кадра.
 hlsAlwaysRemux: yes
 
+# Обычный MPEG-TS HLS не использует blocking reload LL-HLS и стабильно
+# проксируется через Spring Cloud Gateway. Цена — несколько секунд задержки.
+hlsVariant: mpegts
+hlsSegmentCount: 6
+hlsSegmentDuration: 2s
+
 paths:
   test: {}
   people: {}         # локальный файл people.mp4

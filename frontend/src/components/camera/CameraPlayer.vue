@@ -81,7 +81,12 @@ async function loadPlayer() {
   video.value.oncanplay = onVideoStarted;
   video.value.onloadeddata = onVideoStarted;
   video.value.onwaiting = () => {
-    if (generation === loadGeneration && !props.connecting) loading.value = true;
+    // `waiting` briefly occurs at normal HLS segment boundaries, especially
+    // with a jittery NVR source. Once the first frame has been displayed, keep
+    // it visible instead of presenting normal buffering as a reconnect.
+    if (generation === loadGeneration && !props.connecting && !playing.value) {
+      loading.value = true;
+    }
   };
 
   // Уничтожаем предыдущий поток
@@ -142,7 +147,9 @@ async function loadPlayer() {
 
   hls = new Hls({
     enableWorker: true,
-    lowLatencyMode: true,
+    // MediaMTX demo profile uses conventional MPEG-TS HLS. Disabling LL-HLS
+    // avoids blocking playlist reloads while the stream is starting.
+    lowLatencyMode: false,
     manifestLoadingMaxRetry: 6,
     manifestLoadingRetryDelay: 1000,
     levelLoadingMaxRetry: 6,
@@ -383,7 +390,7 @@ defineExpose({ seekTo });
         :class="{ proportional: props.proportional }"
     />
 
-    <div v-if="loading && !connecting" class="overlay">
+    <div v-if="loading && !connecting && !playing" class="overlay">
       <div class="spinner"></div>
       <div class="message">
         Connecting video stream...
@@ -391,7 +398,7 @@ defineExpose({ seekTo });
     </div>
 
     <div
-        v-if="connecting"
+        v-if="connecting && !playing"
         class="overlay"
     >
       <div class="spinner"></div>
