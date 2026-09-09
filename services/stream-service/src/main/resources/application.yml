@@ -32,7 +32,6 @@ stream:
     poll-interval: ${STREAM_INGEST_AGENT_POLL_INTERVAL:1s}
     publish-rtsp-base-url: ${STREAM_INGEST_AGENT_PUBLISH_RTSP_BASE_URL:rtsp://localhost:8554}
     public-hls-prefix: ${STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX:/media-hls}
-    auto-video-mode: ${STREAM_INGEST_AGENT_AUTO_VIDEO_MODE:H264}
   hls:
     #path: /opt/surveillance/hls
     path: ./data/hls

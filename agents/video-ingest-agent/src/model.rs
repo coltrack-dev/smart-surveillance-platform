@@ -64,6 +64,9 @@ fn default_playlist_segments() -> u16 {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VideoMode {
+    /// Выбрать режим после ffprobe: H.264 копируется без лишней нагрузки,
+    /// остальные и неизвестные кодеки преобразуются в browser-friendly H.264.
+    Auto,
     /// Не декодировать кадры: минимальная нагрузка на CPU, исходный кодек
     /// сохраняется. H.265 при этом может не воспроизводиться браузером.
     #[default]

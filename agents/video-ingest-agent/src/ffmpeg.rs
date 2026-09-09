@@ -86,7 +86,11 @@ pub async fn probe(
     })
 }
 
-pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec<String>> {
+pub fn build_args(
+    request: &StartPipelineRequest,
+    data_dir: &Path,
+    detected_codec: Option<&str>,
+) -> Result<Vec<String>> {
     // URL проверяется до запуска процесса, чтобы вернуть HTTP 400 вместо
     // неясной диагностической ошибки FFmpeg.
     Url::parse(&request.rtsp_url).context("rtspUrl must be a valid URL")?;
@@ -98,9 +102,15 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
         "-nostdin".into(),
         "-loglevel".into(),
         "warning".into(),
+        // Machine-readable progress идёт в stdout. Supervisor использует
+        // первую запись progress=continue как подтверждение реального output.
+        "-progress".into(),
+        "pipe:1".into(),
         "-rtsp_transport".into(),
         request.transport.as_ffmpeg_value().into(),
-        "-rw_timeout".into(),
+        // RTSP demuxer называет socket I/O timeout просто `timeout`.
+        // Значение задаётся в микросекундах: 5_000_000 = 5 секунд.
+        "-timeout".into(),
         "5000000".into(),
         "-i".into(),
         request.rtsp_url.clone(),
@@ -111,7 +121,9 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
 
     // `match` требует обработать все варианты enum. При добавлении нового режима
     // компилятор укажет все места, где логика ещё не реализована.
-    match &request.video_mode {
+    match effective_video_mode(&request.video_mode, detected_codec) {
+        // AUTO преобразован в конкретный режим функцией выше и сюда не попадёт.
+        VideoMode::Auto => unreachable!("AUTO must be resolved before building FFmpeg args"),
         // COPY почти не использует CPU, но сохраняет исходный H.265, который
         // поддерживается не всеми браузерами.
         VideoMode::Copy => args.extend(["-c:v".into(), "copy".into()]),
@@ -172,6 +184,20 @@ pub fn build_args(request: &StartPipelineRequest, data_dir: &Path) -> Result<Vec
     Ok(args)
 }
 
+/// Превращает AUTO в конкретное действие после ffprobe.
+///
+/// Названия `h264` и `avc1` означают уже совместимый с браузером AVC-поток.
+/// Для HEVC и неизвестного кодека безопаснее выполнить преобразование в H.264.
+pub fn effective_video_mode(mode: &VideoMode, detected_codec: Option<&str>) -> VideoMode {
+    match mode {
+        VideoMode::Auto => match detected_codec.map(|codec| codec.to_ascii_lowercase()) {
+            Some(codec) if codec == "h264" || codec == "avc1" => VideoMode::Copy,
+            _ => VideoMode::H264,
+        },
+        concrete => concrete.clone(),
+    }
+}
+
 pub fn output_url(request: &StartPipelineRequest) -> Option<String> {
     // В текущей модели URL существует для обоих вариантов, но Option оставляет
     // возможность позднее добавить output без публичного URL, например S3.
@@ -191,18 +217,37 @@ pub fn redact_url(value: &str) -> String {
             if url.password().is_some() {
                 let _ = url.set_password(Some("***"));
             }
-            url.to_string()
+            redact_xm_password(&url.to_string())
         }
         Err(_) => "<invalid-url>".into(),
     }
+}
+
+/// XM-NVR хранит credentials не в стандартном userinfo URL, а прямо в path:
+/// `_password=secret_channel=8`. Поэтому обычный parser URL их не скрывает.
+fn redact_xm_password(value: &str) -> String {
+    let Some(marker_start) = value.find("_password=") else {
+        return value.to_string();
+    };
+    let password_start = marker_start + "_password=".len();
+    let password_tail = &value[password_start..];
+    let password_end = password_tail
+        .find("_channel=")
+        .or_else(|| password_tail.find("_stream="))
+        .map(|offset| password_start + offset)
+        .unwrap_or(value.len());
+
+    let mut redacted = value.to_string();
+    redacted.replace_range(password_start..password_end, "***");
+    redacted
 }
 
 pub fn sanitize_message(message: &str, source_url: &str) -> String {
     // FFmpeg иногда повторяет полный URL в stderr. Заменяем его целиком и
     // ограничиваем объём ошибки пятью строками.
     let redacted = redact_url(source_url);
-    message
-        .replace(source_url, &redacted)
+    let sanitized = redact_xm_password(&message.replace(source_url, &redacted));
+    sanitized
         .lines()
         .take(5)
         .collect::<Vec<_>>()
@@ -228,7 +273,9 @@ mod tests {
 
     use crate::model::{Output, RtspTransport, StartPipelineRequest, VideoMode};
 
-    use super::{build_args, parse_frame_rate, redact_url, sanitize_message};
+    use super::{
+        build_args, effective_video_mode, parse_frame_rate, redact_url, sanitize_message,
+    };
 
     fn request() -> StartPipelineRequest {
         StartPipelineRequest {
@@ -261,8 +308,40 @@ mod tests {
     }
 
     #[test]
+    fn xm_password_is_redacted() {
+        let url = "rtsp://nvr.local/user=rt_password=secret_channel=8_stream=1.sdp?real_stream";
+        let value = redact_url(url);
+        assert!(!value.contains("secret"));
+        assert!(value.contains("_password=***_channel=8"));
+
+        let diagnostic = sanitize_message(
+            "server rejected /user=rt_password=secret_channel=8_stream=1.sdp",
+            url,
+        );
+        assert!(!diagnostic.contains("secret"));
+    }
+
+    #[test]
+    fn auto_copies_h264_and_transcodes_hevc() {
+        assert_eq!(
+            effective_video_mode(&VideoMode::Auto, Some("h264")),
+            VideoMode::Copy
+        );
+        assert_eq!(
+            effective_video_mode(&VideoMode::Auto, Some("hevc")),
+            VideoMode::H264
+        );
+        assert_eq!(
+            effective_video_mode(&VideoMode::Auto, None),
+            VideoMode::H264
+        );
+    }
+
+    #[test]
     fn builds_hls_arguments_without_shell() {
-        let args = build_args(&request(), Path::new("/data")).unwrap();
+        let args = build_args(&request(), Path::new("/data"), Some("h264")).unwrap();
+        assert!(args.contains(&"-timeout".to_string()));
+        assert!(!args.contains(&"-rw_timeout".to_string()));
         assert!(args.contains(&"copy".to_string()));
         assert!(args
             .last()
@@ -277,7 +356,7 @@ mod tests {
             url: "rtsp://mediamtx:8554/camera".into(),
         };
 
-        let args = build_args(&request, Path::new("/data")).unwrap();
+        let args = build_args(&request, Path::new("/data"), Some("h264")).unwrap();
         let output_url_position = args
             .iter()
             .position(|arg| arg == "rtsp://mediamtx:8554/camera")

@@ -4,14 +4,19 @@
 //! каждой камеры отдельная Tokio task выполняет `supervise`: запускает FFmpeg,
 //! ждёт его завершения и при необходимости делает reconnect.
 
-use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    process::{ExitStatus, Stdio},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use tokio::{
     fs,
     io::{AsyncBufReadExt, BufReader},
     process::Command,
-    sync::{watch, Mutex, RwLock},
+    sync::{oneshot, watch, Mutex, RwLock},
     task::JoinHandle,
     time::sleep,
 };
@@ -50,6 +55,18 @@ struct PipelineControl {
     task: Mutex<Option<JoinHandle<()>>>,
     /// Для RTSP-output равно None; для HLS указывает строго на каталог камеры.
     cleanup_dir: Option<std::path::PathBuf>,
+}
+
+/// Результат ожидания реальной готовности только что запущенного FFmpeg.
+enum StartupOutcome {
+    /// FFmpeg сообщил progress=continue: кадры уже проходят через output.
+    Ready,
+    /// Получена команда остановки или закрыт управляющий канал.
+    Stopped,
+    /// Процесс завершился до появления первого output progress.
+    Exited(Option<ExitStatus>),
+    /// Процесс существует, но не начал обрабатывать кадры за допустимое время.
+    TimedOut,
 }
 
 /// Потокобезопасный реестр всех активных пайплайнов данного агента.
@@ -229,18 +246,33 @@ async fn supervise(
 ) {
     // Ошибка probe не запрещает запуск: некоторые NVR нестабильно отвечают
     // ffprobe, хотя последующий длительный FFmpeg успешно подключается.
-    match ffmpeg::probe(&config.ffprobe_bin, &request, config.probe_timeout).await {
-        Ok(probe) => status.write().await.probe = Some(probe),
+    let detected_codec = match ffmpeg::probe(
+        &config.ffprobe_bin,
+        &request,
+        config.probe_timeout,
+    )
+    .await
+    {
+        Ok(probe) => {
+            let codec = probe.codec.clone();
+            status.write().await.probe = Some(probe);
+            Some(codec)
+        }
         Err(error) => {
             let message = error.to_string();
             warn!(camera_id = %request.camera_id, error = %message, "RTSP probe failed");
             let mut current = status.write().await;
             current.last_error = Some(message);
             current.touch();
+            None
         }
-    }
+    };
 
-    let args = match ffmpeg::build_args(&request, &config.data_dir) {
+    let args = match ffmpeg::build_args(
+        &request,
+        &config.data_dir,
+        detected_codec.as_deref(),
+    ) {
         Ok(args) => args,
         Err(error) => {
             fail_status(&status, error.to_string()).await;
@@ -267,7 +299,8 @@ async fn supervise(
         let mut child = match Command::new(&config.ffmpeg_bin)
             .args(&args)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            // stdout содержит только machine-readable данные `-progress pipe:1`.
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // Защита от orphan process: если объект Child неожиданно потерян,
             // Tokio посылает дочернему процессу kill.
@@ -297,12 +330,18 @@ async fn supervise(
         let pid = child.id();
         {
             let mut current = status.write().await;
-            current.state = PipelineState::Running;
+            // Наличие PID ещё не доказывает, что FFmpeg открыл output. Поэтому
+            // до первой progress-записи pipeline остаётся в STARTING.
+            current.state = PipelineState::Starting;
             current.pid = pid;
             current.output_url = ffmpeg::output_url(&request);
             current.last_error = None;
             current.touch();
         }
+
+        // Храним последние диагностические строки отдельно от logger, чтобы
+        // после exit они попали в наблюдаемый PipelineStatus.lastError.
+        let recent_stderr = Arc::new(Mutex::new(VecDeque::<String>::with_capacity(5)));
 
         // `take()` перемещает stderr из Option внутри Child, оставляя None.
         // Отдельная task читает pipe, чтобы его буфер не заполнился и не
@@ -310,45 +349,137 @@ async fn supervise(
         let stderr_task = child.stderr.take().map(|stderr| {
             let camera_id = request.camera_id;
             let source_url = request.rtsp_url.clone();
+            let recent_stderr = recent_stderr.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let safe_line = ffmpeg::sanitize_message(&line, &source_url);
+                    let mut recent = recent_stderr.lock().await;
+                    if recent.len() == 5 {
+                        recent.pop_front();
+                    }
+                    recent.push_back(safe_line.clone());
+                    drop(recent);
                     warn!(camera_id = %camera_id, ffmpeg = %safe_line, "FFmpeg diagnostic");
                 }
             })
         });
 
-        // Гонка двух событий: команда stop или самостоятельное завершение FFmpeg.
-        let exit_result = tokio::select! {
+        // `oneshot` передаёт ровно одно подтверждение от progress-reader.
+        let (ready_tx, mut ready_rx) = oneshot::channel();
+        let stdout_task = child.stdout.take().map(|stdout| {
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                let mut ready_tx = Some(ready_tx);
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if line == "progress=continue" {
+                        if let Some(sender) = ready_tx.take() {
+                            let _ = sender.send(());
+                        }
+                    }
+                }
+            })
+        });
+
+        // FFmpeg считается готовым только после обработки первых кадров.
+        let startup = tokio::select! {
+            ready = &mut ready_rx => {
+                if ready.is_ok() {
+                    StartupOutcome::Ready
+                } else {
+                    StartupOutcome::Exited(child.wait().await.ok())
+                }
+            }
             changed = stop_rx.changed() => {
                 if changed.is_err() || *stop_rx.borrow() {
                     if let Err(error) = terminate_child(&mut child).await {
                         warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
                     }
-                    None
+                    StartupOutcome::Stopped
                 } else {
-                    child.wait().await.ok()
+                    StartupOutcome::Exited(child.wait().await.ok())
                 }
             }
-            result = child.wait() => result.ok(),
+            result = child.wait() => StartupOutcome::Exited(result.ok()),
+            _ = sleep(config.ready_timeout) => {
+                if let Err(error) = terminate_child(&mut child).await {
+                    warn!(camera_id = %request.camera_id, error = %error, "failed to terminate unready FFmpeg");
+                }
+                StartupOutcome::TimedOut
+            }
         };
 
-        // После завершения процесса дополнительный reader больше не нужен.
+        let (exit_result, startup_error, stop_received) = match startup {
+            StartupOutcome::Ready => {
+                {
+                    let mut current = status.write().await;
+                    current.state = PipelineState::Running;
+                    current.last_error = None;
+                    current.touch();
+                }
+                // После успешного запуска следующая авария снова начинает
+                // reconnect с одной секунды, а не с накопленных 30 секунд.
+                backoff = Duration::from_secs(1);
+                let (exit_result, stop_received) = tokio::select! {
+                    changed = stop_rx.changed() => {
+                        if changed.is_err() || *stop_rx.borrow() {
+                            if let Err(error) = terminate_child(&mut child).await {
+                                warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
+                            }
+                            (None, true)
+                        } else {
+                            (child.wait().await.ok(), false)
+                        }
+                    }
+                    result = child.wait() => (result.ok(), false),
+                };
+                (exit_result, None, stop_received)
+            }
+            StartupOutcome::Stopped => (None, None, true),
+            StartupOutcome::Exited(exit) => (exit, None, false),
+            StartupOutcome::TimedOut => (
+                None,
+                Some(format!(
+                    "FFmpeg did not produce output progress within {} seconds",
+                    config.ready_timeout.as_secs()
+                )),
+                false,
+            ),
+        };
+
+        // После завершения процесса дочитываем pipes, включая последние строки
+        // stderr, вместо немедленного abort diagnostic task.
         if let Some(task) = stderr_task {
-            task.abort();
+            let _ = task.await;
+        }
+        if let Some(task) = stdout_task {
+            let _ = task.await;
         }
 
-        if *stop_rx.borrow() {
+        if stop_received || *stop_rx.borrow() {
             stopped_status(&status).await;
             return;
         }
 
         metrics.process_failures.inc();
-        let message = match exit_result {
-            Some(exit) => format!("FFmpeg exited with {exit}"),
-            None => "FFmpeg wait failed".into(),
+        let mut message = match startup_error {
+            Some(error) => error,
+            None => match exit_result {
+                Some(exit) => format!("FFmpeg exited with {exit}"),
+                None => "FFmpeg wait failed".into(),
+            },
         };
+        let diagnostic = recent_stderr
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        if !diagnostic.is_empty() {
+            message.push_str(": ");
+            message.push_str(&diagnostic);
+        }
         if !request.reconnect {
             fail_status(&status, message).await;
             return;

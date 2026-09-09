@@ -29,11 +29,6 @@ public class IngestAgentProperties {
 
     private String publicHlsPrefix = "/media-hls";
 
-    /**
-     * Agent supports COPY or H264. H264 is the safe AUTO fallback for an H.265 NVR.
-     */
-    private String autoVideoMode = "H264";
-
     public String publishUrl(UUID cameraId) {
         return withoutTrailingSlash(publishRtspBaseUrl) + "/" + cameraId;
     }

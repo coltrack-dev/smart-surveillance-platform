@@ -14,7 +14,9 @@ camera metadata and orchestration.
 - one active pipeline per camera;
 - RTSP publishing to MediaMTX or rolling HLS output;
 - built-in HTTP delivery of generated HLS playlists and segments;
-- codec copy or H.264 transcoding;
+- codec copy, H.264 transcoding or automatic selection after ffprobe;
+- `RUNNING` only after FFmpeg reports real output progress;
+- last FFmpeg diagnostics in pipeline `lastError`;
 - exponential reconnect (1–30 seconds);
 - FFmpeg termination and reaping on stop/shutdown;
 - removal of generated HLS files on stop;
@@ -32,6 +34,7 @@ Prerequisites: Rust toolchain, FFmpeg and ffprobe.
 ```bash
 export AGENT_API_TOKEN=change-me
 export AGENT_BIND=127.0.0.1:8098
+export AGENT_READY_TIMEOUT_SECONDS=30
 cargo run
 ```
 

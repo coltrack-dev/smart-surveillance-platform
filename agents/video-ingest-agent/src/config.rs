@@ -28,6 +28,8 @@ pub struct Config {
     pub ffprobe_bin: String,
     /// Максимальное время предварительной проверки RTSP.
     pub probe_timeout: Duration,
+    /// Максимальное ожидание первого подтверждения обработки кадров FFmpeg.
+    pub ready_timeout: Duration,
 }
 
 impl Config {
@@ -46,6 +48,11 @@ impl Config {
             .parse::<u64>()
             .context("AGENT_PROBE_TIMEOUT_SECONDS must be an integer")?;
 
+        let ready_timeout_seconds = env::var("AGENT_READY_TIMEOUT_SECONDS")
+            .unwrap_or_else(|_| "30".into())
+            .parse::<u64>()
+            .context("AGENT_READY_TIMEOUT_SECONDS must be an integer")?;
+
         Ok(Self {
             bind,
             agent_id: env::var("AGENT_ID").unwrap_or_else(|_| "media-node-01".into()),
@@ -58,6 +65,7 @@ impl Config {
             ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
             probe_timeout: Duration::from_secs(probe_timeout_seconds),
+            ready_timeout: Duration::from_secs(ready_timeout_seconds),
         })
     }
 }

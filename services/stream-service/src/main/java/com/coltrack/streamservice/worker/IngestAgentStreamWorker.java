@@ -13,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -87,24 +86,20 @@ public class IngestAgentStreamWorker implements Runnable {
                 cameraId,
                 session.getRtspUrl(),
                 "TCP",
-                agentVideoMode(session.getVideoProcessingMode(), properties.getAutoVideoMode()),
+                agentVideoMode(session.getVideoProcessingMode()),
                 AgentOutput.rtsp(properties.publishUrl(cameraId)),
                 true
         );
     }
 
-    static String agentVideoMode(VideoProcessingMode mode, String autoVideoMode) {
-        String selected = switch (mode) {
+    static String agentVideoMode(VideoProcessingMode mode) {
+        return switch (mode) {
             case COPY -> "COPY";
             case TRANSCODE_H264 -> "H264";
-            case AUTO -> autoVideoMode.toUpperCase(Locale.ROOT);
+            // Агент выполнит ffprobe и сам выберет COPY для H.264 либо
+            // перекодирование для HEVC и неизвестного кодека.
+            case AUTO -> "AUTO";
         };
-        if (!selected.equals("COPY") && !selected.equals("H264")) {
-            throw new IllegalArgumentException(
-                    "stream.ingest-agent.auto-video-mode must be COPY or H264"
-            );
-        }
-        return selected;
     }
 
     private void applyStatus(AgentPipelineStatus status, AgentPipelineState previousState) {

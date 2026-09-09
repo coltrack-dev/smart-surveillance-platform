@@ -4,7 +4,6 @@ import com.coltrack.streamservice.model.VideoProcessingMode;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class IngestAgentStreamWorkerTest {
 
@@ -12,29 +11,15 @@ class IngestAgentStreamWorkerTest {
     void mapsExistingVideoModesToAgentContract() {
         assertEquals(
                 "COPY",
-                IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.COPY, "H264")
+                IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.COPY)
         );
         assertEquals(
                 "H264",
-                IngestAgentStreamWorker.agentVideoMode(
-                        VideoProcessingMode.TRANSCODE_H264,
-                        "COPY"
-                )
+                IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.TRANSCODE_H264)
         );
         assertEquals(
-                "H264",
-                IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.AUTO, "h264")
-        );
-    }
-
-    @Test
-    void rejectsUnsupportedAutoModeBeforeCallingAgent() {
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> IngestAgentStreamWorker.agentVideoMode(
-                        VideoProcessingMode.AUTO,
-                        "AUTO"
-                )
+                "AUTO",
+                IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.AUTO)
         );
     }
 }
