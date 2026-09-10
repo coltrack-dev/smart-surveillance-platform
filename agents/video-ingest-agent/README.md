@@ -37,6 +37,7 @@ Prerequisites: Rust toolchain, FFmpeg and ffprobe.
 export AGENT_API_TOKEN=change-me
 export AGENT_BIND=127.0.0.1:8098
 export AGENT_READY_TIMEOUT_SECONDS=30
+export AGENT_OUTPUT_READY_TIMEOUT_SECONDS=15
 export AGENT_OUTPUT_STALL_TIMEOUT_SECONDS=15
 cargo run
 ```
@@ -125,6 +126,12 @@ Pipeline status includes `lastProgressAtEpochMs` and `lastOutputTimeMs`.
 progress blocks, while `lastOutputTimeMs` must advance with output media time.
 If it remains unchanged for `AGENT_OUTPUT_STALL_TIMEOUT_SECONDS`, the agent
 terminates FFmpeg and follows the configured reconnect policy.
+
+For RTSP output the agent keeps the pipeline in `STARTING` after the first
+FFmpeg progress block until ffprobe can open the published MediaMTX URL and
+find its video stream. If the output is still unavailable after
+`AGENT_OUTPUT_READY_TIMEOUT_SECONDS`, FFmpeg is restarted according to the
+same reconnect policy instead of exposing a false `RUNNING` state.
 
 ## Integration boundary
 

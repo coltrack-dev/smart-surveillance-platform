@@ -30,6 +30,8 @@ pub struct Config {
     pub probe_timeout: Duration,
     /// Максимальное ожидание первого подтверждения обработки кадров FFmpeg.
     pub ready_timeout: Duration,
+    /// Максимальное ожидание доступности опубликованного RTSP-output.
+    pub output_ready_timeout: Duration,
     /// Максимальное время без продвижения output timestamp после запуска.
     pub output_stall_timeout: Duration,
 }
@@ -60,6 +62,14 @@ impl Config {
             .parse::<u64>()
             .context("AGENT_OUTPUT_STALL_TIMEOUT_SECONDS must be an integer")?;
 
+        let output_ready_timeout_seconds = env::var("AGENT_OUTPUT_READY_TIMEOUT_SECONDS")
+            .unwrap_or_else(|_| "15".into())
+            .parse::<u64>()
+            .context("AGENT_OUTPUT_READY_TIMEOUT_SECONDS must be an integer")?;
+
+        if output_ready_timeout_seconds == 0 {
+            anyhow::bail!("AGENT_OUTPUT_READY_TIMEOUT_SECONDS must be positive");
+        }
         if output_stall_timeout_seconds == 0 {
             anyhow::bail!("AGENT_OUTPUT_STALL_TIMEOUT_SECONDS must be positive");
         }
@@ -77,6 +87,7 @@ impl Config {
             ffprobe_bin: env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
             probe_timeout: Duration::from_secs(probe_timeout_seconds),
             ready_timeout: Duration::from_secs(ready_timeout_seconds),
+            output_ready_timeout: Duration::from_secs(output_ready_timeout_seconds),
             output_stall_timeout: Duration::from_secs(output_stall_timeout_seconds),
         })
     }

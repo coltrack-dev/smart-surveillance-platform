@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tokio::{process::Command, time::timeout};
 use url::Url;
 
-use crate::model::{Output, ProbeInfo, StartPipelineRequest, VideoMode};
+use crate::model::{Output, ProbeInfo, RtspTransport, StartPipelineRequest, VideoMode};
 
 // Эти приватные структуры повторяют только нужную часть JSON ffprobe.
 // Serde проигнорирует все остальные поля ответа.
@@ -33,6 +33,22 @@ pub async fn probe(
     request: &StartPipelineRequest,
     probe_timeout: Duration,
 ) -> Result<ProbeInfo> {
+    probe_rtsp_url(
+        ffprobe_bin,
+        &request.rtsp_url,
+        &request.transport,
+        probe_timeout,
+    )
+    .await
+}
+
+/// Проверяет произвольный RTSP URL, включая опубликованный output MediaMTX.
+pub async fn probe_rtsp_url(
+    ffprobe_bin: &str,
+    rtsp_url: &str,
+    transport: &RtspTransport,
+    probe_timeout: Duration,
+) -> Result<ProbeInfo> {
     // timeout оборачивает Future запуска процесса. `kill_on_drop(true)` важен:
     // если timeout истечёт, незавершённый дочерний ffprobe будет уничтожен.
     let output = timeout(
@@ -41,14 +57,14 @@ pub async fn probe(
             .arg("-v")
             .arg("error")
             .arg("-rtsp_transport")
-            .arg(request.transport.as_ffmpeg_value())
+            .arg(transport.as_ffmpeg_value())
             .arg("-select_streams")
             .arg("v:0")
             .arg("-show_entries")
             .arg("stream=codec_name,width,height,avg_frame_rate")
             .arg("-of")
             .arg("json")
-            .arg(&request.rtsp_url)
+            .arg(rtsp_url)
             // piped позволяет родительскому процессу получить stdout/stderr.
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -65,7 +81,7 @@ pub async fn probe(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow!(
             "ffprobe failed: {}",
-            sanitize_message(&stderr, &request.rtsp_url)
+            sanitize_message(&stderr, rtsp_url)
         ));
     }
 

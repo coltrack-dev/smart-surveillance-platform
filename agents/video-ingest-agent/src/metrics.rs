@@ -16,6 +16,8 @@ pub struct Metrics {
     pub process_failures: IntCounter,
     pub reconnects: IntCounter,
     pub progress_updates: IntCounter,
+    pub output_readiness_successes: IntCounter,
+    pub output_readiness_failures: IntCounter,
     pub output_stalls: IntCounter,
     pub last_progress_timestamp_seconds: IntGauge,
 }
@@ -45,6 +47,14 @@ impl Metrics {
             "video_ingest_progress_updates_total",
             "Number of FFmpeg output progress updates",
         )?;
+        let output_readiness_successes = IntCounter::new(
+            "video_ingest_output_readiness_successes_total",
+            "Number of published RTSP outputs confirmed by ffprobe",
+        )?;
+        let output_readiness_failures = IntCounter::new(
+            "video_ingest_output_readiness_failures_total",
+            "Number of published RTSP outputs that missed their readiness deadline",
+        )?;
         let output_stalls = IntCounter::new(
             "video_ingest_output_stalls_total",
             "Number of FFmpeg processes restarted because output stopped advancing",
@@ -61,6 +71,8 @@ impl Metrics {
         registry.register(Box::new(process_failures.clone()))?;
         registry.register(Box::new(reconnects.clone()))?;
         registry.register(Box::new(progress_updates.clone()))?;
+        registry.register(Box::new(output_readiness_successes.clone()))?;
+        registry.register(Box::new(output_readiness_failures.clone()))?;
         registry.register(Box::new(output_stalls.clone()))?;
         registry.register(Box::new(last_progress_timestamp_seconds.clone()))?;
 
@@ -71,6 +83,8 @@ impl Metrics {
             process_failures,
             reconnects,
             progress_updates,
+            output_readiness_successes,
+            output_readiness_failures,
             output_stalls,
             last_progress_timestamp_seconds,
         })
