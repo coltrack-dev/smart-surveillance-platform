@@ -433,7 +433,7 @@ public class CameraStreamWorker implements Runnable {
      * v
      * HLS playlist + segments
      */
-    private List<String> buildCommand(
+    List<String> buildCommand(
             Path outputDir
     ) throws IOException, InterruptedException {
 
@@ -457,6 +457,10 @@ public class CameraStreamWorker implements Runnable {
                 "-hide_banner",
                 "-loglevel", "warning",
                 "-rtsp_transport", "tcp",
+                // Some NVRs advertise the correct FPS while advancing packet
+                // timestamps slower than wall time. Use packet arrival time so
+                // a two-second HLS segment is also produced in about two seconds.
+                "-use_wallclock_as_timestamps", "1",
                 "-i", session.getRtspUrl(),
                 "-map", "0:v:0",
                 "-an"

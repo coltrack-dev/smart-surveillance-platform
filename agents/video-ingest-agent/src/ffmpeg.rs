@@ -128,6 +128,13 @@ pub fn build_args(
         // Значение задаётся в микросекундах: 5_000_000 = 5 секунд.
         "-timeout".into(),
         "5000000".into(),
+        // Некоторые NVR передают корректную номинальную частоту кадров, но их
+        // timestamps идут медленнее реального времени. Тогда двухсекундный HLS-
+        // сегмент физически создаётся дольше двух секунд, и браузер регулярно
+        // опустошает буфер. Wall-clock timestamps привязывают входные пакеты ко
+        // времени их получения и сохраняют реальную скорость live-потока.
+        "-use_wallclock_as_timestamps".into(),
+        "1".into(),
         "-i".into(),
         request.rtsp_url.clone(),
         "-map".into(),
@@ -383,6 +390,15 @@ mod tests {
             .last()
             .unwrap()
             .ends_with("/hls/00000000-0000-0000-0000-000000000000/index.m3u8"));
+    }
+
+    #[test]
+    fn uses_wallclock_timestamps_for_rtsp_input() {
+        let args = build_args(&request(), Path::new("/data"), Some("h264")).unwrap();
+        let input_position = args.iter().position(|arg| arg == "-i").unwrap();
+
+        assert_eq!(args[input_position - 2], "-use_wallclock_as_timestamps");
+        assert_eq!(args[input_position - 1], "1");
     }
 
     #[test]
