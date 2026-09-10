@@ -11,8 +11,12 @@ import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.model.VideoProcessingMode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -21,6 +25,8 @@ import java.util.UUID;
 @Slf4j
 @RequiredArgsConstructor
 public class IngestAgentStreamWorker implements Runnable {
+
+    private static final Duration MAX_RECONNECT_DELAY = Duration.ofSeconds(5);
 
     private final StreamSession session;
     private final IngestAgentClient client;
@@ -32,11 +38,49 @@ public class IngestAgentStreamWorker implements Runnable {
         session.setWorkerRunning(true);
         AgentPipelineState previousState = null;
         boolean stoppedPublished = false;
+        boolean pipelineObserved = false;
+        Duration reconnectDelay = properties.getPollInterval();
+        AgentStartPipelineRequest request = startRequest();
 
         try {
-            AgentPipelineStatus status = client.start(startRequest());
-
             while (!session.isStopRequested()) {
+                AgentPipelineStatus status;
+                try {
+                    if (!pipelineObserved) {
+                        // Повторяется тот же request: если POST дошёл до агента,
+                        // но ответ потерялся, commandId обеспечивает идемпотентность.
+                        status = client.start(request);
+                    } else {
+                        Optional<AgentPipelineStatus> existing =
+                                client.find(session.getCameraId());
+                        if (existing.isPresent()) {
+                            status = existing.get();
+                        } else {
+                            previousState = communicationReconnecting(
+                                    previousState,
+                                    "Ingest agent lost pipeline state"
+                            );
+                            status = client.start(request);
+                        }
+                    }
+                    pipelineObserved = true;
+                    reconnectDelay = properties.getPollInterval();
+                } catch (ResourceAccessException | HttpServerErrorException communicationError) {
+                    previousState = communicationReconnecting(
+                            previousState,
+                            "Ingest agent communication failed: " + communicationError.getMessage()
+                    );
+                    log.warn(
+                            "Waiting to reconnect to ingest agent camera={}, delay={}",
+                            session.getCameraId(),
+                            reconnectDelay,
+                            communicationError
+                    );
+                    sleep(reconnectDelay);
+                    reconnectDelay = nextReconnectDelay(reconnectDelay);
+                    continue;
+                }
+
                 applyStatus(status, previousState);
 
                 if (status.state() == AgentPipelineState.FAILED) {
@@ -50,11 +94,7 @@ public class IngestAgentStreamWorker implements Runnable {
                 }
 
                 previousState = status.state();
-                sleep();
-
-                if (!session.isStopRequested()) {
-                    status = client.get(session.getCameraId());
-                }
+                sleep(properties.getPollInterval());
             }
 
             client.stop(session.getCameraId());
@@ -136,7 +176,26 @@ public class IngestAgentStreamWorker implements Runnable {
         }
     }
 
-    private void sleep() throws InterruptedException {
-        Thread.sleep(properties.getPollInterval());
+    private AgentPipelineState communicationReconnecting(
+            AgentPipelineState previousState,
+            String message
+    ) {
+        session.setStatus(StreamStatus.RECONNECTING);
+        session.setLastError(message);
+        if (previousState != AgentPipelineState.RECONNECTING) {
+            listener.reconnecting(session);
+        }
+        return AgentPipelineState.RECONNECTING;
+    }
+
+    private Duration nextReconnectDelay(Duration current) {
+        Duration doubled = current.multipliedBy(2);
+        return doubled.compareTo(MAX_RECONNECT_DELAY) > 0
+                ? MAX_RECONNECT_DELAY
+                : doubled;
+    }
+
+    private void sleep(Duration duration) throws InterruptedException {
+        Thread.sleep(duration);
     }
 }

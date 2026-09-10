@@ -1,9 +1,27 @@
 package com.coltrack.streamservice.worker;
 
+import com.coltrack.streamservice.client.IngestAgentClient;
+import com.coltrack.streamservice.client.dto.agent.AgentPipelineState;
+import com.coltrack.streamservice.client.dto.agent.AgentPipelineStatus;
+import com.coltrack.streamservice.client.dto.agent.AgentStartPipelineRequest;
+import com.coltrack.streamservice.config.IngestAgentProperties;
+import com.coltrack.streamservice.model.StreamSession;
+import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.model.VideoProcessingMode;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.web.client.ResourceAccessException;
+
+import java.time.Duration;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class IngestAgentStreamWorkerTest {
 
@@ -21,5 +39,85 @@ class IngestAgentStreamWorkerTest {
                 "AUTO",
                 IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.AUTO)
         );
+    }
+
+    @Test
+    void recreatesMissingPipelineWithTheSameCommandId() {
+        UUID cameraId = UUID.randomUUID();
+        StreamSession session = session(cameraId);
+        IngestAgentClient client = mock(IngestAgentClient.class);
+        StreamListener listener = mock(StreamListener.class);
+        IngestAgentProperties properties = properties();
+        AgentPipelineStatus starting = status(AgentPipelineState.STARTING);
+        AgentPipelineStatus running = status(AgentPipelineState.RUNNING);
+        AgentPipelineStatus stopped = status(AgentPipelineState.STOPPED);
+
+        when(client.find(cameraId)).thenReturn(
+                Optional.of(running),
+                Optional.empty(),
+                Optional.of(stopped)
+        );
+        when(client.start(any())).thenReturn(starting);
+
+        new IngestAgentStreamWorker(session, client, properties, listener).run();
+
+        ArgumentCaptor<AgentStartPipelineRequest> requests =
+                ArgumentCaptor.forClass(AgentStartPipelineRequest.class);
+        verify(client, times(2)).start(requests.capture());
+        assertEquals(
+                requests.getAllValues().get(0).commandId(),
+                requests.getAllValues().get(1).commandId()
+        );
+        verify(listener).reconnecting(session);
+        verify(listener).started(session);
+        verify(listener).stopped(session);
+    }
+
+    @Test
+    void retriesAfterTemporaryAgentCommunicationFailure() {
+        UUID cameraId = UUID.randomUUID();
+        StreamSession session = session(cameraId);
+        IngestAgentClient client = mock(IngestAgentClient.class);
+        StreamListener listener = mock(StreamListener.class);
+        IngestAgentProperties properties = properties();
+        AgentPipelineStatus starting = status(AgentPipelineState.STARTING);
+        AgentPipelineStatus running = status(AgentPipelineState.RUNNING);
+        AgentPipelineStatus stopped = status(AgentPipelineState.STOPPED);
+
+        when(client.find(cameraId))
+                .thenThrow(new ResourceAccessException("connection refused"))
+                .thenReturn(Optional.of(running))
+                .thenReturn(Optional.of(stopped));
+        when(client.start(any())).thenReturn(starting);
+
+        new IngestAgentStreamWorker(session, client, properties, listener).run();
+
+        verify(client, times(3)).find(cameraId);
+        verify(client).start(any());
+        verify(listener).reconnecting(session);
+        verify(listener).started(session);
+        verify(listener).stopped(session);
+    }
+
+    private StreamSession session(UUID cameraId) {
+        return StreamSession.builder()
+                .cameraId(cameraId)
+                .rtspUrl("rtsp://camera.test/live")
+                .videoProcessingMode(VideoProcessingMode.AUTO)
+                .status(StreamStatus.STARTING)
+                .build();
+    }
+
+    private IngestAgentProperties properties() {
+        IngestAgentProperties properties = new IngestAgentProperties();
+        properties.setPollInterval(Duration.ZERO);
+        properties.setPublishRtspBaseUrl("rtsp://mediamtx:8554");
+        return properties;
+    }
+
+    private AgentPipelineStatus status(AgentPipelineState state) {
+        AgentPipelineStatus status = mock(AgentPipelineStatus.class);
+        when(status.state()).thenReturn(state);
+        return status;
     }
 }

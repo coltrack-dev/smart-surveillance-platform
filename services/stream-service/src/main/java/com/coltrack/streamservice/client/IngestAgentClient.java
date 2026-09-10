@@ -11,6 +11,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -36,7 +37,12 @@ public class IngestAgentClient {
         } catch (HttpClientErrorException.Conflict conflict) {
             // A stream-service restart can leave a healthy pipeline in the agent.
             // Reconcile with that pipeline instead of creating a duplicate FFmpeg.
-            AgentPipelineStatus existing = get(request.cameraId());
+            AgentPipelineStatus existing = find(request.cameraId()).orElse(null);
+            if (existing == null) {
+                // The pipeline can disappear between POST conflict and GET when
+                // another stop or an agent restart races with reconciliation.
+                return postStart(request);
+            }
             if (existing.state() != AgentPipelineState.FAILED) {
                 return existing;
             }
@@ -65,6 +71,14 @@ public class IngestAgentClient {
                 .retrieve()
                 .body(AgentPipelineStatus.class);
         return Objects.requireNonNull(status, "ingest agent returned an empty status response");
+    }
+
+    public Optional<AgentPipelineStatus> find(UUID cameraId) {
+        try {
+            return Optional.of(get(cameraId));
+        } catch (HttpClientErrorException.NotFound notFound) {
+            return Optional.empty();
+        }
     }
 
     public AgentPipelineStatus stop(UUID cameraId) {

@@ -26,8 +26,10 @@ camera metadata and orchestration.
 - bearer-token protection;
 - health endpoint and Prometheus metrics.
 
-This MVP keeps desired state in memory. The controlling `stream-service` should
-reconcile its desired state with `GET /v1/pipelines` after either side restarts.
+The agent keeps its actual pipeline state in memory. `IngestAgentStreamWorker`
+retains the desired start request and recreates a missing pipeline with the same
+`commandId` after an agent restart. Temporary connection and server errors keep
+the Java worker in `RECONNECTING` with bounded retry backoff.
 
 ## Run
 
