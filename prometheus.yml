@@ -7,3 +7,9 @@ scrape_configs:
     static_configs:
       - targets:
           - host.docker.internal:8094
+
+  - job_name: video-ingest-agent
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - video-ingest-agent:8098

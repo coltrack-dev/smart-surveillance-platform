@@ -16,9 +16,9 @@ use tokio::{
     fs,
     io::{AsyncBufReadExt, BufReader},
     process::Command,
-    sync::{oneshot, watch, Mutex, RwLock},
+    sync::{mpsc, watch, Mutex, RwLock},
     task::JoinHandle,
-    time::sleep,
+    time::{sleep, sleep_until, Instant},
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -60,13 +60,52 @@ struct PipelineControl {
 /// Результат ожидания реальной готовности только что запущенного FFmpeg.
 enum StartupOutcome {
     /// FFmpeg сообщил progress=continue: кадры уже проходят через output.
-    Ready,
+    Ready(ProgressUpdate),
     /// Получена команда остановки или закрыт управляющий канал.
     Stopped,
     /// Процесс завершился до появления первого output progress.
     Exited(Option<ExitStatus>),
     /// Процесс существует, но не начал обрабатывать кадры за допустимое время.
     TimedOut,
+}
+
+/// Результат наблюдения за FFmpeg после успешного старта.
+enum RunningOutcome {
+    /// Получена команда штатной остановки.
+    Stopped,
+    /// Дочерний процесс завершился сам.
+    Exited(Option<ExitStatus>),
+    /// Процесс жив, но временная позиция output перестала изменяться.
+    Stalled,
+}
+
+/// Один завершённый блок machine-readable `-progress` от FFmpeg.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ProgressUpdate {
+    output_time_ms: Option<u64>,
+}
+
+/// Накапливает отдельные строки одного progress-блока FFmpeg.
+#[derive(Default)]
+struct ProgressParser {
+    output_time_ms: Option<u64>,
+}
+
+impl ProgressParser {
+    fn accept(&mut self, line: &str) -> Option<ProgressUpdate> {
+        // Современный FFmpeg печатает `out_time_us` в микросекундах. Деление
+        // здесь приводит значение к миллисекундам публичного API агента.
+        if let Some(value) = line.strip_prefix("out_time_us=") {
+            self.output_time_ms = value.parse::<u64>().ok().map(|value| value / 1_000);
+            return None;
+        }
+        if line == "progress=continue" {
+            return Some(ProgressUpdate {
+                output_time_ms: self.output_time_ms,
+            });
+        }
+        None
+    }
 }
 
 /// Потокобезопасный реестр всех активных пайплайнов данного агента.
@@ -336,6 +375,8 @@ async fn supervise(
             current.pid = pid;
             current.output_url = ffmpeg::output_url(&request);
             current.last_error = None;
+            current.last_progress_at_epoch_ms = None;
+            current.last_output_time_ms = None;
             current.touch();
         }
 
@@ -365,16 +406,18 @@ async fn supervise(
             })
         });
 
-        // `oneshot` передаёт ровно одно подтверждение от progress-reader.
-        let (ready_tx, mut ready_rx) = oneshot::channel();
+        // Канал передаёт каждый завершённый progress-блок supervisor-у. В отличие
+        // от прежнего oneshot первая запись подтверждает старт, а последующие
+        // служат heartbeat и позволяют обнаружить живой, но зависший FFmpeg.
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
         let stdout_task = child.stdout.take().map(|stdout| {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
-                let mut ready_tx = Some(ready_tx);
+                let mut parser = ProgressParser::default();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if line == "progress=continue" {
-                        if let Some(sender) = ready_tx.take() {
-                            let _ = sender.send(());
+                    if let Some(update) = parser.accept(&line) {
+                        if progress_tx.send(update).is_err() {
+                            break;
                         }
                     }
                 }
@@ -383,9 +426,9 @@ async fn supervise(
 
         // FFmpeg считается готовым только после обработки первых кадров.
         let startup = tokio::select! {
-            ready = &mut ready_rx => {
-                if ready.is_ok() {
-                    StartupOutcome::Ready
+            progress = progress_rx.recv() => {
+                if let Some(progress) = progress {
+                    StartupOutcome::Ready(progress)
                 } else {
                     StartupOutcome::Exited(child.wait().await.ok())
                 }
@@ -410,30 +453,79 @@ async fn supervise(
         };
 
         let (exit_result, startup_error, stop_received) = match startup {
-            StartupOutcome::Ready => {
+            StartupOutcome::Ready(first_progress) => {
                 {
                     let mut current = status.write().await;
                     current.state = PipelineState::Running;
                     current.last_error = None;
-                    current.touch();
+                    current.record_progress(first_progress.output_time_ms);
                 }
+                metrics.record_progress();
                 // После успешного запуска следующая авария снова начинает
                 // reconnect с одной секунды, а не с накопленных 30 секунд.
                 backoff = Duration::from_secs(1);
-                let (exit_result, stop_received) = tokio::select! {
-                    changed = stop_rx.changed() => {
-                        if changed.is_err() || *stop_rx.borrow() {
-                            if let Err(error) = terminate_child(&mut child).await {
-                                warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
+
+                let mut last_output_time_ms = first_progress.output_time_ms;
+                let stall_timer = sleep(config.output_stall_timeout);
+                tokio::pin!(stall_timer);
+                let mut progress_open = true;
+
+                let running = loop {
+                    tokio::select! {
+                        changed = stop_rx.changed() => {
+                            if changed.is_err() || *stop_rx.borrow() {
+                                if let Err(error) = terminate_child(&mut child).await {
+                                    warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
+                                }
+                                break RunningOutcome::Stopped;
                             }
-                            (None, true)
-                        } else {
-                            (child.wait().await.ok(), false)
+                        }
+                        result = child.wait() => {
+                            break RunningOutcome::Exited(result.ok());
+                        }
+                        progress = progress_rx.recv(), if progress_open => {
+                            if let Some(progress) = progress {
+                                {
+                                    let mut current = status.write().await;
+                                    current.record_progress(progress.output_time_ms);
+                                }
+                                metrics.record_progress();
+
+                                // Сам факт строки progress недостаточен: зависший
+                                // muxer может повторять прежнюю временную позицию.
+                                // Таймер сбрасывается только при движении media time.
+                                if output_advanced(last_output_time_ms, progress.output_time_ms) {
+                                    last_output_time_ms = progress.output_time_ms;
+                                    stall_timer.as_mut().reset(
+                                        Instant::now() + config.output_stall_timeout
+                                    );
+                                }
+                            } else {
+                                progress_open = false;
+                            }
+                        }
+                        _ = &mut stall_timer => {
+                            metrics.output_stalls.inc();
+                            if let Err(error) = terminate_child(&mut child).await {
+                                warn!(camera_id = %request.camera_id, error = %error, "failed to terminate stalled FFmpeg");
+                            }
+                            break RunningOutcome::Stalled;
                         }
                     }
-                    result = child.wait() => (result.ok(), false),
                 };
-                (exit_result, None, stop_received)
+
+                match running {
+                    RunningOutcome::Stopped => (None, None, true),
+                    RunningOutcome::Exited(exit) => (exit, None, false),
+                    RunningOutcome::Stalled => (
+                        None,
+                        Some(format!(
+                            "FFmpeg output time did not advance for {} seconds",
+                            config.output_stall_timeout.as_secs()
+                        )),
+                        false,
+                    ),
+                }
             }
             StartupOutcome::Stopped => (None, None, true),
             StartupOutcome::Exited(exit) => (exit, None, false),
@@ -516,6 +608,12 @@ fn next_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(Duration::from_secs(30))
 }
 
+fn output_advanced(previous: Option<u64>, current: Option<u64>) -> bool {
+    // Переход назад также означает движение: некоторые источники сбрасывают
+    // timestamps после внутреннего discontinuity без перезапуска процесса.
+    current.is_some() && current != previous
+}
+
 async fn reconnect_status(status: &RwLock<PipelineStatus>, error: String) {
     // Guard от write().await освобождается автоматически в конце функции (RAII).
     let mut current = status.write().await;
@@ -555,4 +653,119 @@ fn validate_request(request: &StartPipelineRequest) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
+
+    use tokio::time::{sleep, Duration};
+
+    use crate::{
+        config::Config,
+        metrics::Metrics,
+        model::{Output, PipelineState, RtspTransport, StartPipelineRequest, VideoMode},
+    };
+
+    use super::{output_advanced, PipelineManager, ProgressParser};
+
+    #[test]
+    fn parses_ffmpeg_progress_output_time() {
+        let mut parser = ProgressParser::default();
+
+        assert!(parser.accept("out_time_us=1250000").is_none());
+        let progress = parser.accept("progress=continue").unwrap();
+
+        assert_eq!(progress.output_time_ms, Some(1_250));
+    }
+
+    #[test]
+    fn detects_only_media_time_changes_as_progress() {
+        assert!(!output_advanced(Some(1_000), Some(1_000)));
+        assert!(output_advanced(Some(1_000), Some(1_001)));
+        assert!(output_advanced(Some(1_000), Some(10)));
+        assert!(!output_advanced(None, None));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnects_when_fake_ffmpeg_stops_advancing_output() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "video-ingest-agent-watchdog-{}",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&test_dir).await.unwrap();
+        let ffprobe = test_dir.join("fake-ffprobe.sh");
+        let ffmpeg = test_dir.join("fake-ffmpeg.sh");
+
+        write_executable(
+            &ffprobe,
+            "#!/bin/sh\nprintf '%s\\n' '{\"streams\":[{\"codec_name\":\"h264\",\"width\":640,\"height\":360,\"avg_frame_rate\":\"15/1\"}]}'\n",
+        )
+        .await;
+        write_executable(
+            &ffmpeg,
+            "#!/bin/sh\nprintf 'out_time_us=1000000\\nprogress=continue\\n'\nexec sleep 60\n",
+        )
+        .await;
+
+        let metrics = Metrics::new().unwrap();
+        let manager = PipelineManager::new(
+            Config {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                agent_id: "test-agent".into(),
+                api_token: None,
+                data_dir: test_dir.clone(),
+                ffmpeg_bin: ffmpeg.to_string_lossy().into_owned(),
+                ffprobe_bin: ffprobe.to_string_lossy().into_owned(),
+                probe_timeout: Duration::from_secs(1),
+                ready_timeout: Duration::from_secs(1),
+                output_stall_timeout: Duration::from_millis(100),
+            },
+            metrics.clone(),
+        );
+        let camera_id = uuid::Uuid::new_v4();
+        manager
+            .start(StartPipelineRequest {
+                command_id: uuid::Uuid::new_v4(),
+                camera_id,
+                rtsp_url: "rtsp://camera.test/live".into(),
+                transport: RtspTransport::Tcp,
+                video_mode: VideoMode::Copy,
+                output: Output::Rtsp {
+                    url: "rtsp://mediamtx.test:8554/camera".into(),
+                },
+                reconnect: true,
+            })
+            .await
+            .unwrap();
+
+        let status = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let status = manager.get(camera_id).await.unwrap();
+                if status.state == PipelineState::Reconnecting {
+                    break status;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("pipeline did not enter RECONNECTING after output stalled");
+        assert_eq!(status.state, PipelineState::Reconnecting);
+        assert_eq!(status.restart_count, 1);
+        assert_eq!(metrics.output_stalls.get(), 1);
+        assert!(status.last_error.unwrap().contains("did not advance"));
+
+        manager.stop(camera_id).await.unwrap();
+        tokio::fs::remove_dir_all(test_dir).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    async fn write_executable(path: &Path, contents: &str) {
+        tokio::fs::write(path, contents).await.unwrap();
+        tokio::fs::set_permissions(path, Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+    }
 }

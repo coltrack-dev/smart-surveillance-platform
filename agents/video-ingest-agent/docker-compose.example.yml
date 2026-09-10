@@ -8,6 +8,7 @@ services:
       AGENT_BIND: 0.0.0.0:8098
       AGENT_DATA_DIR: /data
       AGENT_API_TOKEN: ${VIDEO_INGEST_AGENT_TOKEN:?set VIDEO_INGEST_AGENT_TOKEN}
+      AGENT_OUTPUT_STALL_TIMEOUT_SECONDS: ${VIDEO_INGEST_AGENT_OUTPUT_STALL_TIMEOUT_SECONDS:-15}
       RUST_LOG: info
     ports:
       - "127.0.0.1:8098:8098"
@@ -19,4 +20,3 @@ services:
 networks:
   surveillance:
     external: true
-

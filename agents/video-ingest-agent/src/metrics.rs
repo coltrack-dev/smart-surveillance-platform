@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use prometheus::{Encoder, IntCounter, IntGauge, Registry, TextEncoder};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Набор metric handles.
 ///
@@ -14,6 +15,9 @@ pub struct Metrics {
     pub process_starts: IntCounter,
     pub process_failures: IntCounter,
     pub reconnects: IntCounter,
+    pub progress_updates: IntCounter,
+    pub output_stalls: IntCounter,
+    pub last_progress_timestamp_seconds: IntGauge,
 }
 
 impl Metrics {
@@ -37,6 +41,18 @@ impl Metrics {
             "video_ingest_reconnects_total",
             "Number of FFmpeg reconnect attempts",
         )?;
+        let progress_updates = IntCounter::new(
+            "video_ingest_progress_updates_total",
+            "Number of FFmpeg output progress updates",
+        )?;
+        let output_stalls = IntCounter::new(
+            "video_ingest_output_stalls_total",
+            "Number of FFmpeg processes restarted because output stopped advancing",
+        )?;
+        let last_progress_timestamp_seconds = IntGauge::new(
+            "video_ingest_last_progress_timestamp_seconds",
+            "Unix timestamp of the most recent FFmpeg output progress update",
+        )?;
 
         // Registry хранит trait object в heap (`Box`). Handle оставляем в
         // структуре, чтобы затем вызывать inc/dec из менеджера.
@@ -44,6 +60,9 @@ impl Metrics {
         registry.register(Box::new(process_starts.clone()))?;
         registry.register(Box::new(process_failures.clone()))?;
         registry.register(Box::new(reconnects.clone()))?;
+        registry.register(Box::new(progress_updates.clone()))?;
+        registry.register(Box::new(output_stalls.clone()))?;
+        registry.register(Box::new(last_progress_timestamp_seconds.clone()))?;
 
         Ok(Self {
             registry,
@@ -51,6 +70,9 @@ impl Metrics {
             process_starts,
             process_failures,
             reconnects,
+            progress_updates,
+            output_stalls,
+            last_progress_timestamp_seconds,
         })
     }
 
@@ -60,5 +82,16 @@ impl Metrics {
         let mut buffer = Vec::new();
         TextEncoder::new().encode(&families, &mut buffer)?;
         Ok(String::from_utf8(buffer)?)
+    }
+
+    /// Учитывает heartbeat FFmpeg и сохраняет время последнего progress агента.
+    pub fn record_progress(&self) {
+        self.progress_updates.inc();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_progress_timestamp_seconds
+            .set(i64::try_from(timestamp).unwrap_or(i64::MAX));
     }
 }

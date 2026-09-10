@@ -133,6 +133,10 @@ pub struct PipelineStatus {
     pub probe: Option<ProbeInfo>,
     pub output_url: Option<String>,
     pub last_error: Option<String>,
+    /// Время последней progress-записи FFmpeg по часам данного агента.
+    pub last_progress_at_epoch_ms: Option<u128>,
+    /// Последняя подтверждённая временная позиция output media.
+    pub last_output_time_ms: Option<u64>,
     pub updated_at_epoch_ms: u128,
 }
 
@@ -150,8 +154,20 @@ impl PipelineStatus {
             probe: None,
             output_url: None,
             last_error: None,
+            last_progress_at_epoch_ms: None,
+            last_output_time_ms: None,
             updated_at_epoch_ms: now_epoch_ms(),
         }
+    }
+
+    /// Сохраняет heartbeat FFmpeg и позицию обработанного output.
+    pub fn record_progress(&mut self, output_time_ms: Option<u64>) {
+        let now = now_epoch_ms();
+        self.last_progress_at_epoch_ms = Some(now);
+        if let Some(output_time_ms) = output_time_ms {
+            self.last_output_time_ms = Some(output_time_ms);
+        }
+        self.updated_at_epoch_ms = now;
     }
 
     /// Обновляет отметку времени после каждого изменения состояния.

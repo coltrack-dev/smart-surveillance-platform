@@ -16,6 +16,8 @@ camera metadata and orchestration.
 - built-in HTTP delivery of generated HLS playlists and segments;
 - codec copy, H.264 transcoding or automatic selection after ffprobe;
 - `RUNNING` only after FFmpeg reports real output progress;
+- continuous output progress watchdog after the pipeline reaches `RUNNING`;
+- automatic reconnect when FFmpeg stays alive but output media time stops;
 - last FFmpeg diagnostics in pipeline `lastError`;
 - exponential reconnect (1–30 seconds);
 - FFmpeg termination and reaping on stop/shutdown;
@@ -35,6 +37,7 @@ Prerequisites: Rust toolchain, FFmpeg and ffprobe.
 export AGENT_API_TOKEN=change-me
 export AGENT_BIND=127.0.0.1:8098
 export AGENT_READY_TIMEOUT_SECONDS=30
+export AGENT_OUTPUT_STALL_TIMEOUT_SECONDS=15
 cargo run
 ```
 
@@ -116,6 +119,12 @@ Prometheus metrics:
 ```bash
 curl http://127.0.0.1:8098/metrics
 ```
+
+Pipeline status includes `lastProgressAtEpochMs` and `lastOutputTimeMs`.
+`lastProgressAtEpochMs` confirms that the agent continues receiving FFmpeg
+progress blocks, while `lastOutputTimeMs` must advance with output media time.
+If it remains unchanged for `AGENT_OUTPUT_STALL_TIMEOUT_SECONDS`, the agent
+terminates FFmpeg and follows the configured reconnect policy.
 
 ## Integration boundary
 
