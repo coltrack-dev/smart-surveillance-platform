@@ -30,6 +30,10 @@ use crate::{
     model::{Output, PipelineState, PipelineStatus, RtspTransport, StartPipelineRequest},
 };
 
+/// Две последовательные ошибки отличают потерю output от единичного сетевого
+/// сбоя ffprobe, который не должен прерывать исправный пользовательский поток.
+const OUTPUT_HEALTH_FAILURE_THRESHOLD: u8 = 2;
+
 /// Ошибки, которые HTTP-слой может однозначно преобразовать в status code.
 #[derive(Debug, thiserror::Error)]
 pub enum ManagerError {
@@ -81,6 +85,8 @@ enum RunningOutcome {
     Exited(Option<ExitStatus>),
     /// Процесс жив, но временная позиция output перестала изменяться.
     Stalled,
+    /// FFmpeg продолжает работать, но опубликованный RTSP больше не читается.
+    OutputUnavailable(String),
 }
 
 /// Один завершённый блок machine-readable `-progress` от FFmpeg.
@@ -516,6 +522,33 @@ async fn supervise(
                 tokio::pin!(stall_timer);
                 let mut progress_open = true;
 
+                // Progress подтверждает движение FFmpeg, но не гарантирует, что
+                // MediaMTX по-прежнему отдаёт опубликованный path читателям.
+                // Отдельная task периодически открывает output через ffprobe и
+                // сообщает результат supervisor-у, не блокируя stop/child.wait.
+                let (output_health_tx, mut output_health_rx) = mpsc::unbounded_channel();
+                let output_health_task = match &request.output {
+                    Output::Rtsp { url } => {
+                        let ffprobe_bin = config.ffprobe_bin.clone();
+                        let output_url = url.clone();
+                        let interval = config.output_health_interval;
+                        let timeout = config.output_ready_timeout;
+                        Some(tokio::spawn(async move {
+                            monitor_rtsp_output(
+                                ffprobe_bin,
+                                output_url,
+                                interval,
+                                timeout,
+                                output_health_tx,
+                            )
+                            .await;
+                        }))
+                    }
+                    Output::Hls { .. } => None,
+                };
+                let mut output_health_open = output_health_task.is_some();
+                let mut consecutive_output_health_failures = 0u8;
+
                 let running = loop {
                     tokio::select! {
                         changed = stop_rx.changed() => {
@@ -550,6 +583,33 @@ async fn supervise(
                                 progress_open = false;
                             }
                         }
+                        health = output_health_rx.recv(), if output_health_open => {
+                            match health {
+                                Some(Ok(())) => {
+                                    metrics.output_health_successes.inc();
+                                    consecutive_output_health_failures = 0;
+                                }
+                                Some(Err(error)) => {
+                                    metrics.output_health_failures.inc();
+                                    consecutive_output_health_failures += 1;
+                                    warn!(
+                                        camera_id = %request.camera_id,
+                                        consecutive_failures = consecutive_output_health_failures,
+                                        error = %error,
+                                        "published RTSP output health check failed"
+                                    );
+                                    if consecutive_output_health_failures
+                                        >= OUTPUT_HEALTH_FAILURE_THRESHOLD
+                                    {
+                                        if let Err(kill_error) = terminate_child(&mut child).await {
+                                            warn!(camera_id = %request.camera_id, error = %kill_error, "failed to terminate FFmpeg with unavailable output");
+                                        }
+                                        break RunningOutcome::OutputUnavailable(error);
+                                    }
+                                }
+                                None => output_health_open = false,
+                            }
+                        }
                         _ = &mut stall_timer => {
                             metrics.output_stalls.inc();
                             if let Err(error) = terminate_child(&mut child).await {
@@ -559,6 +619,14 @@ async fn supervise(
                         }
                     }
                 };
+
+                // При завершении running-loop незаконченный ffprobe больше не
+                // нужен. abort безопасен: probe использует kill_on_drop(true),
+                // поэтому отдельный дочерний процесс не останется orphan.
+                if let Some(task) = output_health_task {
+                    task.abort();
+                    let _ = task.await;
+                }
 
                 match running {
                     RunningOutcome::Stopped => (None, None, true),
@@ -571,6 +639,9 @@ async fn supervise(
                         )),
                         false,
                     ),
+                    RunningOutcome::OutputUnavailable(error) => {
+                        (None, Some(error), false)
+                    }
                 }
             }
             StartupOutcome::Progress(_) => unreachable!("output readiness must be resolved"),
@@ -632,6 +703,38 @@ async fn supervise(
             return;
         }
         backoff = next_backoff(backoff);
+    }
+}
+
+async fn monitor_rtsp_output(
+    ffprobe_bin: String,
+    output_url: String,
+    interval: Duration,
+    probe_timeout: Duration,
+    updates: mpsc::UnboundedSender<Result<(), String>>,
+) {
+    loop {
+        // Первая проверка выполняется через полный interval: output уже был
+        // подтверждён startup-readiness непосредственно перед RUNNING.
+        sleep(interval).await;
+        let result = ffmpeg::probe_rtsp_url(
+            &ffprobe_bin,
+            &output_url,
+            &RtspTransport::Tcp,
+            probe_timeout,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "published RTSP output {} became unavailable: {}",
+                ffmpeg::redact_url(&output_url),
+                error
+            )
+        });
+        if updates.send(result).is_err() {
+            return;
+        }
     }
 }
 
@@ -809,6 +912,7 @@ mod tests {
                 probe_timeout: Duration::from_secs(1),
                 ready_timeout: Duration::from_secs(1),
                 output_ready_timeout: Duration::from_secs(1),
+                output_health_interval: Duration::from_secs(1),
                 output_stall_timeout: Duration::from_millis(100),
             },
             metrics.clone(),
@@ -883,6 +987,7 @@ mod tests {
                 probe_timeout: Duration::from_secs(1),
                 ready_timeout: Duration::from_secs(1),
                 output_ready_timeout: Duration::from_millis(100),
+                output_health_interval: Duration::from_secs(1),
                 output_stall_timeout: Duration::from_secs(1),
             },
             metrics.clone(),
@@ -921,6 +1026,85 @@ mod tests {
             .last_error
             .unwrap()
             .contains("published RTSP output"));
+
+        manager.stop(camera_id).await.unwrap();
+        tokio::fs::remove_dir_all(test_dir).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnects_when_running_rtsp_output_disappears() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "video-ingest-agent-output-health-{}",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&test_dir).await.unwrap();
+        let ffprobe = test_dir.join("fake-ffprobe.sh");
+        let ffmpeg = test_dir.join("fake-ffmpeg.sh");
+        let output_probe_count = test_dir.join("output-probe-count");
+
+        write_executable(
+            &ffprobe,
+            &format!(
+                "#!/bin/sh\ncase \"$*\" in\n  *mediamtx.test*) count=$(cat '{}' 2>/dev/null || printf 0); count=$((count + 1)); printf '%s' \"$count\" > '{}'; if [ \"$count\" -gt 1 ]; then printf 'output disappeared\\n' >&2; exit 1; fi ;;\nesac\nprintf '%s\\n' '{{\"streams\":[{{\"codec_name\":\"h264\",\"width\":640,\"height\":360,\"avg_frame_rate\":\"15/1\"}}]}}'\n",
+                output_probe_count.display(),
+                output_probe_count.display()
+            ),
+        )
+        .await;
+        write_executable(
+            &ffmpeg,
+            "#!/bin/sh\nprintf 'out_time_us=1000000\nprogress=continue\n'\nexec sleep 60\n",
+        )
+        .await;
+
+        let metrics = Metrics::new().unwrap();
+        let manager = PipelineManager::new(
+            Config {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                agent_id: "test-agent".into(),
+                api_token: None,
+                data_dir: test_dir.clone(),
+                ffmpeg_bin: ffmpeg.to_string_lossy().into_owned(),
+                ffprobe_bin: ffprobe.to_string_lossy().into_owned(),
+                probe_timeout: Duration::from_secs(1),
+                ready_timeout: Duration::from_secs(1),
+                output_ready_timeout: Duration::from_secs(1),
+                output_health_interval: Duration::from_millis(50),
+                output_stall_timeout: Duration::from_secs(1),
+            },
+            metrics.clone(),
+        );
+        let camera_id = uuid::Uuid::new_v4();
+        manager
+            .start(StartPipelineRequest {
+                command_id: uuid::Uuid::new_v4(),
+                camera_id,
+                rtsp_url: "rtsp://camera.test/live".into(),
+                transport: RtspTransport::Tcp,
+                video_mode: VideoMode::Copy,
+                output: Output::Rtsp {
+                    url: "rtsp://mediamtx.test:8554/camera".into(),
+                },
+                reconnect: true,
+            })
+            .await
+            .unwrap();
+
+        let status = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let status = manager.get(camera_id).await.unwrap();
+                if status.state == PipelineState::Reconnecting {
+                    break status;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("pipeline did not reconnect after published output disappeared");
+        assert_eq!(status.restart_count, 1);
+        assert_eq!(metrics.output_health_failures.get(), 2);
+        assert!(status.last_error.unwrap().contains("became unavailable"));
 
         manager.stop(camera_id).await.unwrap();
         tokio::fs::remove_dir_all(test_dir).await.unwrap();

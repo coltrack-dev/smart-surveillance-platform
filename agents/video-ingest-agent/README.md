@@ -40,6 +40,7 @@ export AGENT_API_TOKEN=change-me
 export AGENT_BIND=127.0.0.1:8098
 export AGENT_READY_TIMEOUT_SECONDS=30
 export AGENT_OUTPUT_READY_TIMEOUT_SECONDS=15
+export AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS=15
 export AGENT_OUTPUT_STALL_TIMEOUT_SECONDS=15
 cargo run
 ```
@@ -134,6 +135,12 @@ FFmpeg progress block until ffprobe can open the published MediaMTX URL and
 find its video stream. If the output is still unavailable after
 `AGENT_OUTPUT_READY_TIMEOUT_SECONDS`, FFmpeg is restarted according to the
 same reconnect policy instead of exposing a false `RUNNING` state.
+
+While an RTSP-output pipeline is `RUNNING`, the agent opens the published URL
+again every `AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS`. If MediaMTX no longer makes
+the path readable for two consecutive checks even though FFmpeg still reports
+progress, the agent stops that process and follows the normal reconnect policy.
+The probe itself uses `AGENT_OUTPUT_READY_TIMEOUT_SECONDS` as its timeout.
 
 ## Integration boundary
 
