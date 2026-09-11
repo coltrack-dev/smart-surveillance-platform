@@ -1,0 +1,54 @@
+name: video-ingest-agent
+
+on:
+  push:
+    paths:
+      - "agents/video-ingest-agent/**"
+      - "services/stream-service/**"
+      - "docker/mediamtx.yml"
+      - "docker-compose.demo.yml"
+      - ".github/workflows/video-ingest-agent.yml"
+  pull_request:
+    paths:
+      - "agents/video-ingest-agent/**"
+      - "services/stream-service/**"
+      - "docker/mediamtx.yml"
+      - "docker-compose.demo.yml"
+      - ".github/workflows/video-ingest-agent.yml"
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agents/video-ingest-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agents/video-ingest-agent
+      - run: cargo check --locked
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  stream-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - run: chmod +x gradlew
+      - run: ./gradlew :services:stream-service:test
+
+  mediamtx-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: chmod +x agents/video-ingest-agent/tests/mediamtx-smoke.sh
+      - run: agents/video-ingest-agent/tests/mediamtx-smoke.sh

@@ -280,7 +280,7 @@ pub fn redact_url(value: &str) -> String {
             if url.password().is_some() {
                 let _ = url.set_password(Some("***"));
             }
-            redact_xm_password(&url.to_string())
+            redact_xm_password(url.as_ref())
         }
         Err(_) => "<invalid-url>".into(),
     }

@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use tokio::{
     fs,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Command,
+    process::{ChildStdin, Command},
     sync::{mpsc, watch, Mutex, RwLock, Semaphore},
     task::JoinHandle,
     time::{sleep, Instant},
@@ -399,6 +399,12 @@ async fn supervise(
             }
         };
 
+        // Child::wait() в Tokio закрывает stdin дочернего процесса при первом
+        // polling. В supervisor wait постоянно участвует в select!, поэтому
+        // сохраняем pipe отдельно: так FFmpeg не получает преждевременный EOF,
+        // а terminate_child действительно может отправить штатную команду q.
+        let mut child_stdin = child.stdin.take();
+
         metrics.process_starts.inc();
         let pid = child.id();
         {
@@ -469,7 +475,7 @@ async fn supervise(
             }
             changed = stop_rx.changed() => {
                 if changed.is_err() || *stop_rx.borrow() {
-                    if let Err(error) = terminate_child(&mut child).await {
+                    if let Err(error) = terminate_child(&mut child, &mut child_stdin).await {
                         warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
                     }
                     StartupOutcome::Stopped
@@ -479,7 +485,7 @@ async fn supervise(
             }
             result = child.wait() => StartupOutcome::Exited(result.ok()),
             _ = sleep(config.ready_timeout) => {
-                if let Err(error) = terminate_child(&mut child).await {
+                if let Err(error) = terminate_child(&mut child, &mut child_stdin).await {
                     warn!(camera_id = %request.camera_id, error = %error, "failed to terminate unready FFmpeg");
                 }
                 StartupOutcome::TimedOut
@@ -503,7 +509,7 @@ async fn supervise(
                                 }
                                 Err(error) => {
                                     metrics.output_readiness_failures.inc();
-                                    if let Err(kill_error) = terminate_child(&mut child).await {
+                                    if let Err(kill_error) = terminate_child(&mut child, &mut child_stdin).await {
                                         warn!(camera_id = %request.camera_id, error = %kill_error, "failed to terminate FFmpeg with unavailable output");
                                     }
                                     StartupOutcome::OutputTimedOut(error.to_string())
@@ -512,7 +518,7 @@ async fn supervise(
                         }
                         changed = stop_rx.changed() => {
                             if changed.is_err() || *stop_rx.borrow() {
-                                if let Err(error) = terminate_child(&mut child).await {
+                                if let Err(error) = terminate_child(&mut child, &mut child_stdin).await {
                                     warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
                                 }
                                 StartupOutcome::Stopped
@@ -579,7 +585,7 @@ async fn supervise(
                     tokio::select! {
                         changed = stop_rx.changed() => {
                             if changed.is_err() || *stop_rx.borrow() {
-                                if let Err(error) = terminate_child(&mut child).await {
+                                if let Err(error) = terminate_child(&mut child, &mut child_stdin).await {
                                     warn!(camera_id = %request.camera_id, error = %error, "failed to terminate FFmpeg cleanly");
                                 }
                                 break RunningOutcome::Stopped;
@@ -627,7 +633,7 @@ async fn supervise(
                                     if consecutive_output_health_failures
                                         >= OUTPUT_HEALTH_FAILURE_THRESHOLD
                                     {
-                                        if let Err(kill_error) = terminate_child(&mut child).await {
+                                        if let Err(kill_error) = terminate_child(&mut child, &mut child_stdin).await {
                                             warn!(camera_id = %request.camera_id, error = %kill_error, "failed to terminate FFmpeg with unavailable output");
                                         }
                                         break RunningOutcome::OutputUnavailable(error);
@@ -638,7 +644,7 @@ async fn supervise(
                         }
                         _ = &mut stall_timer => {
                             metrics.output_stalls.inc();
-                            if let Err(error) = terminate_child(&mut child).await {
+                            if let Err(error) = terminate_child(&mut child, &mut child_stdin).await {
                                 warn!(camera_id = %request.camera_id, error = %error, "failed to terminate stalled FFmpeg");
                             }
                             break RunningOutcome::Stalled;
@@ -819,10 +825,13 @@ async fn probe_input(
     ffmpeg::probe(&config.ffprobe_bin, request, config.probe_timeout).await
 }
 
-async fn terminate_child(child: &mut tokio::process::Child) -> Result<()> {
+async fn terminate_child(
+    child: &mut tokio::process::Child,
+    child_stdin: &mut Option<ChildStdin>,
+) -> Result<()> {
     // Интерактивная команда q позволяет FFmpeg закрыть muxer и сетевые сокеты.
     // Если процесс не отвечает, через три секунды выполняется принудительный kill.
-    if let Some(mut stdin) = child.stdin.take() {
+    if let Some(mut stdin) = child_stdin.take() {
         let _ = stdin.write_all(b"q\n").await;
         drop(stdin);
     }
