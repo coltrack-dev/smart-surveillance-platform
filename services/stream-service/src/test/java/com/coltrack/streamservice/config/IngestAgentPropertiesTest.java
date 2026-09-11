@@ -15,6 +15,7 @@ class IngestAgentPropertiesTest {
     void buildsMediaMtxPublishAndPublicHlsUrls() {
         IngestAgentProperties properties = new IngestAgentProperties();
         properties.setPublishRtspBaseUrl("rtsp://mediamtx:8554/");
+        properties.setInternalHlsBaseUrl("http://mediamtx:8888/");
         properties.setPublicHlsPrefix("/media-hls/");
 
         assertEquals(
@@ -25,5 +26,6 @@ class IngestAgentPropertiesTest {
                 "/media-hls/" + CAMERA_ID + "/index.m3u8",
                 properties.publicHlsUrl(CAMERA_ID)
         );
+        assertEquals("http://mediamtx:8888/", properties.getInternalHlsBaseUrl());
     }
 }

@@ -36,6 +36,10 @@ pub struct Config {
     pub output_health_interval: Duration,
     /// Максимальное время без продвижения output timestamp после запуска.
     pub output_stall_timeout: Duration,
+    /// Максимальное количество одновременно зарегистрированных pipeline.
+    pub max_pipelines: usize,
+    /// Максимальное количество одновременно работающих ffprobe.
+    pub max_concurrent_probes: usize,
 }
 
 impl Config {
@@ -74,6 +78,16 @@ impl Config {
             .parse::<u64>()
             .context("AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS must be an integer")?;
 
+        let max_pipelines = env::var("AGENT_MAX_PIPELINES")
+            .unwrap_or_else(|_| "8".into())
+            .parse::<usize>()
+            .context("AGENT_MAX_PIPELINES must be an integer")?;
+
+        let max_concurrent_probes = env::var("AGENT_MAX_CONCURRENT_PROBES")
+            .unwrap_or_else(|_| "4".into())
+            .parse::<usize>()
+            .context("AGENT_MAX_CONCURRENT_PROBES must be an integer")?;
+
         if output_ready_timeout_seconds == 0 {
             anyhow::bail!("AGENT_OUTPUT_READY_TIMEOUT_SECONDS must be positive");
         }
@@ -82,6 +96,12 @@ impl Config {
         }
         if output_stall_timeout_seconds == 0 {
             anyhow::bail!("AGENT_OUTPUT_STALL_TIMEOUT_SECONDS must be positive");
+        }
+        if max_pipelines == 0 {
+            anyhow::bail!("AGENT_MAX_PIPELINES must be positive");
+        }
+        if max_concurrent_probes == 0 {
+            anyhow::bail!("AGENT_MAX_CONCURRENT_PROBES must be positive");
         }
 
         Ok(Self {
@@ -100,6 +120,8 @@ impl Config {
             output_ready_timeout: Duration::from_secs(output_ready_timeout_seconds),
             output_health_interval: Duration::from_secs(output_health_interval_seconds),
             output_stall_timeout: Duration::from_secs(output_stall_timeout_seconds),
+            max_pipelines,
+            max_concurrent_probes,
         })
     }
 }

@@ -16,12 +16,7 @@ use serde::Serialize;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
-use crate::{
-    config::Config,
-    manager::{ManagerError, PipelineManager},
-    metrics::Metrics,
-    model::StartPipelineRequest,
-};
+use crate::{config::Config, ffmpeg, manager::{ManagerError, PipelineManager}, metrics::Metrics, model::StartPipelineRequest};
 
 /// Состояние приложения, доступное каждому HTTP handler.
 ///
@@ -41,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         // GET /health и /metrics специально доступны без токена: их опрашивают
         // Docker/Kubernetes health checks и Prometheus во внутренней сети.
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .route("/v1/pipelines", post(start).get(list))
         .route("/v1/pipelines/{camera_id}", get(get_one).delete(stop))
@@ -56,13 +52,29 @@ pub fn router(state: AppState) -> Router {
 struct HealthResponse {
     status: &'static str,
     agent_id: String,
+    version: &'static str,
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "UP",
         agent_id: state.config.agent_id.clone(),
+        version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResponse>, ApiError> {
+    ffmpeg::verify_binary(&state.config.ffmpeg_bin)
+        .await
+        .map_err(|error| ApiError::unavailable(error.to_string()))?;
+    ffmpeg::verify_binary(&state.config.ffprobe_bin)
+        .await
+        .map_err(|error| ApiError::unavailable(error.to_string()))?;
+    Ok(Json(HealthResponse {
+        status: "READY",
+        agent_id: state.config.agent_id.clone(),
+        version: env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 async fn metrics(State(state): State<Arc<AppState>>) -> Response {
@@ -151,6 +163,10 @@ impl ApiError {
     fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
+
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
+    }
 }
 
 impl From<ManagerError> for ApiError {
@@ -159,6 +175,7 @@ impl From<ManagerError> for ApiError {
         let status = match error {
             ManagerError::AlreadyExists(_) => StatusCode::CONFLICT,
             ManagerError::NotFound(_) => StatusCode::NOT_FOUND,
+            ManagerError::CapacityExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             ManagerError::Invalid(_) => StatusCode::BAD_REQUEST,
         };
         Self::new(status, error.to_string())

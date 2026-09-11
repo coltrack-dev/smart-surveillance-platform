@@ -29,3 +29,12 @@ docker run --rm \
   
 ```
 
+## MediaMTX integration smoke test
+
+The smoke test builds the runtime image, publishes a generated RTSP source,
+starts an agent pipeline and verifies the MediaMTX master playlist, media
+playlist, referenced segment and final `RUNNING` state.
+
+```bash
+agents/video-ingest-agent/tests/mediamtx-smoke.sh
+```

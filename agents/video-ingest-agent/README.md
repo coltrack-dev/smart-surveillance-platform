@@ -42,6 +42,8 @@ export AGENT_READY_TIMEOUT_SECONDS=30
 export AGENT_OUTPUT_READY_TIMEOUT_SECONDS=15
 export AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS=15
 export AGENT_OUTPUT_STALL_TIMEOUT_SECONDS=15
+export AGENT_MAX_PIPELINES=8
+export AGENT_MAX_CONCURRENT_PROBES=4
 cargo run
 ```
 
@@ -64,6 +66,7 @@ Health does not require a token:
 
 ```bash
 curl http://127.0.0.1:8098/health
+curl http://127.0.0.1:8098/ready
 ```
 
 Publish an NVR channel to MediaMTX without transcoding:
@@ -141,6 +144,10 @@ again every `AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS`. If MediaMTX no longer makes
 the path readable for two consecutive checks even though FFmpeg still reports
 progress, the agent stops that process and follows the normal reconnect policy.
 The probe itself uses `AGENT_OUTPUT_READY_TIMEOUT_SECONDS` as its timeout.
+
+`AGENT_MAX_PIPELINES` rejects additional cameras with HTTP 429 before another
+FFmpeg process is created. `AGENT_MAX_CONCURRENT_PROBES` bounds startup,
+readiness and periodic ffprobe processes across all cameras.
 
 ## Integration boundary
 

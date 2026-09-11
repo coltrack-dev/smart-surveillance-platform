@@ -27,7 +27,15 @@ public class IngestAgentProperties {
 
     private String publishRtspBaseUrl = "rtsp://localhost:8554";
 
+    private String internalHlsBaseUrl = "http://localhost:8888";
+
     private String publicHlsPrefix = "/media-hls";
+
+    private Duration hlsReadyTimeout = Duration.ofSeconds(30);
+
+    private Duration hlsHealthInterval = Duration.ofSeconds(5);
+
+    private int hlsFailureThreshold = 2;
 
     public String publishUrl(UUID cameraId) {
         return withoutTrailingSlash(publishRtspBaseUrl) + "/" + cameraId;

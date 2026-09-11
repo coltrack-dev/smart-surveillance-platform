@@ -38,6 +38,11 @@ async fn main() -> Result<()> {
     // Оператор `?` немедленно возвращает ошибку из main, если операция
     // завершилась неуспешно. Это компактный аналог проверки Result и return.
     let config = Config::from_env()?;
+    // Агент завершается сразу с понятной ошибкой, если runtime-образ не содержит
+    // FFmpeg/ffprobe. Иначе проблема обнаружилась бы только при старте камеры.
+    ffmpeg::verify_binary(&config.ffmpeg_bin).await?;
+    ffmpeg::verify_binary(&config.ffprobe_bin).await?;
+    tokio::fs::create_dir_all(config.data_dir.join("hls")).await?;
     let metrics = Metrics::new()?;
 
     // Config и Metrics клонируются не обязательно как полные независимые

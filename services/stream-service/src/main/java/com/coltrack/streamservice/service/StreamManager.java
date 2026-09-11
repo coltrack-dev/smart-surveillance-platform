@@ -3,6 +3,7 @@ package com.coltrack.streamservice.service;
 import com.coltrack.kafka.KafkaTopics;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.IngestAgentClient;
+import com.coltrack.streamservice.client.MediaHlsClient;
 import com.coltrack.streamservice.client.dto.CameraDto;
 import com.coltrack.streamservice.client.dto.CameraConnectionDto;
 import com.coltrack.streamservice.config.IngestAgentProperties;
@@ -52,6 +53,7 @@ public class StreamManager implements StreamListener {
     private final RtspStreamProperties rtspProperties;
     private final IngestAgentProperties ingestAgentProperties;
     private final IngestAgentClient ingestAgentClient;
+    private final MediaHlsClient mediaHlsClient;
     //private final StreamEventPublisher streamWebSocketPublisher;
     private final StreamWebSocketPublisher streamWebSocketPublisher;
 
@@ -125,6 +127,7 @@ public class StreamManager implements StreamListener {
                     IngestAgentStreamWorker worker = new IngestAgentStreamWorker(
                             session,
                             ingestAgentClient,
+                            mediaHlsClient,
                             ingestAgentProperties,
                             this
                     );

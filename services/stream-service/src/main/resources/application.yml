@@ -31,7 +31,11 @@ stream:
     token: ${STREAM_INGEST_AGENT_TOKEN:}
     poll-interval: ${STREAM_INGEST_AGENT_POLL_INTERVAL:1s}
     publish-rtsp-base-url: ${STREAM_INGEST_AGENT_PUBLISH_RTSP_BASE_URL:rtsp://localhost:8554}
+    internal-hls-base-url: ${STREAM_INGEST_AGENT_INTERNAL_HLS_BASE_URL:http://localhost:8888}
     public-hls-prefix: ${STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX:/media-hls}
+    hls-ready-timeout: ${STREAM_INGEST_AGENT_HLS_READY_TIMEOUT:30s}
+    hls-health-interval: ${STREAM_INGEST_AGENT_HLS_HEALTH_INTERVAL:5s}
+    hls-failure-threshold: ${STREAM_INGEST_AGENT_HLS_FAILURE_THRESHOLD:2}
   hls:
     #path: /opt/surveillance/hls
     path: ./data/hls

@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.worker;
 
 import com.coltrack.streamservice.client.IngestAgentClient;
+import com.coltrack.streamservice.client.MediaHlsClient;
 import com.coltrack.streamservice.client.dto.agent.AgentOutput;
 import com.coltrack.streamservice.client.dto.agent.AgentPipelineState;
 import com.coltrack.streamservice.client.dto.agent.AgentPipelineStatus;
@@ -30,6 +31,7 @@ public class IngestAgentStreamWorker implements Runnable {
 
     private final StreamSession session;
     private final IngestAgentClient client;
+    private final MediaHlsClient mediaHlsClient;
     private final IngestAgentProperties properties;
     private final StreamListener listener;
 
@@ -41,6 +43,10 @@ public class IngestAgentStreamWorker implements Runnable {
         boolean pipelineObserved = false;
         Duration reconnectDelay = properties.getPollInterval();
         AgentStartPipelineRequest request = startRequest();
+        Instant hlsReadyDeadline = null;
+        Instant nextHlsHealthCheck = Instant.MAX;
+        boolean hlsReady = false;
+        int consecutiveHlsFailures = 0;
 
         try {
             while (!session.isStopRequested()) {
@@ -79,6 +85,61 @@ public class IngestAgentStreamWorker implements Runnable {
                     sleep(reconnectDelay);
                     reconnectDelay = nextReconnectDelay(reconnectDelay);
                     continue;
+                }
+
+                if (status.state() == AgentPipelineState.RUNNING) {
+                    Instant now = Instant.now();
+                    if (!hlsReady) {
+                        if (hlsReadyDeadline == null) {
+                            hlsReadyDeadline = now.plus(properties.getHlsReadyTimeout());
+                        }
+                        if (mediaHlsClient.isReady(session.getCameraId())) {
+                            hlsReady = true;
+                            consecutiveHlsFailures = 0;
+                            nextHlsHealthCheck = now.plus(properties.getHlsHealthInterval());
+                        } else if (!now.isBefore(hlsReadyDeadline)) {
+                            previousState = communicationReconnecting(
+                                    previousState,
+                                    "MediaMTX HLS did not become ready"
+                            );
+                            client.stop(session.getCameraId());
+                            pipelineObserved = false;
+                            hlsReadyDeadline = null;
+                            continue;
+                        } else {
+                            sleep(properties.getPollInterval());
+                            continue;
+                        }
+                    } else if (!now.isBefore(nextHlsHealthCheck)) {
+                        nextHlsHealthCheck = now.plus(properties.getHlsHealthInterval());
+                        if (mediaHlsClient.isReady(session.getCameraId())) {
+                            consecutiveHlsFailures = 0;
+                        } else {
+                            consecutiveHlsFailures++;
+                            log.warn(
+                                    "MediaMTX HLS health check failed camera={}, failures={}",
+                                    session.getCameraId(),
+                                    consecutiveHlsFailures
+                            );
+                            if (consecutiveHlsFailures >= properties.getHlsFailureThreshold()) {
+                                previousState = communicationReconnecting(
+                                        previousState,
+                                        "MediaMTX HLS became unavailable"
+                                );
+                                client.stop(session.getCameraId());
+                                pipelineObserved = false;
+                                hlsReady = false;
+                                hlsReadyDeadline = null;
+                                consecutiveHlsFailures = 0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    hlsReady = false;
+                    hlsReadyDeadline = null;
+                    nextHlsHealthCheck = Instant.MAX;
+                    consecutiveHlsFailures = 0;
                 }
 
                 applyStatus(status, previousState);
@@ -133,6 +194,11 @@ public class IngestAgentStreamWorker implements Runnable {
     }
 
     static String agentVideoMode(VideoProcessingMode mode) {
+        // Старые записи камеры могут не содержать videoProcessingMode.
+        // Сохраняем поведение локального worker: null означает AUTO.
+        if (mode == null) {
+            return "AUTO";
+        }
         return switch (mode) {
             case COPY -> "COPY";
             case TRANSCODE_H264 -> "H264";

@@ -12,6 +12,26 @@ use url::Url;
 
 use crate::model::{Output, ProbeInfo, RtspTransport, StartPipelineRequest, VideoMode};
 
+/// Проверяет наличие внешней программы до принятия pipeline-запросов.
+pub async fn verify_binary(binary: &str) -> Result<()> {
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new(binary)
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .with_context(|| format!("{binary} version check timed out"))?
+    .with_context(|| format!("failed to execute {binary}"))?;
+    if !output.status.success() {
+        anyhow::bail!("{binary} version check failed");
+    }
+    Ok(())
+}
+
 // Эти приватные структуры повторяют только нужную часть JSON ffprobe.
 // Serde проигнорирует все остальные поля ответа.
 #[derive(Debug, Deserialize)]

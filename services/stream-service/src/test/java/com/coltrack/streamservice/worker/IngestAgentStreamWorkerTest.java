@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.worker;
 
 import com.coltrack.streamservice.client.IngestAgentClient;
+import com.coltrack.streamservice.client.MediaHlsClient;
 import com.coltrack.streamservice.client.dto.agent.AgentPipelineState;
 import com.coltrack.streamservice.client.dto.agent.AgentPipelineStatus;
 import com.coltrack.streamservice.client.dto.agent.AgentStartPipelineRequest;
@@ -39,6 +40,7 @@ class IngestAgentStreamWorkerTest {
                 "AUTO",
                 IngestAgentStreamWorker.agentVideoMode(VideoProcessingMode.AUTO)
         );
+        assertEquals("AUTO", IngestAgentStreamWorker.agentVideoMode(null));
     }
 
     @Test
@@ -46,6 +48,7 @@ class IngestAgentStreamWorkerTest {
         UUID cameraId = UUID.randomUUID();
         StreamSession session = session(cameraId);
         IngestAgentClient client = mock(IngestAgentClient.class);
+        MediaHlsClient mediaHlsClient = readyHlsClient(cameraId);
         StreamListener listener = mock(StreamListener.class);
         IngestAgentProperties properties = properties();
         AgentPipelineStatus starting = status(AgentPipelineState.STARTING);
@@ -59,7 +62,9 @@ class IngestAgentStreamWorkerTest {
         );
         when(client.start(any())).thenReturn(starting);
 
-        new IngestAgentStreamWorker(session, client, properties, listener).run();
+        new IngestAgentStreamWorker(
+                session, client, mediaHlsClient, properties, listener
+        ).run();
 
         ArgumentCaptor<AgentStartPipelineRequest> requests =
                 ArgumentCaptor.forClass(AgentStartPipelineRequest.class);
@@ -78,6 +83,7 @@ class IngestAgentStreamWorkerTest {
         UUID cameraId = UUID.randomUUID();
         StreamSession session = session(cameraId);
         IngestAgentClient client = mock(IngestAgentClient.class);
+        MediaHlsClient mediaHlsClient = readyHlsClient(cameraId);
         StreamListener listener = mock(StreamListener.class);
         IngestAgentProperties properties = properties();
         AgentPipelineStatus starting = status(AgentPipelineState.STARTING);
@@ -90,12 +96,43 @@ class IngestAgentStreamWorkerTest {
                 .thenReturn(Optional.of(stopped));
         when(client.start(any())).thenReturn(starting);
 
-        new IngestAgentStreamWorker(session, client, properties, listener).run();
+        new IngestAgentStreamWorker(
+                session, client, mediaHlsClient, properties, listener
+        ).run();
 
         verify(client, times(3)).find(cameraId);
         verify(client).start(any());
         verify(listener).reconnecting(session);
         verify(listener).started(session);
+        verify(listener).stopped(session);
+    }
+
+    @Test
+    void doesNotPublishRunningBeforeHlsIsReady() {
+        UUID cameraId = UUID.randomUUID();
+        StreamSession session = session(cameraId);
+        IngestAgentClient client = mock(IngestAgentClient.class);
+        MediaHlsClient mediaHlsClient = mock(MediaHlsClient.class);
+        StreamListener listener = mock(StreamListener.class);
+        IngestAgentProperties properties = properties();
+        AgentPipelineStatus starting = status(AgentPipelineState.STARTING);
+        AgentPipelineStatus running = status(AgentPipelineState.RUNNING);
+        AgentPipelineStatus stopped = status(AgentPipelineState.STOPPED);
+
+        when(client.start(any())).thenReturn(starting);
+        when(client.find(cameraId)).thenReturn(
+                Optional.of(running),
+                Optional.of(running),
+                Optional.of(stopped)
+        );
+        when(mediaHlsClient.isReady(cameraId)).thenReturn(false, true);
+
+        new IngestAgentStreamWorker(
+                session, client, mediaHlsClient, properties, listener
+        ).run();
+
+        verify(mediaHlsClient, times(2)).isReady(cameraId);
+        verify(listener, times(1)).started(session);
         verify(listener).stopped(session);
     }
 
@@ -112,7 +149,15 @@ class IngestAgentStreamWorkerTest {
         IngestAgentProperties properties = new IngestAgentProperties();
         properties.setPollInterval(Duration.ZERO);
         properties.setPublishRtspBaseUrl("rtsp://mediamtx:8554");
+        properties.setHlsReadyTimeout(Duration.ofSeconds(1));
+        properties.setHlsHealthInterval(Duration.ofDays(1));
         return properties;
+    }
+
+    private MediaHlsClient readyHlsClient(UUID cameraId) {
+        MediaHlsClient client = mock(MediaHlsClient.class);
+        when(client.isReady(cameraId)).thenReturn(true);
+        return client;
     }
 
     private AgentPipelineStatus status(AgentPipelineState state) {

@@ -14,9 +14,9 @@ use std::{
 use anyhow::{Context, Result};
 use tokio::{
     fs,
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
-    sync::{mpsc, watch, Mutex, RwLock},
+    sync::{mpsc, watch, Mutex, RwLock, Semaphore},
     task::JoinHandle,
     time::{sleep, Instant},
 };
@@ -41,6 +41,8 @@ pub enum ManagerError {
     AlreadyExists(Uuid),
     #[error("pipeline for camera {0} was not found")]
     NotFound(Uuid),
+    #[error("pipeline capacity {0} is exhausted")]
+    CapacityExceeded(usize),
     #[error("invalid pipeline: {0}")]
     Invalid(String),
 }
@@ -126,14 +128,18 @@ pub struct PipelineManager {
     // Аналог ConcurrentHashMap<UUID, PipelineControl> из Java, но доступ явно
     // разделён на read().await и write().await.
     pipelines: Arc<RwLock<HashMap<Uuid, Arc<PipelineControl>>>>,
+    /// Один semaphore ограничивает суммарное число probe всех камер.
+    probe_slots: Arc<Semaphore>,
 }
 
 impl PipelineManager {
     pub fn new(config: Config, metrics: Metrics) -> Self {
+        let probe_slots = Arc::new(Semaphore::new(config.max_concurrent_probes));
         Self {
             config,
             metrics,
             pipelines: Arc::new(RwLock::new(HashMap::new())),
+            probe_slots,
         }
     }
 
@@ -155,6 +161,9 @@ impl PipelineManager {
                 return Ok(status);
             }
             return Err(ManagerError::AlreadyExists(request.camera_id));
+        }
+        if pipelines.len() >= self.config.max_pipelines {
+            return Err(ManagerError::CapacityExceeded(self.config.max_pipelines));
         }
 
         // `if let` удобен, когда интересует только один вариант enum.
@@ -202,10 +211,11 @@ impl PipelineManager {
 
         let config = self.config.clone();
         let metrics = self.metrics.clone();
+        let probe_slots = self.probe_slots.clone();
         // `async move` передаёт владение config/request/status/stop_rx фоновой
         // задаче. Без move ссылки могли бы пережить stack frame метода start.
         let task = tokio::spawn(async move {
-            supervise(config, metrics, request, status, stop_rx).await;
+            supervise(config, metrics, request, status, stop_rx, probe_slots).await;
         });
         *control.task.lock().await = Some(task);
 
@@ -213,17 +223,16 @@ impl PipelineManager {
     }
 
     pub async fn stop(&self, camera_id: Uuid) -> Result<PipelineStatus, ManagerError> {
-        // Извлекаем control из map, чтобы получить владение Arc и продолжить
-        // остановку без удержания lock. Следствие текущего MVP: параллельный
-        // start той же камеры уже сможет пройти; в production-версии лучше
-        // оставлять запись со статусом STOPPING до завершения дочернего процесса.
+        // Оставляем control в map на всё время остановки. Это резервирует cameraId:
+        // параллельный start увидит STOPPING/AlreadyExists и не сможет запустить
+        // второй FFmpeg до того, как первый процесс будет полностью reaped.
         let control = self
             .pipelines
-            .write()
+            .read()
             .await
-            .remove(&camera_id)
+            .get(&camera_id)
+            .cloned()
             .ok_or(ManagerError::NotFound(camera_id))?;
-        self.metrics.active_pipelines.dec();
 
         {
             let mut status = control.status.write().await;
@@ -251,6 +260,24 @@ impl PipelineManager {
             status.touch();
             status.clone()
         };
+
+        // Удаляем только тот control, который останавливали. Проверка Arc
+        // защищает от удаления новой записи, если реализация start изменится.
+        let removed = {
+            let mut pipelines = self.pipelines.write().await;
+            let is_same = pipelines
+                .get(&camera_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &control));
+            if is_same {
+                pipelines.remove(&camera_id);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
+            self.metrics.active_pipelines.dec();
+        }
         Ok(final_status)
     }
 
@@ -292,16 +319,11 @@ async fn supervise(
     request: StartPipelineRequest,
     status: Arc<RwLock<PipelineStatus>>,
     mut stop_rx: watch::Receiver<bool>,
+    probe_slots: Arc<Semaphore>,
 ) {
     // Ошибка probe не запрещает запуск: некоторые NVR нестабильно отвечают
     // ffprobe, хотя последующий длительный FFmpeg успешно подключается.
-    let detected_codec = match ffmpeg::probe(
-        &config.ffprobe_bin,
-        &request,
-        config.probe_timeout,
-    )
-    .await
-    {
+    let detected_codec = match probe_input(&config, &request, &probe_slots).await {
         Ok(probe) => {
             let codec = probe.codec.clone();
             status.write().await.probe = Some(probe);
@@ -347,7 +369,9 @@ async fn supervise(
         // Command запускает программу напрямую, без `/bin/sh -c`.
         let mut child = match Command::new(&config.ffmpeg_bin)
             .args(&args)
-            .stdin(Stdio::null())
+            // stdin остаётся pipe: при штатной остановке FFmpeg сначала получает
+            // команду `q`, а принудительный kill используется только как fallback.
+            .stdin(Stdio::piped())
             // stdout содержит только machine-readable данные `-progress pipe:1`.
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -468,7 +492,7 @@ async fn supervise(
         let startup = match startup {
             StartupOutcome::Progress(first_progress) => match &request.output {
                 Output::Rtsp { url } => {
-                    let readiness = wait_for_rtsp_output(&config, url);
+                    let readiness = wait_for_rtsp_output(&config, url, &probe_slots);
                     tokio::pin!(readiness);
                     tokio::select! {
                         result = &mut readiness => {
@@ -533,12 +557,14 @@ async fn supervise(
                         let output_url = url.clone();
                         let interval = config.output_health_interval;
                         let timeout = config.output_ready_timeout;
+                        let probe_slots = probe_slots.clone();
                         Some(tokio::spawn(async move {
                             monitor_rtsp_output(
                                 ffprobe_bin,
                                 output_url,
                                 interval,
                                 timeout,
+                                probe_slots,
                                 output_health_tx,
                             )
                             .await;
@@ -711,12 +737,14 @@ async fn monitor_rtsp_output(
     output_url: String,
     interval: Duration,
     probe_timeout: Duration,
+    probe_slots: Arc<Semaphore>,
     updates: mpsc::UnboundedSender<Result<(), String>>,
 ) {
     loop {
         // Первая проверка выполняется через полный interval: output уже был
         // подтверждён startup-readiness непосредственно перед RUNNING.
         sleep(interval).await;
+        let _permit = probe_slots.acquire().await.expect("probe semaphore closed");
         let result = ffmpeg::probe_rtsp_url(
             &ffprobe_bin,
             &output_url,
@@ -738,7 +766,11 @@ async fn monitor_rtsp_output(
     }
 }
 
-async fn wait_for_rtsp_output(config: &Config, output_url: &str) -> Result<()> {
+async fn wait_for_rtsp_output(
+    config: &Config,
+    output_url: &str,
+    probe_slots: &Semaphore,
+) -> Result<()> {
     // Каждый probe получает всё оставшееся время общего deadline.
     // Быстрый ответ path-not-found позволяет повторить попытку, а уже открытый
     // RTSP-поток не уничтожается раньше получения параметров видеодорожки.
@@ -750,6 +782,7 @@ async fn wait_for_rtsp_output(config: &Config, output_url: &str) -> Result<()> {
             break;
         }
         let attempt_timeout = remaining;
+        let _permit = probe_slots.acquire().await.expect("probe semaphore closed");
         match ffmpeg::probe_rtsp_url(
             &config.ffprobe_bin,
             output_url,
@@ -777,12 +810,30 @@ async fn wait_for_rtsp_output(config: &Config, output_url: &str) -> Result<()> {
     )
 }
 
+async fn probe_input(
+    config: &Config,
+    request: &StartPipelineRequest,
+    probe_slots: &Semaphore,
+) -> Result<crate::model::ProbeInfo> {
+    let _permit = probe_slots.acquire().await.expect("probe semaphore closed");
+    ffmpeg::probe(&config.ffprobe_bin, request, config.probe_timeout).await
+}
+
 async fn terminate_child(child: &mut tokio::process::Child) -> Result<()> {
-    // start_kill инициирует завершение, а wait обязательно забирает exit status.
-    // Без wait в Unix мог бы временно остаться zombie process.
-    child.start_kill().context("cannot send kill signal")?;
-    child.wait().await.context("cannot reap FFmpeg process")?;
-    Ok(())
+    // Интерактивная команда q позволяет FFmpeg закрыть muxer и сетевые сокеты.
+    // Если процесс не отвечает, через три секунды выполняется принудительный kill.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"q\n").await;
+        drop(stdin);
+    }
+    match tokio::time::timeout(Duration::from_secs(3), child.wait()).await {
+        Ok(result) => result.context("cannot reap FFmpeg process").map(|_| ()),
+        Err(_) => {
+            child.start_kill().context("cannot send kill signal")?;
+            child.wait().await.context("cannot reap FFmpeg process")?;
+            Ok(())
+        }
+    }
 }
 
 async fn wait_or_stop(stop_rx: &mut watch::Receiver<bool>, duration: Duration) -> bool {
@@ -858,7 +909,7 @@ mod tests {
         model::{Output, PipelineState, RtspTransport, StartPipelineRequest, VideoMode},
     };
 
-    use super::{output_advanced, PipelineManager, ProgressParser};
+    use super::{output_advanced, ManagerError, PipelineManager, ProgressParser};
 
     #[test]
     fn parses_ffmpeg_progress_output_time() {
@@ -876,6 +927,48 @@ mod tests {
         assert!(output_advanced(Some(1_000), Some(1_001)));
         assert!(output_advanced(Some(1_000), Some(10)));
         assert!(!output_advanced(None, None));
+    }
+
+    #[tokio::test]
+    async fn rejects_pipeline_above_configured_capacity() {
+        let manager = PipelineManager::new(
+            Config {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                agent_id: "test-agent".into(),
+                api_token: None,
+                data_dir: std::env::temp_dir(),
+                ffmpeg_bin: "missing-test-ffmpeg".into(),
+                ffprobe_bin: "missing-test-ffprobe".into(),
+                probe_timeout: Duration::from_millis(10),
+                ready_timeout: Duration::from_millis(10),
+                output_ready_timeout: Duration::from_millis(10),
+                output_health_interval: Duration::from_secs(1),
+                output_stall_timeout: Duration::from_secs(1),
+                max_pipelines: 1,
+                max_concurrent_probes: 1,
+            },
+            Metrics::new().unwrap(),
+        );
+        let request = |camera_id| StartPipelineRequest {
+            command_id: uuid::Uuid::new_v4(),
+            camera_id,
+            rtsp_url: "rtsp://camera.test/live".into(),
+            transport: RtspTransport::Tcp,
+            video_mode: VideoMode::Copy,
+            output: Output::Rtsp {
+                url: format!("rtsp://mediamtx.test:8554/{camera_id}"),
+            },
+            reconnect: true,
+        };
+
+        manager.start(request(uuid::Uuid::new_v4())).await.unwrap();
+        let error = manager
+            .start(request(uuid::Uuid::new_v4()))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ManagerError::CapacityExceeded(1)));
+        manager.shutdown().await;
     }
 
     #[cfg(unix)]
@@ -896,7 +989,7 @@ mod tests {
         .await;
         write_executable(
             &ffmpeg,
-            "#!/bin/sh\nprintf 'out_time_us=1000000\\nprogress=continue\\n'\nexec sleep 60\n",
+            "#!/bin/sh\nprintf 'out_time_us=1000000\\nprogress=continue\\n'\nread _\n",
         )
         .await;
 
@@ -914,6 +1007,8 @@ mod tests {
                 output_ready_timeout: Duration::from_secs(1),
                 output_health_interval: Duration::from_secs(1),
                 output_stall_timeout: Duration::from_millis(100),
+                max_pipelines: 8,
+                max_concurrent_probes: 4,
             },
             metrics.clone(),
         );
@@ -971,7 +1066,7 @@ mod tests {
         .await;
         write_executable(
             &ffmpeg,
-            "#!/bin/sh\nprintf 'out_time_us=1000000\\nprogress=continue\\n'\nexec sleep 60\n",
+            "#!/bin/sh\nprintf 'out_time_us=1000000\\nprogress=continue\\n'\nread _\n",
         )
         .await;
 
@@ -989,6 +1084,8 @@ mod tests {
                 output_ready_timeout: Duration::from_millis(100),
                 output_health_interval: Duration::from_secs(1),
                 output_stall_timeout: Duration::from_secs(1),
+                max_pipelines: 8,
+                max_concurrent_probes: 4,
             },
             metrics.clone(),
         );
@@ -1054,7 +1151,7 @@ mod tests {
         .await;
         write_executable(
             &ffmpeg,
-            "#!/bin/sh\nprintf 'out_time_us=1000000\nprogress=continue\n'\nexec sleep 60\n",
+            "#!/bin/sh\nprintf 'out_time_us=1000000\nprogress=continue\n'\nread _\n",
         )
         .await;
 
@@ -1072,6 +1169,8 @@ mod tests {
                 output_ready_timeout: Duration::from_secs(1),
                 output_health_interval: Duration::from_millis(50),
                 output_stall_timeout: Duration::from_secs(1),
+                max_pipelines: 8,
+                max_concurrent_probes: 4,
             },
             metrics.clone(),
         );
