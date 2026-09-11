@@ -1,166 +1,182 @@
-# Smart Surveillance Platform
+Smart Surveillance Platform
 
 Учебная и исследовательская платформа видеонаблюдения и видеоаналитики: подключение IP-камер и NVR по RTSP, просмотр в браузере, запись и воспроизведение архива, обнаружение объектов и пересечений линий с помощью YOLO.
 
 Backend построен на Java/Spring Boot и Kafka, управление медиапроцессами вынесено в Rust-агент, интерфейс — на Vue, inference выполняется отдельным Python worker на CPU или GPU. Проект находится в активной разработке; конфигурация демо рассчитана на доверенную тестовую сеть, а не на открытое production-развёртывание.
+Возможности
 
-## Возможности
+    Камеры: создание и редактирование, категории, избранное, состояния и heartbeat; настройки RTSP, включая формат XM для совместимых NVR. Пароли камер хранятся с шифрованием AES-GCM при настроенном ключе.
 
-- **Камеры:** создание и редактирование, категории, избранное, состояния и heartbeat; настройки RTSP, включая формат XM для совместимых NVR. Пароли камер хранятся с шифрованием AES-GCM при настроенном ключе.
-- **Прямой эфир:** RTSP → Rust video-ingest-agent → FFmpeg → MediaMTX → HLS, просмотр через hls.js, мониторинг потока и повторное подключение. Режимы обработки видео `AUTO`, `COPY`, `TRANSCODE_H264` позволяют учитывать кодек источника и совместимость браузера.
-- **Запись и архив:** управление записью отдельно от просмотра, метаданные в PostgreSQL, локальные файлы и экспорт в S3-совместимое хранилище, подготовка HLS для воспроизведения архива.
-- **Видеоаналитика:** анализ записи и real-time RTSP, детекция и трекинг объектов, события пересечения настраиваемых линий, направление движения и снимки событий.
-- **Управление заданиями:** запуск, остановка, статусы и прогресс; список worker-узлов, heartbeat и сведения об их нагрузке.
-- **Профиль анализа:** выбор модели, классов объектов, confidence, устройства и целевой частоты обработки; сохранение профиля по умолчанию в браузере.
-- **Результаты:** страницы событий, переход по странице или времени, временная шкала и увеличенный просмотр снимка.
-- **Обновления интерфейса:** статусы камер и потоков через WebSocket/STOMP.
-- **Поиск:** отдельный сервис индексации и поиска камер в OpenSearch; не входит в основной demo Compose.
+    Прямой эфир: RTSP → Rust video-ingest-agent → FFmpeg → MediaMTX → HLS, просмотр через hls.js, проверка готовности опубликованного потока, контроль зависания и автоматическое переподключение. Режимы обработки видео AUTO, COPY, TRANSCODE_H264 позволяют учитывать кодек источника и совместимость браузера.
 
-## Архитектура
+    Запись и архив: управление записью отдельно от просмотра, метаданные в PostgreSQL, локальные файлы и экспорт в S3-совместимое хранилище, подготовка HLS для воспроизведения архива. Интерфейс показывает заполнение хранилища, поддерживает табличный и компактный карточный вид и защиту записи от удаления.
+
+    Видеоаналитика: анализ записи и real-time RTSP, детекция и трекинг объектов, события пересечения настраиваемых линий, направление движения и снимки событий.
+
+    Управление заданиями: запуск, остановка, статусы и прогресс; список worker-узлов, heartbeat и сведения об их нагрузке.
+
+    Профиль анализа: выбор модели, классов объектов, confidence, устройства и целевой частоты обработки; сохранение профиля по умолчанию в браузере.
+
+    Результаты: страницы событий, переход по странице или времени, временная шкала и увеличенный просмотр снимка.
+
+    Обновления интерфейса: статусы камер и потоков через WebSocket/STOMP.
+
+    Поиск: отдельный сервис индексации и поиска камер в OpenSearch; не входит в основной demo Compose.
+
+Архитектура
 
 Видеоданные не проходят через Kafka: брокер переносит команды, статусы и события. FFmpeg и inference worker подключаются к источникам видео напрямую.
 
-```mermaid
 flowchart TD
-    UI["Vue UI"] --> GW["API Gateway"]
-    GW --> CAM["Camera service"]
-    GW --> STREAM["Stream service · control plane"]
-    GW --> REC["Recording service · FFmpeg"]
-    GW --> ANA["Analytics service"]
-    STREAM --> AGENT["Rust video-ingest-agent"]
-    SOURCE["IP-камера / NVR"] --> AGENT
-    AGENT --> MTX["MediaMTX"]
-    SOURCE --> REC
-    SOURCE --> WORKER["Python inference worker"]
-    MTX -->|HLS через Gateway| UI
-    REC --> STORE["Локальные файлы / S3"]
-    STORE --> WORKER
-    ANA -->|задания| KAFKA["Kafka"]
-    REC -->|события записи| KAFKA
-    KAFKA --> WORKER
-    WORKER -->|события и статусы| KAFKA
-    KAFKA --> ANA
-    WORKER -->|снимки| STORE
-```
+UI["Vue UI"] --> GW["API Gateway"]
+GW --> CAM["Camera service"]
+GW --> STREAM["Stream service · control plane"]
+GW --> REC["Recording service · FFmpeg"]
+GW --> ANA["Analytics service"]
+STREAM --> AGENT["Rust video-ingest-agent"]
+SOURCE["IP-камера / NVR"] --> AGENT
+AGENT --> MTX["MediaMTX"]
+SOURCE --> REC
+SOURCE --> WORKER["Python inference worker"]
+MTX -->|HLS через Gateway| UI
+REC --> STORE["Локальные файлы / S3"]
+STORE --> WORKER
+ANA -->|задания| KAFKA["Kafka"]
+REC -->|события записи| KAFKA
+KAFKA --> WORKER
+WORKER -->|события и статусы| KAFKA
+KAFKA --> ANA
+WORKER -->|снимки| STORE
 
-PostgreSQL хранит данные камер, записей и аналитики. `websocket-service` передаёт события Kafka в UI, а `search-service` обновляет индекс OpenSearch. `stream-service` хранит управляющее состояние, Rust-агент владеет live FFmpeg-процессами, а MediaMTX раздаёт опубликованные потоки потребителям. Старый запуск FFmpeg внутри `stream-service` доступен при `STREAM_INGEST_AGENT_ENABLED=false`.
+PostgreSQL хранит данные камер, записей и аналитики. websocket-service передаёт события Kafka в UI, а search-service обновляет индекс OpenSearch. stream-service хранит управляющее состояние, Rust-агент владеет live FFmpeg-процессами, а MediaMTX раздаёт опубликованные потоки потребителям. Старый запуск FFmpeg внутри stream-service доступен при STREAM_INGEST_AGENT_ENABLED=false.
+Управление live-потоком
 
-### Модули и порты
+stream-service остаётся control plane: получает команду пользователя, запрашивает настройки камеры, хранит желаемое состояние и публикует события жизненного цикла. video-ingest-agent выполняет media-plane работу:
 
-| Модуль | Назначение | Порт по умолчанию |
-|---|---|---|
-| `frontend` | Vue UI | 5173 |
-| `gateway/camera-gateway` | Маршрутизация REST, HLS и WebSocket | 8080 |
-| `services/camera-service` | Камеры, настройки подключения, состояния | 8091 |
-| `services/search-service` | Индексация и поиск камер | 8093 |
-| `services/stream-service` | Управление live-потоками и событиями | 8094 |
-| `agents/video-ingest-agent` | FFmpeg-процессы, RTSP probe и reconnect | 8098 (внутренний) |
-| `services/recording-service` | Запись, хранилище, архив и playback | 8095 |
-| `services/websocket-service` | WebSocket/STOMP | 8096 |
-| `services/analytics-service` | Задания, события, результаты и worker-узлы | 8097 |
-| `workers/inference-worker` | YOLO, трекинг и пересечение линий | Без HTTP-сервера |
-| `services/notification-service` | Заготовка сервиса уведомлений | — |
-| `common/*` | Контракты событий, Kafka и логирование | — |
+    проверяет RTSP-источник через ffprobe;
+
+    обеспечивает не более одного активного pipeline на камеру и идемпотентный запуск по commandId;
+
+    запускает и корректно завершает FFmpeg, скрывая RTSP-пароль в собственных диагностических полях;
+
+    после появления FFmpeg progress проверяет, что RTSP-путь действительно читается из MediaMTX, и только затем возвращает RUNNING;
+
+    периодически перепроверяет опубликованный поток и перезапускает pipeline после двух неудачных проверок;
+
+    отслеживает продвижение media time и перезапускает процесс, если FFmpeg жив, но выходной поток завис;
+
+    ограничивает число pipeline и параллельных ffprobe; при исчерпании ёмкости возвращает HTTP 429;
+
+    предоставляет /health, /ready и Prometheus-метрики.
+
+Фактическое состояние pipeline хранится в памяти агента. После перезапуска агента IngestAgentStreamWorker обнаруживает исчезнувший pipeline и воссоздаёт его из сохранённого желаемого состояния. API агента предназначен только для внутренней сети и защищается bearer-токеном.
+Модули и порты
+Модуль	Назначение	Порт по умолчанию
+frontend	Vue UI	5173
+gateway/camera-gateway	Маршрутизация REST, HLS и WebSocket	8080
+services/camera-service	Камеры, настройки подключения, состояния	8091
+services/search-service	Индексация и поиск камер	8093
+services/stream-service	Управление live-потоками и событиями	8094
+agents/video-ingest-agent	FFmpeg-процессы, RTSP probe и reconnect	8098 (внутренний)
+services/recording-service	Запись, хранилище, архив и playback	8095
+services/websocket-service	WebSocket/STOMP	8096
+services/analytics-service	Задания, события, результаты и worker-узлы	8097
+workers/inference-worker	YOLO, трекинг и пересечение линий	Без HTTP-сервера
+services/notification-service	Заготовка сервиса уведомлений	—
+common/*	Контракты событий, Kafka и логирование	—
 
 Порты сервисов в таблице — внутренние порты приложений. Demo Compose публикует не все из них на хост.
+Стек
+Область	Технологии
+Backend	Java 21, Spring Boot 3.5.8, Rust, Tokio, Axum, Spring Cloud Gateway, Spring Data JPA
+Сборка	Gradle Wrapper, multi-project build
+Frontend	Vue 3, TypeScript, Vite, Pinia, hls.js, STOMP
+Видео	RTSP, FFmpeg/ffprobe, HLS, MediaMTX
+Inference	Python, Ultralytics YOLO, ByteTrack, OpenCV, PyTorch
+Данные	PostgreSQL, Flyway, S3-совместимое хранилище, OpenSearch
+Обмен событиями	Apache Kafka в режиме KRaft
+Наблюдаемость	Spring Boot Actuator/Micrometer, конфигурации Prometheus и Grafana
+Запуск	Docker Compose; worker можно запускать отдельно, в том числе в WSL
+Запуск
+1. Подготовка
 
-### Стек
+Понадобятся Docker с Compose v2 и доступный PostgreSQL. Для локального запуска Java-сервисов нужен JDK 21; для frontend — Node.js, совместимый с Vite 8 (например, 22.12+ в ветке 22), и npm. Для локального inference worker используется Python 3.12. При запуске media-agent вне Docker также нужны Rust, FFmpeg и ffprobe в PATH.
 
-| Область | Технологии |
-|---|---|
-| Backend | Java 21, Spring Boot 3.5.8, Rust, Tokio, Axum, Spring Cloud Gateway, Spring Data JPA |
-| Сборка | Gradle Wrapper, multi-project build |
-| Frontend | Vue 3, TypeScript, Vite, Pinia, hls.js, STOMP |
-| Видео | RTSP, FFmpeg/ffprobe, HLS, MediaMTX |
-| Inference | Python, Ultralytics YOLO, ByteTrack, OpenCV, PyTorch |
-| Данные | PostgreSQL, Flyway, S3-совместимое хранилище, OpenSearch |
-| Обмен событиями | Apache Kafka в режиме KRaft |
-| Наблюдаемость | Spring Boot Actuator/Micrometer, конфигурации Prometheus и Grafana |
-| Запуск | Docker Compose; worker можно запускать отдельно, в том числе в WSL |
-
-## Запуск
-
-### 1. Подготовка
-
-Понадобятся Docker с Compose v2 и доступный PostgreSQL. Для локального запуска Java-сервисов нужен JDK 21; для frontend — Node.js, совместимый с Vite 8 (например, 22.12+ в ветке 22), и npm. Для локального worker используется Python 3.12; локальным видеосервисам нужны FFmpeg и ffprobe в `PATH`.
-
-```bash
 git clone https://github.com/coltrack-dev/smart-surveillance-platform.git
 cd smart-surveillance-platform
 cp .env.example .env
-```
 
-Заполните `.env` собственными параметрами PostgreSQL и S3. Создайте ключ командой `openssl rand -base64 32` и сохраните его в `CAMERA_CREDENTIALS_KEY`. Не публикуйте `.env`, ключ шифрования и пароли камер. Ключ необходимо сохранять между перезапусками: без прежнего ключа ранее зашифрованные пароли не прочитать.
+Заполните .env собственными параметрами PostgreSQL и S3. Создайте ключ командой openssl rand -base64 32 и сохраните его в CAMERA_CREDENTIALS_KEY. Не публикуйте .env, ключ шифрования и пароли камер. Ключ необходимо сохранять между перезапусками: без прежнего ключа ранее зашифрованные пароли не прочитать.
 
-**Перед первым запуском проверьте конфигурацию:**
+Перед первым запуском проверьте конфигурацию:
 
-- В [docker-compose.demo.yml](docker-compose.demo.yml) PostgreSQL отключён как контейнер, а JDBC URL содержит адрес `192.168.13.128`. Замените адрес в окружении сервисов на адрес своей БД. Одного изменения `POSTGRES_DB` в `.env` для смены хоста недостаточно.
-- Настройте внешний адрес Kafka в `KAFKA_ADVERTISED_LISTENERS`. Он должен быть доступен локальным Java-сервисам и удалённому worker; внутри Compose используется `kafka:29092`.
-- Подготовьте существующую схему БД или восстановите её из своей тестовой среды. Текущая миграция camera-service изменяет таблицу `cameras`, но не создаёт исходную схему; запуск на совершенно пустой БД пока не автоматизирован. У camera-service и analytics-service включён `ddl-auto: validate`.
-- Для аналитики снимков заполните `WASABI_*`: worker и analytics-service должны обращаться к одному хранилищу и префиксу. Названия переменных сохранены для Wasabi, но конфигурация использует S3 endpoint.
-- Если нужен только просмотр и локальная запись, отключите `RECORDING_EXPORT_ENABLED` и `RECORDING_S3_ENABLED` в `.env`. Это не отключает требования к S3 у отдельно запускаемого analytics-service.
+    В docker-compose.demo.yml PostgreSQL отключён как контейнер, а JDBC URL содержит адрес 192.168.13.128. Замените адрес в окружении сервисов на адрес своей БД. Одного изменения POSTGRES_DB в .env для смены хоста недостаточно.
 
-### 2. Основные сервисы в Docker
+    Настройте внешний адрес Kafka в KAFKA_ADVERTISED_LISTENERS. Он должен быть доступен локальным Java-сервисам и удалённому worker; внутри Compose используется kafka:29092.
+
+    Подготовьте существующую схему БД или восстановите её из своей тестовой среды. Текущая миграция camera-service изменяет таблицу cameras, но не создаёт исходную схему; запуск на совершенно пустой БД пока не автоматизирован. У camera-service и analytics-service включён ddl-auto: validate.
+
+    Для аналитики снимков заполните WASABI_*: worker и analytics-service должны обращаться к одному хранилищу и префиксу. Названия переменных сохранены для Wasabi, но конфигурация использует S3 endpoint.
+
+    Замените демонстрационное значение VIDEO_INGEST_AGENT_TOKEN. Один и тот же токен должен быть передан агенту и stream-service; порт 8098 не следует публиковать наружу.
+
+    Лимиты и контроль агента настраиваются через VIDEO_INGEST_AGENT_MAX_PIPELINES, VIDEO_INGEST_AGENT_MAX_CONCURRENT_PROBES, VIDEO_INGEST_AGENT_OUTPUT_READY_TIMEOUT_SECONDS, VIDEO_INGEST_AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS и VIDEO_INGEST_AGENT_OUTPUT_STALL_TIMEOUT_SECONDS. Compose содержит безопасные начальные значения, даже если часть переменных отсутствует в .env.example.
+
+    Если нужен только просмотр и локальная запись, отключите RECORDING_EXPORT_ENABLED и RECORDING_S3_ENABLED в .env. Это не отключает требования к S3 у отдельно запускаемого analytics-service.
+
+2. Основные сервисы в Docker
 
 Запуск основных сервисов и тестовой камеры без файловых и внешних видеопубликаторов:
 
-```bash
 docker compose -f docker-compose.demo.yml up -d --build \
-  kafka mediamtx rtsp-test-publisher video-ingest-agent \
-  camera-service stream-service recording-service websocket-service camera-gateway
-```
+kafka mediamtx rtsp-test-publisher video-ingest-agent \
+camera-service stream-service recording-service websocket-service camera-gateway
 
-Gateway доступен на `http://localhost:8080`. Для камеры, к которой обращаются контейнеры, используйте RTSP URL `rtsp://mediamtx:8554/test`. С хоста тот же источник доступен как `rtsp://localhost:8554/test`.
+Gateway доступен на http://localhost:8080. Для камеры, к которой обращаются контейнеры, используйте RTSP URL rtsp://mediamtx:8554/test. С хоста тот же источник доступен как rtsp://localhost:8554/test.
 
-Для демо с людьми поместите собственное видео в `data/analytics/input/people.mp4`, затем запустите:
+Проверить состояние media-agent внутри Compose можно так:
 
-```bash
+docker compose -f docker-compose.demo.yml exec video-ingest-agent \
+curl --fail --silent http://localhost:8098/ready
+docker compose -f docker-compose.demo.yml logs -f video-ingest-agent stream-service mediamtx
+
+Для демо с людьми поместите собственное видео в data/analytics/input/people.mp4, затем запустите:
+
 docker compose -f docker-compose.demo.yml up -d rtsp-file-publisher rtsp-file-publisher-2
-```
 
-Они публикуют пути `/people` и `/people-2` на MediaMTX. Полный запуск Compose без списка сервисов также запускает публикатор внешней камеры, доступность которой не гарантируется.
+Они публикуют пути /people и /people-2 на MediaMTX. Полный запуск Compose без списка сервисов также запускает публикатор внешней камеры, доступность которой не гарантируется.
 
-[Обычный docker-compose.yml](docker-compose.yml) — альтернативный набор инфраструктуры для локальной разработки: Kafka, OpenSearch, MediaMTX, тестовый RTSP, Prometheus и Grafana. Не запускайте его одновременно с demo Compose без изменения портов и имён контейнеров.
+Обычный docker-compose.yml — альтернативный набор инфраструктуры для локальной разработки: Kafka, OpenSearch, MediaMTX, тестовый RTSP, Prometheus и Grafana. Не запускайте его одновременно с demo Compose без изменения портов и имён контейнеров.
+3. Analytics service
 
-### 3. Analytics service
+По умолчанию demo Gateway направляет аналитику на http://host.docker.internal:8097: Java analytics-service запускается отдельно на хосте. Передайте ему SPRING_DATASOURCE_URL, SPRING_DATASOURCE_USERNAME, SPRING_DATASOURCE_PASSWORD, SPRING_KAFKA_BOOTSTRAP_SERVERS и WASABI_* через окружение процесса.
 
-По умолчанию demo Gateway направляет аналитику на `http://host.docker.internal:8097`: Java analytics-service запускается отдельно на хосте. Передайте ему `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `SPRING_KAFKA_BOOTSTRAP_SERVERS` и `WASABI_*` через окружение процесса.
-
-```bash
 ./gradlew :services:analytics-service:bootRun
-```
 
-Файл `.env` используется Compose для подстановок, но не загружается автоматически этой Gradle-командой.
+Файл .env используется Compose для подстановок, но не загружается автоматически этой Gradle-командой.
 
-Альтернатива — профиль `container-analytics` в demo Compose. При его использовании также измените `ANALYTICS_SERVICE_URL` у Gateway на `http://analytics-service:8097`; одного включения профиля недостаточно.
+Альтернатива — профиль container-analytics в demo Compose. При его использовании также измените ANALYTICS_SERVICE_URL у Gateway на http://analytics-service:8097; одного включения профиля недостаточно.
+4. Frontend
 
-### 4. Frontend
+Создайте frontend/.env.local:
 
-Создайте `frontend/.env.local`:
-
-```dotenv
 VITE_API_URL=http://localhost:8080/api/v1
 VITE_HLS_URL=http://localhost:8080
 VITE_WS_URL=ws://localhost:8080/ws
-```
 
-`/api/v1` важен: это префикс маршрутов Gateway. При открытии UI с другой машины замените `localhost` адресом сервера.
+/api/v1 важен: это префикс маршрутов Gateway. При открытии UI с другой машины замените localhost адресом сервера.
 
-```bash
 cd frontend
 npm ci
 npm run dev
-```
 
-Откройте `http://localhost:5173`. Frontend запускается отдельно от demo Compose.
-
-### 5. Inference worker
+Откройте http://localhost:5173. Frontend запускается отдельно от demo Compose.
+5. Inference worker
 
 Worker может работать на той же машине или отдельном GPU-узле. Ему нужны доступ к Kafka, RTSP-источникам, HTTP API recording-service и хранилищу снимков. Общая файловая система с Java-сервисами не требуется.
 
 Из корня репозитория:
 
-```bash
 python3 -m venv workers/inference-worker/.venv
 source workers/inference-worker/.venv/bin/activate
 pip install -r workers/inference-worker/requirements.txt
@@ -173,95 +189,103 @@ export YOLO_MODEL=yolo11n.pt
 export YOLO_DEVICE=cpu
 export KAFKA_ENABLED=true
 python -m inference_worker.recording_consumer
-```
 
-Перед запуском также экспортируйте `WASABI_*` из своей конфигурации. Файл модели должен быть доступен worker; автоматическая загрузка модели требует доступа к сети. Для NVIDIA GPU требуется совместимая сборка PyTorch с CUDA; затем можно выбрать `cuda:0` в профиле задания. Docker-профиль `inference` сам по себе не настраивает GPU passthrough.
+Перед запуском также экспортируйте WASABI_* из своей конфигурации. Файл модели должен быть доступен worker; автоматическая загрузка модели требует доступа к сети. Для NVIDIA GPU требуется совместимая сборка PyTorch с CUDA; затем можно выбрать cuda:0 в профиле задания. Docker-профиль inference сам по себе не настраивает GPU passthrough.
 
-Для удалённого worker замените `localhost` реальными сетевыми адресами. Адрес `mediamtx` из Docker-сети не разрешается на удалённом WSL-узле: в real-time задании укажите источник, доступный именно worker.
+Для удалённого worker замените localhost реальными сетевыми адресами. Адрес mediamtx из Docker-сети не разрешается на удалённом WSL-узле: в real-time задании укажите источник, доступный именно worker.
 
-Подробности: [README worker](workers/inference-worker/README.md), [пример его окружения](workers/inference-worker/.env.example).
+Подробности: README worker, пример его окружения.
+Как работает аналитика
 
-## Как работает аналитика
+    UI передаёт профиль и запрос запуска в analytics-service через Gateway.
 
-1. UI передаёт профиль и запрос запуска в analytics-service через Gateway.
-2. Сервис сохраняет задание и публикует команду в `analytics.jobs`.
-3. Worker получает запись по HTTP либо читает RTSP, выполняет YOLO inference и трекинг, проверяет пересечения линий.
-4. Снимки отправляются в хранилище; события, статусы и heartbeat — в Kafka.
-5. Analytics-service сохраняет результаты, а UI запрашивает статус и страницы событий через REST.
+    Сервис сохраняет задание и публикует команду в analytics.jobs.
 
-Профиль по умолчанию хранится в `localStorage` браузера; это не общесистемная настройка для всех пользователей. Параметры передаются при запуске задания. Для изменения уже работающего анализа остановите его и запустите заново.
+    Worker получает запись по HTTP либо читает RTSP, выполняет YOLO inference и трекинг, проверяет пересечения линий.
 
-`targetFps` задаёт целевую частоту анализа, а не FPS исходного видео и не гарантированную производительность. Пропуск кадров и качество изображения влияют на обнаружение небольших или малоконтрастных объектов.
+    Снимки отправляются в хранилище; события, статусы и heartbeat — в Kafka.
 
-Worker поддерживает режимы `process` и `batched`. В `batched` камеры делят одну модель, а параметры совместимости профилей проверяются при запуске. Подробные ограничения и правила распределения камер между узлами описаны в README worker; отказоустойчивое владение потоками при Kafka rebalance требует дальнейшей проработки.
+    Analytics-service сохраняет результаты, а UI запрашивает статус и страницы событий через REST.
 
-### Kafka topics
+Профиль по умолчанию хранится в localStorage браузера; это не общесистемная настройка для всех пользователей. Параметры передаются при запуске задания. Для изменения уже работающего анализа остановите его и запустите заново.
 
-| Topic | Назначение |
-|---|---|
-| `camera.events` | События камер |
-| `camera.heartbeat` | Heartbeat камер |
-| `stream-events` | Состояния видеопотоков |
-| `recording.events` | События записей, включая готовность к анализу |
-| `analytics.jobs` | Команды запуска и остановки анализа |
-| `analytics.events` | События видеоаналитики |
-| `analytics.job-status` | Статусы и прогресс заданий |
-| `analytics.worker-heartbeat` | Состояние inference-узлов |
+targetFps задаёт целевую частоту анализа, а не FPS исходного видео и не гарантированную производительность. Пропуск кадров и качество изображения влияют на обнаружение небольших или малоконтрастных объектов.
+
+Worker поддерживает режимы process и batched. В batched камеры делят одну модель, а параметры совместимости профилей проверяются при запуске. Подробные ограничения и правила распределения камер между узлами описаны в README worker; отказоустойчивое владение потоками при Kafka rebalance требует дальнейшей проработки.
+Kafka topics
+Topic	Назначение
+camera.events	События камер
+camera.heartbeat	Heartbeat камер
+stream-events	Состояния видеопотоков
+recording.events	События записей, включая готовность к анализу
+analytics.jobs	Команды запуска и остановки анализа
+analytics.events	События видеоаналитики
+analytics.job-status	Статусы и прогресс заданий
+analytics.worker-heartbeat	Состояние inference-узлов
 
 Для ряда потребителей реализованы retry и DLT. Это не означает автоматическую exactly-once обработку всей системы.
+API через Gateway
 
-## API через Gateway
+Базовый адрес: http://localhost:8080.
+Путь	Назначение
+/api/v1/cameras	Камеры
+/api/v1/streams/**	Управление потоками
+/api/v1/recordings/**	Запись, архив, подготовка playback
+/api/v1/analytics/realtime/{cameraId}/start	POST: запуск real-time анализа
+/api/v1/analytics/realtime/{cameraId}/stop	POST: остановка real-time анализа
+/api/v1/analytics/recordings/{recordingId}/start	POST: анализ записи
+/api/v1/analytics/recordings/{recordingId}/stop	POST: остановка анализа записи
+/api/v1/analytics/jobs/{jobId}	GET: состояние задания
+/api/v1/analytics/jobs/{jobId}/events	GET: страницы результатов
+/api/v1/analytics/workers	GET: inference-узлы
+/media-hls/**	Основной live HLS через video-ingest-agent и MediaMTX
+/hls/**	Legacy HLS при STREAM_INGEST_AGENT_ENABLED=false
+/recordings/**	Ресурсы воспроизведения архива
+/ws	WebSocket/STOMP
 
-Базовый адрес: `http://localhost:8080`.
-
-| Путь | Назначение |
-|---|---|
-| `/api/v1/cameras` | Камеры |
-| `/api/v1/streams/**` | Управление потоками |
-| `/api/v1/recordings/**` | Запись, архив, подготовка playback |
-| `/api/v1/analytics/realtime/{cameraId}/start` | POST: запуск real-time анализа |
-| `/api/v1/analytics/realtime/{cameraId}/stop` | POST: остановка real-time анализа |
-| `/api/v1/analytics/recordings/{recordingId}/start` | POST: анализ записи |
-| `/api/v1/analytics/recordings/{recordingId}/stop` | POST: остановка анализа записи |
-| `/api/v1/analytics/jobs/{jobId}` | GET: состояние задания |
-| `/api/v1/analytics/jobs/{jobId}/events` | GET: страницы результатов |
-| `/api/v1/analytics/workers` | GET: inference-узлы |
-| `/hls/**` | Прямой эфир |
-| `/media-hls/**` | Прямой эфир через video-ingest-agent и MediaMTX |
-| `/recordings/**` | Ресурсы воспроизведения архива |
-| `/ws` | WebSocket/STOMP |
-
-Форматы запросов находятся в [frontend API](frontend/src/api) и контроллерах сервисов. Внутренние пути Java-сервисов отличаются от внешних маршрутов Gateway.
-
-## Сборка и проверки
+Форматы запросов находятся в frontend API и контроллерах сервисов. Внутренние пути Java-сервисов отличаются от внешних маршрутов Gateway.
+Сборка и проверки
 
 Из корня репозитория:
 
-```bash
 ./gradlew build
-```
 
 Некоторые Spring context-тесты зависят от доступной инфраструктуры и схемы PostgreSQL: команда не является полностью автономной проверкой на пустой машине.
 
 Frontend:
 
-```bash
 cd frontend
 npm ci
 npm run build
-```
 
 Тесты worker из корня, с активированным Python-окружением:
 
-```bash
 PYTHONPATH=workers/inference-worker/src python -m unittest discover -s workers/inference-worker/tests
-```
 
-## Ограничения и дальнейшее развитие
+Rust media-agent:
 
-- Подготовка чистой БД пока требует отдельной работы; миграции camera-service предполагают существующую таблицу камер.
-- Demo Compose содержит адреса тестовой сети и не является универсальной конфигурацией запуска без изменений.
-- `notification-service` пока является заготовкой: готовая доставка Email, Telegram и Push не заявляется.
-- JWT/RBAC, Debezium/CDC, Outbox, Redis и production Kubernetes-развёртывание не следует считать готовыми возможностями текущего проекта.
-- Перед внешним размещением нужны аудит доступа к API и внутренним endpoint, TLS, защита Kafka и хранилища, управление секретами, резервное копирование и политика хранения видео.
-- Точность детекции и допустимое число камер нужно измерять на целевом оборудовании, модели и реальных видеозаписях.
+cd agents/video-ingest-agent
+cargo check --locked
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+
+Интеграционный smoke-тест собирает агент, поднимает тестовый RTSP → agent → MediaMTX тракт и проверяет доступность HLS playlist и сегмента:
+
+agents/video-ingest-agent/tests/mediamtx-smoke.sh
+
+GitHub Actions workflow video-ingest-agent.yml запускается при изменениях агента, stream-service, MediaMTX или demo Compose. Он выполняет Rust check/test/Clippy, тесты stream-service и MediaMTX smoke-тест. Workflow можно временно отключить в разделе Actions репозитория или убрав/изменив его triggers.
+Ограничения и дальнейшее развитие
+
+    Подготовка чистой БД пока требует отдельной работы; миграции camera-service предполагают существующую таблицу камер.
+
+    Demo Compose содержит адреса тестовой сети и не является универсальной конфигурацией запуска без изменений.
+
+    Желаемое состояние live-потока хранит stream-service, но фактические pipeline агента находятся в памяти; восстановление после перезапуска реализовано через reconciliation, а полноценное распределение камер между несколькими media-узлами ещё не реализовано.
+
+    notification-service пока является заготовкой: готовая доставка Email, Telegram и Push не заявляется.
+
+    JWT/RBAC, Debezium/CDC, Outbox, Redis и production Kubernetes-развёртывание не следует считать готовыми возможностями текущего проекта.
+
+    Перед внешним размещением нужны аудит доступа к API и внутренним endpoint, TLS, защита Kafka и хранилища, управление секретами, резервное копирование и политика хранения видео.
+
+    Точность детекции и допустимое число камер нужно измерять на целевом оборудовании, модели и реальных видеозаписях.
