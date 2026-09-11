@@ -25,23 +25,28 @@ flowchart TD
     UI["Vue UI"] --> GW["API Gateway"]
     GW --> CAM["Camera service"]
     GW --> STREAM["Stream service · control plane"]
-    GW --> REC["Recording service · FFmpeg"]
+    GW --> REC["Recording service"]
     GW --> ANA["Analytics service"]
-    STREAM --> AGENT["Rust video-ingest-agent"]
-    SOURCE["IP-камера / NVR"] --> AGENT
-    AGENT --> MTX["MediaMTX"]
-    SOURCE --> REC
-    SOURCE --> WORKER["Python inference worker"]
-    MTX -->|HLS через Gateway| UI
-    REC --> STORE["Локальные файлы / S3"]
-    STORE --> WORKER
-    ANA -->|задания| KAFKA["Kafka"]
-    REC -->|события записи| KAFKA
+
+    SOURCE["IP-камера / NVR"] -->|"RTSP для live"| AGENT["Rust video-ingest-agent · FFmpeg"]
+    STREAM -->|"управление pipeline"| AGENT
+    AGENT -->|"нормализованный RTSP"| MTX["MediaMTX"]
+    MTX -->|"HLS через Gateway"| UI
+
+    SOURCE -->|"отдельное RTSP-подключение"| REC
+    REC -->|"MP4"| STORE["Локальный архив / S3"]
+
+    SOURCE -->|"RTSP real-time"| WORKER["Python inference worker"]
+    STORE -->|"анализ записи"| WORKER
+    ANA -->|"analytics.jobs"| KAFKA["Kafka"]
+    REC -->|"recording.events"| KAFKA
     KAFKA --> WORKER
-    WORKER -->|события и статусы| KAFKA
+    WORKER -->|"события и статусы"| KAFKA
     KAFKA --> ANA
-    WORKER -->|снимки| STORE
+    WORKER -->|"снимки"| STORE
 ```
+
+В текущей реализации `video-ingest-agent` обслуживает только прямой эфир. `recording-service` не получает поток от агента или MediaMTX: он создаёт собственное RTSP-подключение к камере/NVR и запускает отдельный FFmpeg-процесс для записи.
 
 PostgreSQL хранит данные камер, записей и аналитики. `websocket-service` передаёт события Kafka в UI, а `search-service` обновляет индекс OpenSearch. `stream-service` хранит управляющее состояние, Rust-агент владеет live FFmpeg-процессами, а MediaMTX раздаёт опубликованные потоки потребителям. Старый запуск FFmpeg внутри `stream-service` доступен при `STREAM_INGEST_AGENT_ENABLED=false`.
 
