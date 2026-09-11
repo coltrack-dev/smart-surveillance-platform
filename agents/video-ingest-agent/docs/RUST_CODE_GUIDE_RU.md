@@ -1,8 +1,8 @@
 # Путеводитель по Rust-коду video-ingest-agent
 
 Документ рассчитан на Java-разработчика, который впервые читает Rust. Начинать
-лучше с `model.rs`, затем перейти к `api.rs`, `manager.rs`, `ffmpeg.rs` и только
-после этого к `main.rs`.
+лучше с `model.rs`, затем перейти к `api.rs`, `manager.rs`, `supervisor.rs`,
+`ffmpeg.rs` и только после этого к `main.rs`.
 
 ## 1. Структура программы
 
@@ -14,14 +14,16 @@ main.rs     сборка и запуск приложения
 config.rs   переменные окружения
 model.rs    DTO, enum состояний и JSON-контракт
 api.rs      HTTP endpoints Axum
-manager.rs  реестр пайплайнов и жизненный цикл FFmpeg
+manager.rs  реестр пайплайнов и команды start/stop/list/shutdown
+supervisor.rs  жизненный цикл FFmpeg, readiness, watchdog и reconnect
 ffmpeg.rs   ffprobe и построение аргументов FFmpeg
 metrics.rs  Prometheus-счётчики
 ```
 
-Запись `mod manager;` в `main.rs` подключает файл `manager.rs`. Запись
-`use manager::PipelineManager;` импортирует конкретный тип в текущую область
-видимости — это похоже на `import` в Java.
+Запись `mod manager;` в `main.rs` подключает файл `manager.rs`, а
+`mod supervisor;` — файл `supervisor.rs`. Запись `use manager::PipelineManager;`
+импортирует конкретный тип в текущую область видимости — это похоже на `import`
+в Java.
 
 ## 2. Владение и заимствование
 
@@ -170,7 +172,7 @@ let status = manager.start(request).await?;
 
 ```rust
 let task = tokio::spawn(async move {
-    supervise(config, metrics, request, status, stop_rx).await;
+    supervisor::supervise(config, metrics, request, status, stop_rx, probe_slots).await;
 });
 ```
 

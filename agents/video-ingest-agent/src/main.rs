@@ -12,6 +12,7 @@ mod ffmpeg;
 mod manager;
 mod metrics;
 mod model;
+mod supervisor;
 
 use anyhow::Result;
 use api::AppState;
