@@ -2,6 +2,7 @@ package com.coltrack.streamservice.client;
 
 import com.coltrack.streamservice.config.IngestAgentProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -47,8 +48,12 @@ public class MediaHlsClient {
                 return false;
             }
 
-            restClient.head()
+            // MediaMTX 1.13.x returns 404 for HEAD on an existing MPEG-TS
+            // segment. A one-byte range GET validates the segment without
+            // downloading it completely and matches the browser access path.
+            restClient.get()
                     .uri(cameraPath + segmentName.get())
+                    .header(HttpHeaders.RANGE, "bytes=0-0")
                     .retrieve()
                     .toBodilessEntity();
             return true;

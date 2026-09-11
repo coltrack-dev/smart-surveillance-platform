@@ -45,7 +45,7 @@ test -n "$MEDIA_PLAYLIST"
 curl -fsS "http://localhost:18888/$CAMERA_ID/$MEDIA_PLAYLIST" > /tmp/video-ingest-agent-media.m3u8
 SEGMENT=$(awk '!/^#/ && /\.(ts|m4s)$/ { value=$0 } END { print value }' /tmp/video-ingest-agent-media.m3u8)
 test -n "$SEGMENT"
-curl -fsSI "http://localhost:18888/$CAMERA_ID/$SEGMENT" >/dev/null
+curl -fsS -r 0-0 "http://localhost:18888/$CAMERA_ID/$SEGMENT" >/dev/null
 
 curl -fsS \
   -H 'Authorization: Bearer integration-token' \
