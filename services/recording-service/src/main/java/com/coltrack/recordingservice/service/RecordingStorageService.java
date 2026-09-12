@@ -1,7 +1,10 @@
 package com.coltrack.recordingservice.service;
+
+import com.coltrack.recordingservice.model.StorageHealthStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.FileStore;
@@ -27,11 +30,20 @@ import java.util.stream.Stream;
 public class RecordingStorageService {
 
     private final Path storageRoot;
+    private final int warningThresholdPercent;
+    private final int criticalThresholdPercent;
 
     public RecordingStorageService(
-            @Value("${recording.storage.path}") String storagePath
+            @Value("${recording.storage.path}") String storagePath,
+            @Value("${recording.storage.warning-threshold-percent:20}")
+            int warningThresholdPercent,
+            @Value("${recording.storage.critical-threshold-percent:10}")
+            int criticalThresholdPercent
     ) {
         this.storageRoot = Path.of(storagePath);
+        validateThresholds(warningThresholdPercent, criticalThresholdPercent);
+        this.warningThresholdPercent = warningThresholdPercent;
+        this.criticalThresholdPercent = criticalThresholdPercent;
     }
 
     /**
@@ -284,18 +296,28 @@ public class RecordingStorageService {
         }
     }
 
-    public StorageCapacity getCapacity() {
+    public StorageSnapshot getSnapshot() {
 
         try {
             Files.createDirectories(storageRoot);
             FileStore fileStore = Files.getFileStore(storageRoot);
             long totalBytes = fileStore.getTotalSpace();
             long usableBytes = fileStore.getUsableSpace();
+            long recordingBytes = calculateDirectorySize(storageRoot);
+            long usedBytes = Math.max(0, totalBytes - usableBytes);
+            double freePercent = totalBytes == 0
+                    ? 0
+                    : usableBytes * 100.0 / totalBytes;
 
-            return new StorageCapacity(
+            return new StorageSnapshot(
                     totalBytes,
                     usableBytes,
-                    Math.max(0, totalBytes - usableBytes)
+                    usedBytes,
+                    recordingBytes,
+                    resolveStatus(freePercent),
+                    warningThresholdPercent,
+                    criticalThresholdPercent,
+                    Instant.now()
             );
         } catch (IOException exception) {
             throw new IllegalStateException(
@@ -305,10 +327,38 @@ public class RecordingStorageService {
         }
     }
 
-    public record StorageCapacity(
+    StorageHealthStatus resolveStatus(double freePercent) {
+        if (freePercent <= criticalThresholdPercent) {
+            return StorageHealthStatus.CRITICAL;
+        }
+        if (freePercent <= warningThresholdPercent) {
+            return StorageHealthStatus.WARNING;
+        }
+        return StorageHealthStatus.HEALTHY;
+    }
+
+    private void validateThresholds(
+            int warningThresholdPercent,
+            int criticalThresholdPercent
+    ) {
+        if (criticalThresholdPercent < 0
+                || warningThresholdPercent > 100
+                || criticalThresholdPercent >= warningThresholdPercent) {
+            throw new IllegalArgumentException(
+                    "Storage thresholds must satisfy 0 <= critical < warning <= 100"
+            );
+        }
+    }
+
+    public record StorageSnapshot(
             long totalBytes,
             long usableBytes,
-            long usedBytes
+            long usedBytes,
+            long recordingBytes,
+            StorageHealthStatus status,
+            int warningThresholdPercent,
+            int criticalThresholdPercent,
+            Instant checkedAt
     ) {
     }
 }

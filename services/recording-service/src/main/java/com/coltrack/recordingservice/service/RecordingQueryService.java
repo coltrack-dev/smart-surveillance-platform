@@ -174,19 +174,36 @@ public class RecordingQueryService {
 
     public RecordingStorageStatusResponse getStorageStatus() {
 
-        RecordingStorageService.StorageCapacity capacity =
-                recordingStorageService.getCapacity();
+        RecordingStorageService.StorageSnapshot snapshot =
+                recordingStorageService.getSnapshot();
 
-        double usedPercent = capacity.totalBytes() == 0
+        double usedPercent = snapshot.totalBytes() == 0
                 ? 0
-                : capacity.usedBytes() * 100.0 / capacity.totalBytes();
+                : snapshot.usedBytes() * 100.0 / snapshot.totalBytes();
+        double freePercent = snapshot.totalBytes() == 0
+                ? 0
+                : snapshot.usableBytes() * 100.0 / snapshot.totalBytes();
+        long catalogedRecordingBytes = recordingRepository.sumCatalogedSizeBytes();
+        long recordingCount = recordingRepository.count();
+        long protectedRecordingCount =
+                recordingRepository.countByProtectedFromDeletionTrue();
 
         return new RecordingStorageStatusResponse(
-                capacity.totalBytes(),
-                capacity.usableBytes(),
-                capacity.usedBytes(),
-                recordingRepository.sumCatalogedSizeBytes(),
-                usedPercent
+                snapshot.totalBytes(),
+                snapshot.usableBytes(),
+                snapshot.usedBytes(),
+                snapshot.recordingBytes(),
+                catalogedRecordingBytes,
+                snapshot.recordingBytes() - catalogedRecordingBytes,
+                recordingCount,
+                Math.max(0, recordingCount - protectedRecordingCount),
+                protectedRecordingCount,
+                usedPercent,
+                freePercent,
+                snapshot.status(),
+                snapshot.warningThresholdPercent(),
+                snapshot.criticalThresholdPercent(),
+                snapshot.checkedAt()
         );
     }
 

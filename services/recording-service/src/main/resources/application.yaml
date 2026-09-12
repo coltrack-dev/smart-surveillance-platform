@@ -48,6 +48,8 @@ stream-service:
 recording:
   storage:
     path: data/recordings
+    warning-threshold-percent: ${RECORDING_STORAGE_WARNING_THRESHOLD_PERCENT:20}
+    critical-threshold-percent: ${RECORDING_STORAGE_CRITICAL_THRESHOLD_PERCENT:10}
   export:
     enabled: true
     endpoint: ${WASABI_ENDPOINT}

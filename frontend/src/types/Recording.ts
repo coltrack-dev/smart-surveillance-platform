@@ -76,6 +76,16 @@ export interface RecordingStorageStatus {
     totalBytes: number;
     usableBytes: number;
     usedBytes: number;
+    recordingBytes: number;
     catalogedRecordingBytes: number;
+    sizeDiscrepancyBytes: number;
+    recordingCount: number;
+    unprotectedRecordingCount: number;
+    protectedRecordingCount: number;
     usedPercent: number;
+    freePercent: number;
+    status: "HEALTHY" | "WARNING" | "CRITICAL";
+    warningThresholdPercent: number;
+    criticalThresholdPercent: number;
+    checkedAt: string;
 }

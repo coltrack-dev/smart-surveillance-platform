@@ -427,6 +427,14 @@ function formatSize(
   return `${gigabytes.toFixed(2)} GB`;
 }
 
+function formatStorageCheckedAt(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(value));
+}
+
 function formatStatus(status?: RecordingStatus | null): string {
 
   if (!status) {
@@ -851,9 +859,13 @@ onUnmounted(stopAnalyticsPolling);
       <div
           v-if="storageStatus"
           class="storage-status"
+          :class="`storage-${storageStatus.status.toLowerCase()}`"
       >
         <div class="storage-status-header">
-          <span>Recording storage</span>
+          <span>
+            Recording storage
+            <span class="storage-health">{{ storageStatus.status }}</span>
+          </span>
           <strong>{{ storageStatus.usedPercent.toFixed(1) }}% used</strong>
         </div>
         <div
@@ -867,7 +879,19 @@ onUnmounted(stopAnalyticsPolling);
         </div>
         <div class="storage-details">
           <span>{{ formatSize(storageStatus.usableBytes) }} free of {{ formatSize(storageStatus.totalBytes) }}</span>
-          <span>{{ formatSize(storageStatus.catalogedRecordingBytes) }} in recording catalog</span>
+          <span>{{ formatSize(storageStatus.recordingBytes) }} in local recording files</span>
+          <span>
+            {{ storageStatus.unprotectedRecordingCount }} regular ·
+            {{ storageStatus.protectedRecordingCount }} protected
+          </span>
+          <span>Checked {{ formatStorageCheckedAt(storageStatus.checkedAt) }}</span>
+        </div>
+        <div
+            v-if="storageStatus.sizeDiscrepancyBytes !== 0"
+            class="storage-discrepancy"
+        >
+          Catalog difference: {{ formatSize(Math.abs(storageStatus.sizeDiscrepancyBytes)) }}
+          {{ storageStatus.sizeDiscrepancyBytes > 0 ? "not cataloged" : "missing locally or stored remotely" }}
         </div>
       </div>
 
@@ -1480,6 +1504,26 @@ onUnmounted(stopAnalyticsPolling);
   font-size: 14px;
 }
 
+.storage-health {
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.storage-warning .storage-health {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.storage-critical .storage-health {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .storage-progress {
   height: 7px;
   overflow: hidden;
@@ -1492,9 +1536,24 @@ onUnmounted(stopAnalyticsPolling);
   background: #3978ff;
 }
 
+.storage-warning .storage-progress > div {
+  background: #f59e0b;
+}
+
+.storage-critical .storage-progress > div {
+  background: #dc2626;
+}
+
 .storage-details {
   margin-top: 6px;
   color: #667085;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.storage-discrepancy {
+  margin-top: 6px;
+  color: #92400e;
   font-size: 12px;
 }
 

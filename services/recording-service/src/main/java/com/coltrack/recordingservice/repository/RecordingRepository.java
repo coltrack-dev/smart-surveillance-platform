@@ -49,4 +49,6 @@ public interface RecordingRepository
 
     @Query("select coalesce(sum(r.sizeBytes), 0) from RecordingEntity r")
     long sumCatalogedSizeBytes();
+
+    long countByProtectedFromDeletionTrue();
 }

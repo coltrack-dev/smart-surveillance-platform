@@ -121,6 +121,7 @@ cp .env.example .env
 - Замените демонстрационное значение `VIDEO_INGEST_AGENT_TOKEN`. Один и тот же токен должен быть передан агенту и `stream-service`; порт 8098 не следует публиковать наружу.
 - Лимиты и контроль агента настраиваются через `VIDEO_INGEST_AGENT_MAX_PIPELINES`, `VIDEO_INGEST_AGENT_MAX_CONCURRENT_PROBES`, `VIDEO_INGEST_AGENT_OUTPUT_READY_TIMEOUT_SECONDS`, `VIDEO_INGEST_AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS` и `VIDEO_INGEST_AGENT_OUTPUT_STALL_TIMEOUT_SECONDS`. Compose содержит безопасные начальные значения, даже если часть переменных отсутствует в `.env.example`.
 - Если нужен только просмотр и локальная запись, отключите `RECORDING_EXPORT_ENABLED` и `RECORDING_S3_ENABLED` в `.env`. Это не отключает требования к S3 у отдельно запускаемого analytics-service.
+- Состояние локального хранилища доступно через `GET /api/v1/recordings/storage`. Пороги `WARNING` и `CRITICAL` задаются переменными `RECORDING_STORAGE_WARNING_THRESHOLD_PERCENT` и `RECORDING_STORAGE_CRITICAL_THRESHOLD_PERCENT`; критический порог должен быть меньше предупреждающего.
 
 ### 2. Основные сервисы в Docker
 

@@ -4,6 +4,7 @@ import com.coltrack.recordingservice.dto.RecordingResponse;
 import com.coltrack.recordingservice.dto.RecordingStorageStatusResponse;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingStorageType;
+import com.coltrack.recordingservice.model.StorageHealthStatus;
 import com.coltrack.recordingservice.repository.RecordingObjectRepository;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 import org.junit.jupiter.api.Test;
@@ -70,18 +71,38 @@ class RecordingQueryServiceTest {
 
     @Test
     void reportsStorageCapacityAndCatalogedSize() {
-        when(recordingStorageService.getCapacity()).thenReturn(
-                new RecordingStorageService.StorageCapacity(1000, 250, 750)
+        Instant checkedAt = Instant.parse("2026-09-12T12:00:00Z");
+        when(recordingStorageService.getSnapshot()).thenReturn(
+                new RecordingStorageService.StorageSnapshot(
+                        1000,
+                        250,
+                        750,
+                        650,
+                        StorageHealthStatus.WARNING,
+                        30,
+                        20,
+                        checkedAt
+                )
         );
         when(recordingRepository.sumCatalogedSizeBytes()).thenReturn(600L);
+        when(recordingRepository.count()).thenReturn(4L);
+        when(recordingRepository.countByProtectedFromDeletionTrue()).thenReturn(1L);
 
         RecordingStorageStatusResponse response = service().getStorageStatus();
 
         assertEquals(1000, response.totalBytes());
         assertEquals(250, response.usableBytes());
         assertEquals(750, response.usedBytes());
+        assertEquals(650, response.recordingBytes());
         assertEquals(600, response.catalogedRecordingBytes());
+        assertEquals(50, response.sizeDiscrepancyBytes());
+        assertEquals(4, response.recordingCount());
+        assertEquals(3, response.unprotectedRecordingCount());
+        assertEquals(1, response.protectedRecordingCount());
         assertEquals(75.0, response.usedPercent());
+        assertEquals(25.0, response.freePercent());
+        assertEquals(StorageHealthStatus.WARNING, response.status());
+        assertEquals(checkedAt, response.checkedAt());
     }
 
     private RecordingQueryService service() {
