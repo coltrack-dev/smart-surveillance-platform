@@ -6,10 +6,14 @@ import com.coltrack.recordingservice.dto.ActiveRecordingResponse;
 import com.coltrack.recordingservice.dto.RecordingPageResponse;
 import com.coltrack.recordingservice.dto.RecordingProtectionRequest;
 import com.coltrack.recordingservice.dto.RecordingStorageStatusResponse;
+import com.coltrack.recordingservice.dto.StorageCleanupPreviewResponse;
+import com.coltrack.recordingservice.dto.StorageCleanupRunResponse;
+import com.coltrack.recordingservice.dto.StoragePolicyResponse;
 import com.coltrack.recordingservice.client.StreamClient;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.service.RecordingManager;
 import com.coltrack.recordingservice.service.RecordingQueryService;
+import com.coltrack.recordingservice.service.RecordingStorageCleanupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -33,6 +37,7 @@ public class RecordingController {
     private final RecordingManager recordingManager;
     private final RecordingQueryService recordingQueryService;
     private final StreamClient streamClient;
+    private final RecordingStorageCleanupService recordingStorageCleanupService;
 
     @GetMapping
     public RecordingPageResponse findRecordings(
@@ -58,6 +63,21 @@ public class RecordingController {
     @GetMapping("/storage")
     public RecordingStorageStatusResponse getStorageStatus() {
         return recordingQueryService.getStorageStatus();
+    }
+
+    @GetMapping("/storage/policy")
+    public StoragePolicyResponse getStoragePolicy() {
+        return recordingStorageCleanupService.getPolicy();
+    }
+
+    @PostMapping("/storage/cleanup/preview")
+    public StorageCleanupPreviewResponse previewStorageCleanup() {
+        return recordingStorageCleanupService.preview();
+    }
+
+    @PostMapping("/storage/cleanup/run")
+    public StorageCleanupRunResponse runStorageCleanup() {
+        return recordingStorageCleanupService.runCleanup();
     }
 
     @PatchMapping("/{recordingId}/protection")

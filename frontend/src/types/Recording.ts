@@ -16,6 +16,13 @@ export type RecordingStorageType =
     | "HYBRID"
     | "MISSING";
 
+export type RecordingCleanupStatus =
+    | "AVAILABLE"
+    | "DELETING"
+    | "LOCAL_DELETED"
+    | "DELETED"
+    | "DELETE_FAILED";
+
 export interface ActiveRecording {
     id: string;
     cameraId: string;
@@ -57,6 +64,12 @@ export interface Recording {
 
     protectedFromDeletion: boolean;
 
+    cleanupStatus: RecordingCleanupStatus;
+
+    deletedAt: string | null;
+
+    deletionReason: string | null;
+
     storageType: RecordingStorageType;
 
     playbackUrl: string;
@@ -88,4 +101,57 @@ export interface RecordingStorageStatus {
     warningThresholdPercent: number;
     criticalThresholdPercent: number;
     checkedAt: string;
+}
+
+export interface RecordingStoragePolicy {
+    maximumLocalBytes: number;
+    cleanupTargetPercent: number;
+    cleanupTargetBytes: number;
+    retentionDays: number;
+    minimumFreePercent: number;
+    emergencyFreePercent: number;
+    maxRecordingsPerRun: number;
+    deleteLocalOnlyEnabled: boolean;
+}
+
+export interface StorageCleanupCandidate {
+    recordingId: string;
+    cameraId: string;
+    finishedAt: string;
+    localBytes: number;
+    storageType: RecordingStorageType;
+    reasons: string[];
+}
+
+export interface StorageCleanupPreview {
+    cleanupRequired: boolean;
+    reasons: string[];
+    currentRecordingBytes: number;
+    maximumLocalBytes: number;
+    targetRecordingBytes: number;
+    bytesToFree: number;
+    candidateBytes: number;
+    candidateCount: number;
+    enoughEligibleData: boolean;
+    checkedAt: string;
+    candidates: StorageCleanupCandidate[];
+}
+
+export interface StorageCleanupResultItem {
+    recordingId: string;
+    status: RecordingCleanupStatus;
+    freedBytes: number;
+    error: string | null;
+}
+
+export interface StorageCleanupRunResult {
+    attemptedCount: number;
+    deletedCount: number;
+    failedCount: number;
+    freedBytes: number;
+    targetReached: boolean;
+    remainingRecordingBytes: number;
+    remainingFreePercent: number;
+    finishedAt: string;
+    results: StorageCleanupResultItem[];
 }

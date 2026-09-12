@@ -11,15 +11,21 @@ import type {
   Recording,
   RecordingDate,
   RecordingStatus,
-  RecordingStorageStatus
+  RecordingStorageStatus,
+  RecordingStoragePolicy,
+  StorageCleanupPreview,
+  StorageCleanupRunResult
 } from "@/types/Recording";
 
 import {
   findRecordings,
   findRecordingDates,
+  getRecordingStoragePolicy,
   getRecordingStorageStatus,
   prepareRecordingPlayback,
+  previewRecordingStorageCleanup,
   resolveRecordingDownloadUrl,
+  runRecordingStorageCleanup,
   setRecordingProtection
 } from "@/api/recordingApi";
 
@@ -57,6 +63,12 @@ const recordingsTotalPages = ref(0);
 const recordingsTotal = ref(0);
 const recordingsPageSize = 10;
 const storageStatus = ref<RecordingStorageStatus | null>(null);
+const storagePolicy = ref<RecordingStoragePolicy | null>(null);
+const cleanupPreview = ref<StorageCleanupPreview | null>(null);
+const cleanupResult = ref<StorageCleanupRunResult | null>(null);
+const cleanupLoading = ref(false);
+const cleanupRunning = ref(false);
+const cleanupError = ref<string | null>(null);
 const protectionLoadingIds = ref<Set<string>>(new Set());
 type RecordingView = "cards" | "table";
 const RECORDING_VIEW_STORAGE_KEY = "recording-archive-view";
@@ -332,6 +344,67 @@ async function loadStorageStatus(): Promise<void> {
   } catch (error) {
     console.error("Unable to load recording storage status", error);
   }
+}
+
+async function loadStoragePolicy(): Promise<void> {
+  try {
+    storagePolicy.value = await getRecordingStoragePolicy();
+  } catch (error) {
+    console.error("Unable to load recording storage policy", error);
+  }
+}
+
+async function previewCleanup(): Promise<void> {
+  cleanupLoading.value = true;
+  cleanupError.value = null;
+  cleanupResult.value = null;
+  try {
+    cleanupPreview.value = await previewRecordingStorageCleanup();
+  } catch (error) {
+    console.error("Unable to preview recording cleanup", error);
+    cleanupError.value = "Unable to preview storage cleanup.";
+  } finally {
+    cleanupLoading.value = false;
+  }
+}
+
+async function runCleanup(): Promise<void> {
+  const preview = cleanupPreview.value;
+  if (!preview?.cleanupRequired || cleanupRunning.value) {
+    return;
+  }
+  const confirmed = window.confirm(
+      `Delete local files for ${preview.candidateCount} recordings and free approximately ${formatSize(preview.candidateBytes)}?`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  cleanupRunning.value = true;
+  cleanupError.value = null;
+  try {
+    cleanupResult.value = await runRecordingStorageCleanup();
+    cleanupPreview.value = null;
+    await Promise.all([loadStorageStatus(), loadDates()]);
+    if (selectedDate.value) {
+      await selectDate(selectedDate.value, recordingsPage.value);
+    }
+  } catch (error) {
+    console.error("Unable to run recording cleanup", error);
+    cleanupError.value = "Storage cleanup failed.";
+  } finally {
+    cleanupRunning.value = false;
+  }
+}
+
+function cleanupReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    RETENTION_EXPIRED: "retention period expired",
+    MAXIMUM_LOCAL_SIZE_EXCEEDED: "local storage limit exceeded",
+    MINIMUM_FREE_SPACE_BREACHED: "disk free-space threshold breached",
+    EMERGENCY_FREE_SPACE_BREACHED: "emergency free-space threshold breached"
+  };
+  return labels[reason] ?? reason;
 }
 
 function setRecordingView(view: RecordingView): void {
@@ -814,6 +887,7 @@ async function selectRecording(
 onMounted(() => {
   void loadDates();
   void loadStorageStatus();
+  void loadStoragePolicy();
 });
 
 onUnmounted(stopAnalyticsPolling);
@@ -892,6 +966,68 @@ onUnmounted(stopAnalyticsPolling);
         >
           Catalog difference: {{ formatSize(Math.abs(storageStatus.sizeDiscrepancyBytes)) }}
           {{ storageStatus.sizeDiscrepancyBytes > 0 ? "not cataloged" : "missing locally or stored remotely" }}
+        </div>
+        <div class="storage-cleanup-actions">
+          <span v-if="storagePolicy">
+            Limit {{ formatSize(storagePolicy.maximumLocalBytes) }} ·
+            retention {{ storagePolicy.retentionDays }} days ·
+            {{ storagePolicy.deleteLocalOnlyEnabled ? "local-only deletion enabled" : "S3 copies only" }}
+          </span>
+          <button
+              type="button"
+              :disabled="cleanupLoading || cleanupRunning"
+              @click="previewCleanup"
+          >
+            {{ cleanupLoading ? "Calculating..." : "Preview cleanup" }}
+          </button>
+        </div>
+        <div v-if="cleanupError" class="storage-cleanup-error">
+          {{ cleanupError }}
+        </div>
+        <div v-if="cleanupPreview" class="storage-cleanup-preview">
+          <template v-if="cleanupPreview.cleanupRequired">
+            <strong>
+              {{ cleanupPreview.candidateCount }} recordings ·
+              {{ formatSize(cleanupPreview.candidateBytes) }} can be freed
+            </strong>
+            <span>
+              Reasons: {{ cleanupPreview.reasons.map(cleanupReasonLabel).join(", ") }}
+            </span>
+            <span v-if="!cleanupPreview.enoughEligibleData" class="storage-cleanup-warning">
+              Eligible recordings cannot free all required space.
+            </span>
+            <details>
+              <summary>Show candidates</summary>
+              <ul>
+                <li
+                    v-for="candidate in cleanupPreview.candidates"
+                    :key="candidate.recordingId"
+                >
+                  {{ new Date(candidate.finishedAt).toLocaleString() }} ·
+                  {{ formatSize(candidate.localBytes) }} ·
+                  {{ candidate.storageType }} ·
+                  {{ candidate.reasons.map(cleanupReasonLabel).join(", ") }}
+                </li>
+              </ul>
+            </details>
+            <button
+                type="button"
+                class="cleanup-run-button"
+                :disabled="cleanupRunning"
+                @click="runCleanup"
+            >
+              {{ cleanupRunning ? "Cleaning..." : "Run cleanup" }}
+            </button>
+          </template>
+          <strong v-else>No recordings are eligible for cleanup.</strong>
+        </div>
+        <div v-if="cleanupResult" class="storage-cleanup-result">
+          Cleanup finished: {{ cleanupResult.deletedCount }} deleted,
+          {{ cleanupResult.failedCount }} failed,
+          {{ formatSize(cleanupResult.freedBytes) }} freed.
+          <span v-if="!cleanupResult.targetReached">
+            The configured storage target was not reached.
+          </span>
         </div>
       </div>
 
@@ -1106,6 +1242,15 @@ onUnmounted(stopAnalyticsPolling);
                 class="recording-metadata"
             >
               <span><strong>Storage:</strong> {{ selectedRecording.storageType }}</span>
+              <span v-if="selectedRecording.cleanupStatus !== 'AVAILABLE'">
+                <strong>Cleanup:</strong> {{ selectedRecording.cleanupStatus }}
+              </span>
+              <span v-if="selectedRecording.deletedAt">
+                <strong>Local deletion:</strong> {{ new Date(selectedRecording.deletedAt).toLocaleString() }}
+              </span>
+              <span v-if="selectedRecording.deletionReason">
+                <strong>Deletion reason:</strong> {{ selectedRecording.deletionReason }}
+              </span>
               <span v-if="selectedRecording.codec"><strong>Codec:</strong> {{ selectedRecording.codec }}</span>
               <span v-if="selectedRecording.width && selectedRecording.height">
                 <strong>Video:</strong> {{ selectedRecording.width }}×{{ selectedRecording.height }}
@@ -1555,6 +1700,76 @@ onUnmounted(stopAnalyticsPolling);
   margin-top: 6px;
   color: #92400e;
   font-size: 12px;
+}
+
+.storage-cleanup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.storage-cleanup-actions button,
+.storage-cleanup-preview button {
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.storage-cleanup-actions button:disabled,
+.storage-cleanup-preview button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.storage-cleanup-preview,
+.storage-cleanup-result,
+.storage-cleanup-error {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.storage-cleanup-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+}
+
+.storage-cleanup-preview details {
+  width: 100%;
+}
+
+.storage-cleanup-preview ul {
+  max-height: 150px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.storage-cleanup-warning,
+.storage-cleanup-error {
+  color: #b42318;
+}
+
+.storage-cleanup-result {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.storage-cleanup-preview .cleanup-run-button {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
 }
 
 .camera-name {

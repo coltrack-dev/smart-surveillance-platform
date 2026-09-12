@@ -3,6 +3,7 @@ package com.coltrack.recordingservice.dto;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.model.RecordingStorageType;
+import com.coltrack.recordingservice.model.RecordingCleanupStatus;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -37,6 +38,12 @@ public record RecordingResponse(
 
         boolean protectedFromDeletion,
 
+        RecordingCleanupStatus cleanupStatus,
+
+        Instant deletedAt,
+
+        String deletionReason,
+
         RecordingStorageType storageType,
 
         String playbackUrl,
@@ -66,6 +73,9 @@ public record RecordingResponse(
                 entity.getStatus(),
                 entity.getReason(),
                 entity.isProtectedFromDeletion(),
+                entity.getCleanupStatus(),
+                entity.getDeletedAt(),
+                entity.getDeletionReason(),
                 storageType,
 
                 "/recordings/" +

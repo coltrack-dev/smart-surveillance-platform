@@ -51,4 +51,9 @@ public interface RecordingRepository
     long sumCatalogedSizeBytes();
 
     long countByProtectedFromDeletionTrue();
+
+    List<RecordingEntity>
+    findByProtectedFromDeletionFalseAndStatusInOrderByFinishedAtAsc(
+            Collection<RecordingStatus> statuses
+    );
 }

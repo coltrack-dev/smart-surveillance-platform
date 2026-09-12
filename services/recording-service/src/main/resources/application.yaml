@@ -50,6 +50,13 @@ recording:
     path: data/recordings
     warning-threshold-percent: ${RECORDING_STORAGE_WARNING_THRESHOLD_PERCENT:20}
     critical-threshold-percent: ${RECORDING_STORAGE_CRITICAL_THRESHOLD_PERCENT:10}
+    maximum-local-size: ${RECORDING_STORAGE_MAXIMUM_LOCAL_SIZE:100GB}
+    cleanup-target-percent: ${RECORDING_STORAGE_CLEANUP_TARGET_PERCENT:90}
+    retention-days: ${RECORDING_STORAGE_RETENTION_DAYS:30}
+    minimum-free-percent: ${RECORDING_STORAGE_MINIMUM_FREE_PERCENT:15}
+    emergency-free-percent: ${RECORDING_STORAGE_EMERGENCY_FREE_PERCENT:5}
+    max-recordings-per-run: ${RECORDING_STORAGE_MAX_RECORDINGS_PER_RUN:100}
+    delete-local-only-enabled: ${RECORDING_STORAGE_DELETE_LOCAL_ONLY_ENABLED:false}
   export:
     enabled: true
     endpoint: ${WASABI_ENDPOINT}

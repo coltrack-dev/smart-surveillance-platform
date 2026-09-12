@@ -66,4 +66,32 @@ class RecordingStorageServiceTest {
         assertEquals(StorageHealthStatus.WARNING, service.resolveStatus(10.1));
         assertEquals(StorageHealthStatus.CRITICAL, service.resolveStatus(10.0));
     }
+
+    @Test
+    void deletesOnlyDirectoryInsideConfiguredStorageRoot() throws Exception {
+        Path recordingDirectory = storageRoot.resolve("camera/date/recording");
+        Files.createDirectories(recordingDirectory);
+        Files.write(recordingDirectory.resolve("recording.mkv"), new byte[64]);
+        RecordingStorageService service = new RecordingStorageService(
+                storageRoot.toString(),
+                20,
+                10
+        );
+
+        assertEquals(
+                64,
+                service.deleteRecordingDirectory(recordingDirectory.toString())
+        );
+        assertTrue(Files.notExists(recordingDirectory));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.deleteRecordingDirectory(storageRoot.toString())
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.deleteRecordingDirectory(
+                        storageRoot.resolve("../outside").toString()
+                )
+        );
+    }
 }

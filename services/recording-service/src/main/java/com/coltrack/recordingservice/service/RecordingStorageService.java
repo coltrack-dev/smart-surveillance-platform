@@ -296,6 +296,62 @@ public class RecordingStorageService {
         }
     }
 
+    public long getRecordingDirectorySize(String directory) {
+        Path path = resolveManagedRecordingDirectory(directory);
+        if (!Files.isDirectory(path)) {
+            return 0;
+        }
+        try {
+            return calculateDirectorySize(path);
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Unable to calculate recording directory size: " + path,
+                    exception
+            );
+        }
+    }
+
+    /**
+     * Deletes one recording directory without allowing a DB path to escape
+     * the configured recording root.
+     */
+    public long deleteRecordingDirectory(String directory) {
+        Path path = resolveManagedRecordingDirectory(directory);
+        if (!Files.exists(path)) {
+            return 0;
+        }
+
+        long size = getRecordingDirectorySize(directory);
+        try (Stream<Path> paths = Files.walk(path)) {
+            for (Path item : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(item);
+            }
+            return size;
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Unable to delete recording directory: " + path,
+                    exception
+            );
+        }
+    }
+
+    private Path resolveManagedRecordingDirectory(String directory) {
+        if (directory == null || directory.isBlank()) {
+            throw new IllegalArgumentException("Recording directory is required");
+        }
+
+        Path normalizedRoot = storageRoot.toAbsolutePath().normalize();
+        Path normalizedDirectory = Path.of(directory).toAbsolutePath().normalize();
+        if (normalizedDirectory.equals(normalizedRoot)
+                || !normalizedDirectory.startsWith(normalizedRoot)) {
+            throw new IllegalArgumentException(
+                    "Recording directory is outside configured storage root: "
+                            + directory
+            );
+        }
+        return normalizedDirectory;
+    }
+
     public StorageSnapshot getSnapshot() {
 
         try {

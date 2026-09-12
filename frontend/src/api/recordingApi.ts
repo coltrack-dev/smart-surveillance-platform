@@ -6,7 +6,10 @@ import type {
     RecordingDate,
     RecordingPage,
     RecordingStatus,
-    RecordingStorageStatus
+    RecordingStorageStatus,
+    RecordingStoragePolicy,
+    StorageCleanupPreview,
+    StorageCleanupRunResult
 } from "@/types/Recording";
 
 export interface RecordingSearchParameters {
@@ -47,6 +50,31 @@ export async function getRecordingStorageStatus(): Promise<RecordingStorageStatu
         "/recordings/storage"
     );
 
+    return response.data;
+}
+
+export async function getRecordingStoragePolicy(): Promise<RecordingStoragePolicy> {
+    const response = await http.get<RecordingStoragePolicy>(
+        "/recordings/storage/policy"
+    );
+    return response.data;
+}
+
+export async function previewRecordingStorageCleanup(): Promise<StorageCleanupPreview> {
+    const response = await http.post<StorageCleanupPreview>(
+        "/recordings/storage/cleanup/preview",
+        undefined,
+        { timeout: 15000 }
+    );
+    return response.data;
+}
+
+export async function runRecordingStorageCleanup(): Promise<StorageCleanupRunResult> {
+    const response = await http.post<StorageCleanupRunResult>(
+        "/recordings/storage/cleanup/run",
+        undefined,
+        { timeout: 60000 }
+    );
     return response.data;
 }
 

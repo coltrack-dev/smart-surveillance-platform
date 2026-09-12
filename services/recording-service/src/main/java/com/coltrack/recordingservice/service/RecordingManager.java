@@ -44,6 +44,7 @@ public class RecordingManager implements RecordingListener {
     private final FfprobeService ffprobeService;
     private final S3StorageService s3StorageService;
     private final RecordingEventPublisher recordingEventPublisher;
+    private final RecordingStorageGuard recordingStorageGuard;
 
     /**
      * Active recording sessions.
@@ -196,6 +197,8 @@ public class RecordingManager implements RecordingListener {
                         );
                         return null;
                     }
+
+                    recordingStorageGuard.assertRecordingCanStart();
 
                     CameraDto camera =
                             cameraClient.findById(cameraId);

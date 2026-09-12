@@ -9,10 +9,16 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "recording_sessions",
-        indexes = @Index(
-                name = "idx_recording_sessions_camera_started_at",
-                columnList = "camera_id, started_at"
-        )
+        indexes = {
+                @Index(
+                        name = "idx_recording_sessions_camera_started_at",
+                        columnList = "camera_id, started_at"
+                ),
+                @Index(
+                        name = "idx_recording_cleanup_candidates",
+                        columnList = "protected_from_deletion, status, cleanup_status, finished_at"
+                )
+        }
 )
 @Getter
 @Setter
@@ -93,4 +99,19 @@ public class RecordingEntity {
             columnDefinition = "boolean default false"
     )
     private boolean protectedFromDeletion = false;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(
+            name = "cleanup_status",
+            nullable = false,
+            columnDefinition = "varchar(32) default 'AVAILABLE'"
+    )
+    private RecordingCleanupStatus cleanupStatus = RecordingCleanupStatus.AVAILABLE;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "deletion_reason", length = 1000)
+    private String deletionReason;
 }

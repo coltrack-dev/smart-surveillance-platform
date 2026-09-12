@@ -122,6 +122,7 @@ cp .env.example .env
 - Лимиты и контроль агента настраиваются через `VIDEO_INGEST_AGENT_MAX_PIPELINES`, `VIDEO_INGEST_AGENT_MAX_CONCURRENT_PROBES`, `VIDEO_INGEST_AGENT_OUTPUT_READY_TIMEOUT_SECONDS`, `VIDEO_INGEST_AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS` и `VIDEO_INGEST_AGENT_OUTPUT_STALL_TIMEOUT_SECONDS`. Compose содержит безопасные начальные значения, даже если часть переменных отсутствует в `.env.example`.
 - Если нужен только просмотр и локальная запись, отключите `RECORDING_EXPORT_ENABLED` и `RECORDING_S3_ENABLED` в `.env`. Это не отключает требования к S3 у отдельно запускаемого analytics-service.
 - Состояние локального хранилища доступно через `GET /api/v1/recordings/storage`. Пороги `WARNING` и `CRITICAL` задаются переменными `RECORDING_STORAGE_WARNING_THRESHOLD_PERCENT` и `RECORDING_STORAGE_CRITICAL_THRESHOLD_PERCENT`; критический порог должен быть меньше предупреждающего.
+- Политика ограничения задаётся через `RECORDING_STORAGE_MAXIMUM_LOCAL_SIZE`, `RECORDING_STORAGE_RETENTION_DAYS`, `RECORDING_STORAGE_MINIMUM_FREE_PERCENT` и `RECORDING_STORAGE_EMERGENCY_FREE_PERCENT`. Перед удалением используйте `POST /api/v1/recordings/storage/cleanup/preview`; подтверждённая ручная очистка запускается через `POST /api/v1/recordings/storage/cleanup/run`. По умолчанию удаляются только локальные копии полностью загруженных в S3 записей. Удаление единственной локальной копии требует явного `RECORDING_STORAGE_DELETE_LOCAL_ONLY_ENABLED=true`.
 
 ### 2. Основные сервисы в Docker
 
