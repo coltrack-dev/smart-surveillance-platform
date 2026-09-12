@@ -388,3 +388,6 @@ public class RecordingStorageCleanupService {
                     storageType,
                     reasons
             );
+        }
+    }
+}

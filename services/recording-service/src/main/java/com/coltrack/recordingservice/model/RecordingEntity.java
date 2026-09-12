@@ -2,6 +2,7 @@ package com.coltrack.recordingservice.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -95,9 +96,9 @@ public class RecordingEntity {
     @Builder.Default
     @Column(
             name = "protected_from_deletion",
-            nullable = false,
-            columnDefinition = "boolean default false"
+            nullable = false
     )
+    @ColumnDefault("false")
     private boolean protectedFromDeletion = false;
 
     @Builder.Default
@@ -105,9 +106,11 @@ public class RecordingEntity {
     @Column(
             name = "cleanup_status",
             nullable = false,
-            columnDefinition = "varchar(32) default 'AVAILABLE'"
+            length = 32
     )
-    private RecordingCleanupStatus cleanupStatus = RecordingCleanupStatus.AVAILABLE;
+    @ColumnDefault("'AVAILABLE'")
+    private RecordingCleanupStatus cleanupStatus =
+            RecordingCleanupStatus.AVAILABLE;
 
     @Column(name = "deleted_at")
     private Instant deletedAt;
