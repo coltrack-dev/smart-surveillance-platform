@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -72,8 +73,8 @@ public class RecordingWorker implements Runnable {
     }
 
     private boolean isIgnorableMessage(String line) {
-
         return line.contains("Non-monotonic DTS")
+                || line.contains("Non-monotonous DTS")
                 || line.contains("co located POCs unavailable")
                 || line.contains("mmco: unref short failure");
     }
@@ -205,7 +206,7 @@ public class RecordingWorker implements Runnable {
 
         log.info(
                 "FFmpeg command: {}",
-                String.join(" ", command)
+                commandForLog(command)
         );
 
         Process process =
@@ -229,7 +230,7 @@ public class RecordingWorker implements Runnable {
                 + FIRST_SEGMENT_TIMEOUT_SECONDS * 1000L;
 
         while (System.currentTimeMillis() < deadline) {
-            if (calculateAttemptSize(attempt) > 0) {
+            if (hasAttemptSegment(attempt)) {
                 return;
             }
             if (!process.isAlive()) {
@@ -245,6 +246,16 @@ public class RecordingWorker implements Runnable {
                 "Timed out waiting for first recording segment ("
                         + FIRST_SEGMENT_TIMEOUT_SECONDS + " seconds)"
         );
+    }
+
+    private boolean hasAttemptSegment(int attempt) throws IOException {
+        String prefix = String.format("recording-%03d-", attempt);
+        try (Stream<Path> files = Files.list(directory)) {
+            return files
+                    .filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString())
+                    .anyMatch(name -> name.startsWith(prefix) && name.endsWith(".mkv"));
+        }
     }
 
     private long calculateAttemptSize(int attempt) throws IOException {
@@ -586,6 +597,12 @@ public class RecordingWorker implements Runnable {
                 "-rtsp_transport",
                 "tcp",
 
+                "-use_wallclock_as_timestamps",
+                "1",
+
+                "-fflags",
+                "+genpts",
+
                 "-i",
                 rtspUrl,
 
@@ -613,11 +630,24 @@ public class RecordingWorker implements Runnable {
                 "-segment_format",
                 "matroska",
 
+                "-flush_packets",
+                "1",
+
 
                 "-y",
 
 
                 outputPattern.toString()
         );
+    }
+
+    private String commandForLog(List<String> command) {
+        List<String> sanitized = new ArrayList<>(command);
+        for (int index = 0; index < sanitized.size() - 1; index++) {
+            if ("-i".equals(sanitized.get(index))) {
+                sanitized.set(index + 1, "<redacted>");
+            }
+        }
+        return String.join(" ", sanitized);
     }
 }
