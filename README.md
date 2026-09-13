@@ -8,7 +8,8 @@ Backend построен на Java/Spring Boot и Kafka, управление м
 
 - **Камеры:** создание и редактирование, категории, избранное, состояния и heartbeat; настройки RTSP, включая формат XM для совместимых NVR. Пароли камер хранятся с шифрованием AES-GCM при настроенном ключе.
 - **Прямой эфир:** RTSP → Rust video-ingest-agent → FFmpeg → MediaMTX → HLS, просмотр через hls.js, проверка готовности опубликованного потока, контроль зависания и автоматическое переподключение. Режимы обработки видео `AUTO`, `COPY`, `TRANSCODE_H264` позволяют учитывать кодек источника и совместимость браузера.
-- **Запись и архив:** управление записью отдельно от просмотра, метаданные в PostgreSQL, локальные файлы и экспорт в S3-совместимое хранилище, подготовка HLS для воспроизведения архива. Интерфейс показывает заполнение хранилища, поддерживает табличный и компактный карточный вид и защиту записи от удаления.
+- **Запись и архив:** управление записью отдельно от просмотра, десятиминутные MKV-сегменты, метаданные в PostgreSQL, локальные файлы и экспорт в S3-совместимое хранилище, подготовка HLS для воспроизведения архива. Интерфейс показывает заполнение хранилища, поддерживает табличный и компактный карточный вид и защиту записи от удаления.
+- **Управление хранилищем:** preview перед локальной или S3-очисткой, квоты и retention, защита единственной копии, сверка каталога БД с реальными S3-объектами и диагностика `MISSING`, `SIZE_MISMATCH`, `ORPHAN` и незавершённого удаления.
 - **Видеоаналитика:** анализ записи и real-time RTSP, детекция и трекинг объектов, события пересечения настраиваемых линий, направление движения и снимки событий.
 - **Управление заданиями:** запуск, остановка, статусы и прогресс; список worker-узлов, heartbeat и сведения об их нагрузке.
 - **Профиль анализа:** выбор модели, классов объектов, confidence, устройства и целевой частоты обработки; сохранение профиля по умолчанию в браузере.
@@ -34,7 +35,7 @@ flowchart TD
     MTX -->|"HLS через Gateway"| UI
 
     SOURCE -->|"отдельное RTSP-подключение"| REC
-    REC -->|"MP4"| STORE["Локальный архив / S3"]
+    REC -->|"MKV-сегменты"| STORE["Локальный архив / S3"]
 
     SOURCE -->|"RTSP real-time"| WORKER["Python inference worker"]
     STORE -->|"анализ записи"| WORKER
@@ -47,6 +48,8 @@ flowchart TD
 ```
 
 В текущей реализации `video-ingest-agent` обслуживает только прямой эфир. `recording-service` не получает поток от агента или MediaMTX: он создаёт собственное RTSP-подключение к камере/NVR и запускает отдельный FFmpeg-процесс для записи.
+
+Для NVR с нестабильными или отсутствующими timestamps recorder использует генерацию PTS, wall-clock timestamps и принудительный flush пакетов. Появление первого MKV-сегмента переводит сессию из `STARTING` в `RECORDING`; дальнейший рост файлов контролируется watchdog. При обрыве RTSP выполняются ограниченные попытки reconnect с увеличивающейся задержкой. В INFO-логе входной URL FFmpeg заменяется на `<redacted>`, поэтому пароль камеры не должен попадать в новые логи.
 
 PostgreSQL хранит данные камер, записей и аналитики. `websocket-service` передаёт события Kafka в UI, а `search-service` обновляет индекс OpenSearch. `stream-service` хранит управляющее состояние, Rust-агент владеет live FFmpeg-процессами, а MediaMTX раздаёт опубликованные потоки потребителям. Старый запуск FFmpeg внутри `stream-service` доступен при `STREAM_INGEST_AGENT_ENABLED=false`.
 
@@ -124,7 +127,7 @@ cp .env.example .env
 - Состояние локального хранилища доступно через `GET /api/v1/recordings/storage`. Пороги `WARNING` и `CRITICAL` задаются переменными `RECORDING_STORAGE_WARNING_THRESHOLD_PERCENT` и `RECORDING_STORAGE_CRITICAL_THRESHOLD_PERCENT`; критический порог должен быть меньше предупреждающего.
 - Политика ограничения задаётся через `RECORDING_STORAGE_MAXIMUM_LOCAL_SIZE`, `RECORDING_STORAGE_RETENTION_DAYS`, `RECORDING_STORAGE_MINIMUM_FREE_PERCENT` и `RECORDING_STORAGE_EMERGENCY_FREE_PERCENT`. Перед удалением используйте `POST /api/v1/recordings/storage/cleanup/preview`; подтверждённая ручная очистка запускается через `POST /api/v1/recordings/storage/cleanup/run`. По умолчанию удаляются только локальные копии полностью загруженных в S3 записей. Удаление единственной локальной копии требует явного `RECORDING_STORAGE_DELETE_LOCAL_ONLY_ENABLED=true`.
 - Учёт S3 строится по активным строкам `recording_objects` для префикса записей. Состояние и политика доступны через `GET /api/v1/recordings/storage/s3` и `GET /api/v1/recordings/storage/s3/policy`. Сначала проверьте `POST /api/v1/recordings/storage/s3/cleanup/preview`; удаление объектов через `POST /api/v1/recordings/storage/s3/cleanup/run` заблокировано, пока явно не задано `RECORDING_S3_DELETION_ENABLED=true`. По умолчанию HYBRID-записи не теряют резервную S3-копию (`RECORDING_S3_DELETE_HYBRID_ENABLED=false`), а защищённые записи не удаляются никогда.
-- Сверка каталога с реальным S3 запускается через `POST /api/v1/recordings/storage/s3/reconciliation/run`. Последний результат и нерешённые проблемы доступны через `GET /api/v1/recordings/storage/s3/reconciliation` и `GET /api/v1/recordings/storage/s3/problems`. Проверка не удаляет orphan-объекты автоматически.
+- Сверка каталога с реальным S3 запускается через `POST /api/v1/recordings/storage/s3/reconciliation/run`. Последний результат и нерешённые проблемы доступны через `GET /api/v1/recordings/storage/s3/reconciliation` и `GET /api/v1/recordings/storage/s3/problems`. Известные каталогу объекты проверяются отдельными запросами, а поиск orphan-объектов ограничен настроенным `RECORDING_S3_PREFIX`. Проверка ничего не удаляет автоматически.
 
 ### 2. Основные сервисы в Docker
 
@@ -214,6 +217,38 @@ python -m inference_worker.recording_consumer
 Для удалённого worker замените `localhost` реальными сетевыми адресами. Адрес `mediamtx` из Docker-сети не разрешается на удалённом WSL-узле: в real-time задании укажите источник, доступный именно worker.
 
 Подробности: [README worker](workers/inference-worker/README.md), [пример его окружения](workers/inference-worker/.env.example).
+
+### 6. Сброс тестовых данных
+
+Скрипт `scripts/reset-surveillance-test-data.sh` удаляет тестовые записи и результаты аналитики, но сохраняет регистрации камер, связанные справочники и Docker volume с inference-моделями. Он очищает:
+
+- таблицы записей, объектов, analytics jobs/events/workers и историю S3 reconciliation;
+- текущие объекты, версии и delete markers под `RECORDING_S3_PREFIX`, префиксом снимков аналитики и известными legacy-префиксами камер;
+- volumes Kafka, HLS, локальных записей, playback cache и временных файлов inference.
+
+Для работы нужны `psql`, AWS CLI v2, `jq` и Docker Compose. Параметры PostgreSQL и Wasabi загружаются из `.env`; путь к локально установленному `psql` должен входить в `PATH`.
+
+Сначала выполните только read-only preview:
+
+```bash
+./scripts/reset-surveillance-test-data.sh preview
+```
+
+Preview показывает количество строк, S3-объектов, общий размер и volumes, после чего печатает точную строку подтверждения. Проверьте все префиксы перед продолжением. Очистка необратима и останавливает demo Compose:
+
+```bash
+./scripts/reset-surveillance-test-data.sh execute \
+  'RESET:<database>:<bucket>'
+```
+
+Значения `<database>` и `<bucket>` не следует вводить вручную — скопируйте готовую команду из preview. После успешного сброса запустите систему и повторите preview для проверки:
+
+```bash
+docker compose -f docker-compose.demo.yml up -d
+./scripts/reset-surveillance-test-data.sh preview
+```
+
+У камер после сброса устанавливается `OFFLINE`, а heartbeat и последняя ошибка очищаются. Актуальные состояния восстановятся после запуска сервисов. Сам bucket, настройки камер и `inference-models` не удаляются.
 
 ## Как работает аналитика
 
