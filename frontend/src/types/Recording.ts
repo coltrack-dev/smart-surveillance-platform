@@ -180,6 +180,7 @@ export interface S3StoragePolicy {
     maxRecordingsPerRun: number;
     deletionEnabled: boolean;
     deleteHybridEnabled: boolean;
+    requireVerifiedBeforeDeletion: boolean;
 }
 
 export interface S3CleanupCandidate {
@@ -220,4 +221,30 @@ export interface S3CleanupRunResult {
         freedBytes: number;
         error: string | null;
     }>;
+}
+
+export interface S3ReconciliationProblem {
+    type: "MISSING" | "SIZE_MISMATCH" | "ERROR" | "ORPHAN" | "DELETE_INCOMPLETE";
+    recordingId: string | null;
+    s3Key: string;
+    catalogedBytes: number | null;
+    actualBytes: number | null;
+    details: string | null;
+    detectedAt: string | null;
+}
+
+export interface S3ReconciliationResult {
+    status: "NEVER_RUN" | "COMPLETED" | "PARTIAL";
+    databaseObjects: number;
+    listedObjects: number;
+    verifiedObjects: number;
+    missingObjects: number;
+    sizeMismatchObjects: number;
+    verificationErrors: number;
+    orphanObjects: number;
+    deleteIncompleteObjects: number;
+    catalogedBytes: number;
+    actualBytes: number;
+    checkedAt: string | null;
+    problems: S3ReconciliationProblem[];
 }

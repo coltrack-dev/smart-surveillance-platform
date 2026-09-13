@@ -78,7 +78,8 @@ public class S3StorageManagementService {
                 policy.getRetentionDays(),
                 policy.getMaxRecordingsPerRun(),
                 policy.isDeletionEnabled(),
-                policy.isDeleteHybridEnabled()
+                policy.isDeleteHybridEnabled(),
+                policy.isRequireVerifiedBeforeDeletion()
         );
     }
 
@@ -203,6 +204,12 @@ public class S3StorageManagementService {
         if (objects.isEmpty()) {
             return null;
         }
+        if (policy.isRequireVerifiedBeforeDeletion()
+                && objects.stream().anyMatch(object ->
+                        object.getVerificationStatus()
+                                != com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED)) {
+            return null;
+        }
         long s3Bytes = objects.stream()
                 .map(RecordingObjectEntity::getSizeBytes)
                 .filter(java.util.Objects::nonNull)
@@ -241,6 +248,12 @@ public class S3StorageManagementService {
 
         List<RecordingObjectEntity> objects = recordingObjectRepository
                 .findActiveByRecordingId(recording.getId());
+        if (policy.isRequireVerifiedBeforeDeletion()
+                && objects.stream().anyMatch(object ->
+                        object.getVerificationStatus()
+                                != com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED)) {
+            return failed(recording.getId(), 0, "S3 objects must be verified before deletion");
+        }
         long freedBytes = 0;
         String lastError = null;
         for (RecordingObjectEntity object : objects) {

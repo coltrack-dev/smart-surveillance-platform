@@ -7,6 +7,7 @@ public record S3StoragePolicyResponse(
         int retentionDays,
         int maxRecordingsPerRun,
         boolean deletionEnabled,
-        boolean deleteHybridEnabled
+        boolean deleteHybridEnabled,
+        boolean requireVerifiedBeforeDeletion
 ) {
 }

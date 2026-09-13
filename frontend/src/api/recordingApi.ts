@@ -13,7 +13,9 @@ import type {
     S3StorageStatus,
     S3StoragePolicy,
     S3CleanupPreview,
-    S3CleanupRunResult
+    S3CleanupRunResult,
+    S3ReconciliationProblem,
+    S3ReconciliationResult
 } from "@/types/Recording";
 
 export interface RecordingSearchParameters {
@@ -106,6 +108,29 @@ export async function runS3StorageCleanup(): Promise<S3CleanupRunResult> {
         "/recordings/storage/s3/cleanup/run",
         undefined,
         { timeout: 60000 }
+    );
+    return response.data;
+}
+
+export async function getS3Reconciliation(): Promise<S3ReconciliationResult> {
+    const response = await http.get<S3ReconciliationResult>(
+        "/recordings/storage/s3/reconciliation"
+    );
+    return response.data;
+}
+
+export async function runS3Reconciliation(): Promise<S3ReconciliationResult> {
+    const response = await http.post<S3ReconciliationResult>(
+        "/recordings/storage/s3/reconciliation/run",
+        undefined,
+        { timeout: 120000 }
+    );
+    return response.data;
+}
+
+export async function getS3Problems(): Promise<S3ReconciliationProblem[]> {
+    const response = await http.get<S3ReconciliationProblem[]>(
+        "/recordings/storage/s3/problems"
     );
     return response.data;
 }

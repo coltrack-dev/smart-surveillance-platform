@@ -46,4 +46,18 @@ public class RecordingObjectEntity {
 
     @Column(name = "deletion_reason", length = 1000)
     private String deletionReason;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "verification_status", length = 32)
+    private S3ObjectVerificationStatus verificationStatus = S3ObjectVerificationStatus.UNKNOWN;
+
+    @Column(name = "verified_at")
+    private Instant verifiedAt;
+
+    @Column(name = "actual_size_bytes")
+    private Long actualSizeBytes;
+
+    @Column(name = "verification_error", length = 1000)
+    private String verificationError;
 }

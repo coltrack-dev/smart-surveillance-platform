@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Collection;
 import java.util.UUID;
 
 public interface RecordingObjectRepository
@@ -76,5 +77,26 @@ public interface RecordingObjectRepository
               and (o.cleanupStatus is null or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED)
             """)
     long sumProtectedActiveSizeBytes();
+
+    @Query("""
+            select o from RecordingObjectEntity o
+            where o.cleanupStatus is null
+               or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED
+            order by o.uploadedAt asc
+            """)
+    List<RecordingObjectEntity> findAllActive();
+
+    List<RecordingObjectEntity> findByS3Key(String s3Key);
+
+    @Query("""
+            select o from RecordingObjectEntity o
+            where o.verificationStatus in :statuses
+              and (o.cleanupStatus is null or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED)
+            order by o.verifiedAt desc
+            """)
+    List<RecordingObjectEntity> findActiveProblems(
+            @Param("statuses")
+            Collection<com.coltrack.recordingservice.model.S3ObjectVerificationStatus> statuses
+    );
 
 }

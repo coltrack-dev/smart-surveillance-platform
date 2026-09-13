@@ -5,6 +5,8 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.unit.DataSize;
 
+import java.time.Duration;
+
 @Data
 @ConfigurationProperties(prefix = "recording.s3.management")
 public class S3StoragePolicyProperties {
@@ -15,6 +17,8 @@ public class S3StoragePolicyProperties {
     private int maxRecordingsPerRun = 100;
     private boolean deletionEnabled = false;
     private boolean deleteHybridEnabled = false;
+    private boolean requireVerifiedBeforeDeletion = true;
+    private Duration reconciliationGracePeriod = Duration.ofMinutes(5);
 
     @PostConstruct
     void validate() {
@@ -29,6 +33,11 @@ public class S3StoragePolicyProperties {
         }
         if (maxRecordingsPerRun < 1) {
             throw new IllegalStateException("recording.s3.management.max-recordings-per-run must be positive");
+        }
+        if (reconciliationGracePeriod == null || reconciliationGracePeriod.isNegative()) {
+            throw new IllegalStateException(
+                    "recording.s3.management.reconciliation-grace-period must not be negative"
+            );
         }
     }
 }

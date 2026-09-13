@@ -13,12 +13,15 @@ import com.coltrack.recordingservice.dto.S3CleanupPreviewResponse;
 import com.coltrack.recordingservice.dto.S3CleanupRunResponse;
 import com.coltrack.recordingservice.dto.S3StoragePolicyResponse;
 import com.coltrack.recordingservice.dto.S3StorageStatusResponse;
+import com.coltrack.recordingservice.dto.S3ReconciliationProblemResponse;
+import com.coltrack.recordingservice.dto.S3ReconciliationResponse;
 import com.coltrack.recordingservice.client.StreamClient;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.service.RecordingManager;
 import com.coltrack.recordingservice.service.RecordingQueryService;
 import com.coltrack.recordingservice.service.RecordingStorageCleanupService;
 import com.coltrack.recordingservice.service.S3StorageManagementService;
+import com.coltrack.recordingservice.service.S3ReconciliationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -44,6 +47,7 @@ public class RecordingController {
     private final StreamClient streamClient;
     private final RecordingStorageCleanupService recordingStorageCleanupService;
     private final S3StorageManagementService s3StorageManagementService;
+    private final S3ReconciliationService s3ReconciliationService;
 
     @GetMapping
     public RecordingPageResponse findRecordings(
@@ -104,6 +108,21 @@ public class RecordingController {
     @PostMapping("/storage/s3/cleanup/run")
     public S3CleanupRunResponse runS3StorageCleanup() {
         return s3StorageManagementService.runCleanup();
+    }
+
+    @GetMapping("/storage/s3/reconciliation")
+    public S3ReconciliationResponse getS3Reconciliation() {
+        return s3ReconciliationService.getLatest();
+    }
+
+    @PostMapping("/storage/s3/reconciliation/run")
+    public S3ReconciliationResponse runS3Reconciliation() {
+        return s3ReconciliationService.run();
+    }
+
+    @GetMapping("/storage/s3/problems")
+    public List<S3ReconciliationProblemResponse> getS3Problems() {
+        return s3ReconciliationService.getProblems();
     }
 
     @PatchMapping("/{recordingId}/protection")

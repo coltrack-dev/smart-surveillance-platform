@@ -7,6 +7,7 @@ import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingObjectEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.model.RecordingStorageType;
+import com.coltrack.recordingservice.model.S3ObjectVerificationStatus;
 import com.coltrack.recordingservice.repository.RecordingObjectRepository;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 import org.junit.jupiter.api.Test;
@@ -92,6 +93,7 @@ class S3StorageManagementServiceTest {
         policy.setMaxRecordingsPerRun(100);
         policy.setDeletionEnabled(deletionEnabled);
         policy.setDeleteHybridEnabled(deleteHybrid);
+        policy.setRequireVerifiedBeforeDeletion(true);
 
         S3Properties properties = new S3Properties();
         properties.setEnabled(true);
@@ -126,6 +128,7 @@ class S3StorageManagementServiceTest {
                 .s3Key("recordings/segment.mkv")
                 .sizeBytes(sizeBytes)
                 .sequenceNumber(0)
+                .verificationStatus(S3ObjectVerificationStatus.VERIFIED)
                 .build();
     }
 }

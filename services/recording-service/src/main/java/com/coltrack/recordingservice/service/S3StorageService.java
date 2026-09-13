@@ -15,6 +15,10 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.IOException;
 
@@ -27,7 +31,9 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -378,5 +384,75 @@ public class S3StorageService
                         .build()
         );
         log.info("Deleted s3://{}/{}", properties.getBucket(), s3Key);
+    }
+
+    public Optional<StoredObjectMetadata> inspectObject(String s3Key) {
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("S3 storage is disabled");
+        }
+        try {
+            var response = s3Client.headObject(
+                    HeadObjectRequest.builder()
+                            .bucket(properties.getBucket())
+                            .key(s3Key)
+                            .build()
+            );
+            return Optional.of(new StoredObjectMetadata(
+                    s3Key,
+                    response.contentLength(),
+                    response.lastModified()
+            ));
+        } catch (S3Exception exception) {
+            if (exception.statusCode() == 404) {
+                return Optional.empty();
+            }
+            throw exception;
+        }
+    }
+
+    public List<StoredObjectMetadata> listRecordingObjects() {
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("S3 storage is disabled");
+        }
+        String prefix = properties.getPrefix() == null
+                ? ""
+                : properties.getPrefix().trim();
+        if (prefix.isBlank()) {
+            throw new IllegalStateException(
+                    "recording.s3.prefix must be configured before orphan reconciliation"
+            );
+        }
+        if (!prefix.endsWith("/")) {
+            prefix += "/";
+        }
+
+        List<StoredObjectMetadata> objects = new ArrayList<>();
+        String continuationToken = null;
+        do {
+            ListObjectsV2Request request = ListObjectsV2Request.builder()
+                    .bucket(properties.getBucket())
+                    .prefix(prefix)
+                    .continuationToken(continuationToken)
+                    .build();
+            ListObjectsV2Response response = s3Client.listObjectsV2(request);
+            response.contents().forEach(object -> objects.add(
+                    new StoredObjectMetadata(
+                            object.key(),
+                            object.size(),
+                            object.lastModified()
+                    )
+            ));
+            continuationToken = response.isTruncated()
+                    ? response.nextContinuationToken()
+                    : null;
+        } while (continuationToken != null);
+        return List.copyOf(objects);
+    }
+
+    public record StoredObjectMetadata(
+            String key,
+            long sizeBytes,
+            Instant lastModified
+    ) {
     }
 }

@@ -18,7 +18,8 @@ import type {
   S3StorageStatus,
   S3StoragePolicy,
   S3CleanupPreview,
-  S3CleanupRunResult
+  S3CleanupRunResult,
+  S3ReconciliationResult
 } from "@/types/Recording";
 
 import {
@@ -34,6 +35,8 @@ import {
   getS3StoragePolicy,
   previewS3StorageCleanup,
   runS3StorageCleanup,
+  getS3Reconciliation,
+  runS3Reconciliation,
   setRecordingProtection
 } from "@/api/recordingApi";
 
@@ -84,6 +87,9 @@ const s3CleanupResult = ref<S3CleanupRunResult | null>(null);
 const s3CleanupLoading = ref(false);
 const s3CleanupRunning = ref(false);
 const s3CleanupError = ref<string | null>(null);
+const s3Reconciliation = ref<S3ReconciliationResult | null>(null);
+const s3ReconciliationRunning = ref(false);
+const s3ReconciliationError = ref<string | null>(null);
 const protectionLoadingIds = ref<Set<string>>(new Set());
 type RecordingView = "cards" | "table";
 const RECORDING_VIEW_STORAGE_KEY = "recording-archive-view";
@@ -474,6 +480,31 @@ async function runS3Cleanup(): Promise<void> {
     s3CleanupError.value = "S3 cleanup failed or deletion is disabled.";
   } finally {
     s3CleanupRunning.value = false;
+  }
+}
+
+async function loadS3Reconciliation(): Promise<void> {
+  try {
+    s3Reconciliation.value = await getS3Reconciliation();
+  } catch (error) {
+    console.error("Unable to load S3 reconciliation", error);
+  }
+}
+
+async function reconcileS3(): Promise<void> {
+  if (s3ReconciliationRunning.value) {
+    return;
+  }
+  s3ReconciliationRunning.value = true;
+  s3ReconciliationError.value = null;
+  try {
+    s3Reconciliation.value = await runS3Reconciliation();
+    await Promise.all([loadS3Storage(), previewS3Cleanup()]);
+  } catch (error) {
+    console.error("Unable to reconcile S3 storage", error);
+    s3ReconciliationError.value = "S3 reconciliation failed.";
+  } finally {
+    s3ReconciliationRunning.value = false;
   }
 }
 
@@ -959,6 +990,7 @@ onMounted(() => {
   void loadStorageStatus();
   void loadStoragePolicy();
   void loadS3Storage();
+  void loadS3Reconciliation();
 });
 
 onUnmounted(stopAnalyticsPolling);
@@ -1131,6 +1163,55 @@ onUnmounted(stopAnalyticsPolling);
           <span>{{ s3StorageStatus.recordingCount }} recordings · {{ s3StorageStatus.activeObjectCount }} objects</span>
           <span>{{ formatSize(s3StorageStatus.protectedBytes) }} protected</span>
           <span>Bucket {{ s3StorageStatus.bucket || "not configured" }} / {{ s3StorageStatus.prefix || "root" }}</span>
+        </div>
+        <div class="storage-cleanup-actions">
+          <span v-if="s3Reconciliation">
+            Reconciliation {{ s3Reconciliation.status }} ·
+            {{ s3Reconciliation.verifiedObjects }} verified ·
+            {{ s3Reconciliation.problems.length }} problems
+            <template v-if="s3Reconciliation.checkedAt">
+              · checked {{ formatStorageCheckedAt(s3Reconciliation.checkedAt) }}
+            </template>
+          </span>
+          <button
+              type="button"
+              :disabled="s3ReconciliationRunning"
+              @click="reconcileS3"
+          >
+            {{ s3ReconciliationRunning ? "Checking S3..." : "Reconcile S3" }}
+          </button>
+        </div>
+        <div v-if="s3ReconciliationError" class="storage-cleanup-error">
+          {{ s3ReconciliationError }}
+        </div>
+        <div
+            v-if="s3Reconciliation && s3Reconciliation.status !== 'NEVER_RUN'"
+            class="storage-cleanup-preview"
+        >
+          <span>
+            Catalog {{ formatSize(s3Reconciliation.catalogedBytes) }} ·
+            actual {{ formatSize(s3Reconciliation.actualBytes) }} ·
+            {{ s3Reconciliation.listedObjects }} objects under prefix
+          </span>
+          <details v-if="s3Reconciliation.problems.length > 0">
+            <summary>Show reconciliation problems</summary>
+            <ul class="s3-problem-list">
+              <li
+                  v-for="problem in s3Reconciliation.problems"
+                  :key="`${problem.type}:${problem.s3Key}`"
+              >
+                <strong>{{ problem.type }}</strong> · {{ problem.s3Key }}
+                <template v-if="problem.catalogedBytes != null">
+                  · catalog {{ formatSize(problem.catalogedBytes) }}
+                </template>
+                <template v-if="problem.actualBytes != null">
+                  · actual {{ formatSize(problem.actualBytes) }}
+                </template>
+                <template v-if="problem.details"> · {{ problem.details }}</template>
+              </li>
+            </ul>
+          </details>
+          <strong v-else>Catalog and S3 are consistent.</strong>
         </div>
         <div class="storage-cleanup-actions">
           <span v-if="s3StoragePolicy">
@@ -1930,6 +2011,10 @@ onUnmounted(stopAnalyticsPolling);
   border-color: #dc2626;
   background: #dc2626;
   color: #fff;
+}
+
+.s3-problem-list li {
+  overflow-wrap: anywhere;
 }
 
 .camera-name {

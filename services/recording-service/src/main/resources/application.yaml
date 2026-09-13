@@ -80,6 +80,8 @@ recording:
       max-recordings-per-run: ${RECORDING_S3_MAX_RECORDINGS_PER_RUN:100}
       deletion-enabled: ${RECORDING_S3_DELETION_ENABLED:false}
       delete-hybrid-enabled: ${RECORDING_S3_DELETE_HYBRID_ENABLED:false}
+      require-verified-before-deletion: ${RECORDING_S3_REQUIRE_VERIFIED_BEFORE_DELETION:true}
+      reconciliation-grace-period: ${RECORDING_S3_RECONCILIATION_GRACE_PERIOD:5m}
   playback:
     cache-directory: ./data/playback-cache
     ttl: 1h
