@@ -9,11 +9,16 @@ import com.coltrack.recordingservice.dto.RecordingStorageStatusResponse;
 import com.coltrack.recordingservice.dto.StorageCleanupPreviewResponse;
 import com.coltrack.recordingservice.dto.StorageCleanupRunResponse;
 import com.coltrack.recordingservice.dto.StoragePolicyResponse;
+import com.coltrack.recordingservice.dto.S3CleanupPreviewResponse;
+import com.coltrack.recordingservice.dto.S3CleanupRunResponse;
+import com.coltrack.recordingservice.dto.S3StoragePolicyResponse;
+import com.coltrack.recordingservice.dto.S3StorageStatusResponse;
 import com.coltrack.recordingservice.client.StreamClient;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.service.RecordingManager;
 import com.coltrack.recordingservice.service.RecordingQueryService;
 import com.coltrack.recordingservice.service.RecordingStorageCleanupService;
+import com.coltrack.recordingservice.service.S3StorageManagementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +43,7 @@ public class RecordingController {
     private final RecordingQueryService recordingQueryService;
     private final StreamClient streamClient;
     private final RecordingStorageCleanupService recordingStorageCleanupService;
+    private final S3StorageManagementService s3StorageManagementService;
 
     @GetMapping
     public RecordingPageResponse findRecordings(
@@ -78,6 +84,26 @@ public class RecordingController {
     @PostMapping("/storage/cleanup/run")
     public StorageCleanupRunResponse runStorageCleanup() {
         return recordingStorageCleanupService.runCleanup();
+    }
+
+    @GetMapping("/storage/s3")
+    public S3StorageStatusResponse getS3StorageStatus() {
+        return s3StorageManagementService.getStatus();
+    }
+
+    @GetMapping("/storage/s3/policy")
+    public S3StoragePolicyResponse getS3StoragePolicy() {
+        return s3StorageManagementService.getPolicy();
+    }
+
+    @PostMapping("/storage/s3/cleanup/preview")
+    public S3CleanupPreviewResponse previewS3StorageCleanup() {
+        return s3StorageManagementService.preview();
+    }
+
+    @PostMapping("/storage/s3/cleanup/run")
+    public S3CleanupRunResponse runS3StorageCleanup() {
+        return s3StorageManagementService.runCleanup();
     }
 
     @PatchMapping("/{recordingId}/protection")

@@ -35,4 +35,15 @@ public class RecordingObjectEntity {
 
     @Column(name = "uploaded_at")
     private Instant uploadedAt;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cleanup_status", length = 32)
+    private S3ObjectCleanupStatus cleanupStatus = S3ObjectCleanupStatus.AVAILABLE;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "deletion_reason", length = 1000)
+    private String deletionReason;
 }

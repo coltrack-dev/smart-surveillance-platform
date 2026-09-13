@@ -155,3 +155,69 @@ export interface StorageCleanupRunResult {
     finishedAt: string;
     results: StorageCleanupResultItem[];
 }
+
+export interface S3StorageStatus {
+    enabled: boolean;
+    bucket: string | null;
+    prefix: string;
+    usedBytes: number;
+    maximumBytes: number;
+    targetBytes: number;
+    remainingQuotaBytes: number;
+    activeObjectCount: number;
+    recordingCount: number;
+    protectedBytes: number;
+    usedPercent: number;
+    cleanupRequired: boolean;
+    checkedAt: string;
+}
+
+export interface S3StoragePolicy {
+    maximumBytes: number;
+    cleanupTargetPercent: number;
+    cleanupTargetBytes: number;
+    retentionDays: number;
+    maxRecordingsPerRun: number;
+    deletionEnabled: boolean;
+    deleteHybridEnabled: boolean;
+}
+
+export interface S3CleanupCandidate {
+    recordingId: string;
+    cameraId: string;
+    finishedAt: string;
+    s3Bytes: number;
+    objectCount: number;
+    storageType: RecordingStorageType;
+    reasons: string[];
+}
+
+export interface S3CleanupPreview {
+    cleanupRequired: boolean;
+    reasons: string[];
+    currentBytes: number;
+    maximumBytes: number;
+    targetBytes: number;
+    bytesToFree: number;
+    candidateBytes: number;
+    candidateCount: number;
+    enoughEligibleData: boolean;
+    checkedAt: string;
+    candidates: S3CleanupCandidate[];
+}
+
+export interface S3CleanupRunResult {
+    attemptedCount: number;
+    deletedCount: number;
+    failedCount: number;
+    freedBytes: number;
+    targetReached: boolean;
+    remainingBytes: number;
+    finishedAt: string;
+    results: Array<{
+        recordingId: string;
+        status: "AVAILABLE" | "DELETING" | "DELETED" | "DELETE_FAILED";
+        freedBytes: number;
+        error: string | null;
+    }>;
+}

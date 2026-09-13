@@ -9,7 +9,11 @@ import type {
     RecordingStorageStatus,
     RecordingStoragePolicy,
     StorageCleanupPreview,
-    StorageCleanupRunResult
+    StorageCleanupRunResult,
+    S3StorageStatus,
+    S3StoragePolicy,
+    S3CleanupPreview,
+    S3CleanupRunResult
 } from "@/types/Recording";
 
 export interface RecordingSearchParameters {
@@ -72,6 +76,34 @@ export async function previewRecordingStorageCleanup(): Promise<StorageCleanupPr
 export async function runRecordingStorageCleanup(): Promise<StorageCleanupRunResult> {
     const response = await http.post<StorageCleanupRunResult>(
         "/recordings/storage/cleanup/run",
+        undefined,
+        { timeout: 60000 }
+    );
+    return response.data;
+}
+
+export async function getS3StorageStatus(): Promise<S3StorageStatus> {
+    const response = await http.get<S3StorageStatus>("/recordings/storage/s3");
+    return response.data;
+}
+
+export async function getS3StoragePolicy(): Promise<S3StoragePolicy> {
+    const response = await http.get<S3StoragePolicy>("/recordings/storage/s3/policy");
+    return response.data;
+}
+
+export async function previewS3StorageCleanup(): Promise<S3CleanupPreview> {
+    const response = await http.post<S3CleanupPreview>(
+        "/recordings/storage/s3/cleanup/preview",
+        undefined,
+        { timeout: 15000 }
+    );
+    return response.data;
+}
+
+export async function runS3StorageCleanup(): Promise<S3CleanupRunResult> {
+    const response = await http.post<S3CleanupRunResult>(
+        "/recordings/storage/s3/cleanup/run",
         undefined,
         { timeout: 60000 }
     );

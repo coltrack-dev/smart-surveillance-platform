@@ -14,7 +14,11 @@ import type {
   RecordingStorageStatus,
   RecordingStoragePolicy,
   StorageCleanupPreview,
-  StorageCleanupRunResult
+  StorageCleanupRunResult,
+  S3StorageStatus,
+  S3StoragePolicy,
+  S3CleanupPreview,
+  S3CleanupRunResult
 } from "@/types/Recording";
 
 import {
@@ -26,6 +30,10 @@ import {
   previewRecordingStorageCleanup,
   resolveRecordingDownloadUrl,
   runRecordingStorageCleanup,
+  getS3StorageStatus,
+  getS3StoragePolicy,
+  previewS3StorageCleanup,
+  runS3StorageCleanup,
   setRecordingProtection
 } from "@/api/recordingApi";
 
@@ -69,6 +77,13 @@ const cleanupResult = ref<StorageCleanupRunResult | null>(null);
 const cleanupLoading = ref(false);
 const cleanupRunning = ref(false);
 const cleanupError = ref<string | null>(null);
+const s3StorageStatus = ref<S3StorageStatus | null>(null);
+const s3StoragePolicy = ref<S3StoragePolicy | null>(null);
+const s3CleanupPreview = ref<S3CleanupPreview | null>(null);
+const s3CleanupResult = ref<S3CleanupRunResult | null>(null);
+const s3CleanupLoading = ref(false);
+const s3CleanupRunning = ref(false);
+const s3CleanupError = ref<string | null>(null);
 const protectionLoadingIds = ref<Set<string>>(new Set());
 type RecordingView = "cards" | "table";
 const RECORDING_VIEW_STORAGE_KEY = "recording-archive-view";
@@ -402,9 +417,64 @@ function cleanupReasonLabel(reason: string): string {
     RETENTION_EXPIRED: "retention period expired",
     MAXIMUM_LOCAL_SIZE_EXCEEDED: "local storage limit exceeded",
     MINIMUM_FREE_SPACE_BREACHED: "disk free-space threshold breached",
-    EMERGENCY_FREE_SPACE_BREACHED: "emergency free-space threshold breached"
+    EMERGENCY_FREE_SPACE_BREACHED: "emergency free-space threshold breached",
+    S3_RETENTION_EXPIRED: "S3 retention period expired",
+    S3_QUOTA_EXCEEDED: "S3 application quota exceeded"
   };
   return labels[reason] ?? reason;
+}
+
+async function loadS3Storage(): Promise<void> {
+  try {
+    [s3StorageStatus.value, s3StoragePolicy.value] = await Promise.all([
+      getS3StorageStatus(),
+      getS3StoragePolicy()
+    ]);
+  } catch (error) {
+    console.error("Unable to load S3 storage status", error);
+  }
+}
+
+async function previewS3Cleanup(): Promise<void> {
+  s3CleanupLoading.value = true;
+  s3CleanupError.value = null;
+  s3CleanupResult.value = null;
+  try {
+    s3CleanupPreview.value = await previewS3StorageCleanup();
+  } catch (error) {
+    console.error("Unable to preview S3 cleanup", error);
+    s3CleanupError.value = "Unable to preview S3 cleanup.";
+  } finally {
+    s3CleanupLoading.value = false;
+  }
+}
+
+async function runS3Cleanup(): Promise<void> {
+  const preview = s3CleanupPreview.value;
+  if (!preview || preview.candidateCount === 0 || s3CleanupRunning.value) {
+    return;
+  }
+  const confirmed = window.confirm(
+      `Permanently delete S3 objects for ${preview.candidateCount} recordings and free approximately ${formatSize(preview.candidateBytes)}? This cannot be undone.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  s3CleanupRunning.value = true;
+  s3CleanupError.value = null;
+  try {
+    s3CleanupResult.value = await runS3StorageCleanup();
+    s3CleanupPreview.value = null;
+    await Promise.all([loadS3Storage(), loadDates()]);
+    if (selectedDate.value) {
+      await selectDate(selectedDate.value, recordingsPage.value);
+    }
+  } catch (error) {
+    console.error("Unable to run S3 cleanup", error);
+    s3CleanupError.value = "S3 cleanup failed or deletion is disabled.";
+  } finally {
+    s3CleanupRunning.value = false;
+  }
 }
 
 function setRecordingView(view: RecordingView): void {
@@ -888,6 +958,7 @@ onMounted(() => {
   void loadDates();
   void loadStorageStatus();
   void loadStoragePolicy();
+  void loadS3Storage();
 });
 
 onUnmounted(stopAnalyticsPolling);
@@ -1028,6 +1099,94 @@ onUnmounted(stopAnalyticsPolling);
           <span v-if="!cleanupResult.targetReached">
             The configured storage target was not reached.
           </span>
+        </div>
+      </div>
+
+      <div
+          v-if="s3StorageStatus"
+          class="storage-status"
+          :class="s3StorageStatus.cleanupRequired ? 'storage-warning' : 'storage-healthy'"
+      >
+        <div class="storage-status-header">
+          <span>
+            S3 recording storage
+            <span class="storage-health">
+              {{ s3StorageStatus.enabled ? (s3StorageStatus.cleanupRequired ? "LIMIT EXCEEDED" : "HEALTHY") : "DISABLED" }}
+            </span>
+          </span>
+          <strong>{{ s3StorageStatus.usedPercent.toFixed(1) }}% of application quota</strong>
+        </div>
+        <div
+            class="storage-progress"
+            role="progressbar"
+            :aria-valuenow="s3StorageStatus.usedPercent"
+            aria-valuemin="0"
+            aria-valuemax="100"
+        >
+          <div :style="{ width: `${Math.min(100, s3StorageStatus.usedPercent)}%` }" />
+        </div>
+        <div class="storage-details">
+          <span>{{ formatSize(s3StorageStatus.usedBytes) }} used of {{ formatSize(s3StorageStatus.maximumBytes) }}</span>
+          <span>{{ s3StorageStatus.recordingCount }} recordings · {{ s3StorageStatus.activeObjectCount }} objects</span>
+          <span>{{ formatSize(s3StorageStatus.protectedBytes) }} protected</span>
+          <span>Bucket {{ s3StorageStatus.bucket || "not configured" }} / {{ s3StorageStatus.prefix || "root" }}</span>
+        </div>
+        <div class="storage-cleanup-actions">
+          <span v-if="s3StoragePolicy">
+            Retention {{ s3StoragePolicy.retentionDays }} days ·
+            target {{ s3StoragePolicy.cleanupTargetPercent }}% ·
+            {{ s3StoragePolicy.deleteHybridEnabled ? "S3 and HYBRID" : "S3-only recordings" }}
+          </span>
+          <button
+              type="button"
+              :disabled="s3CleanupLoading || s3CleanupRunning"
+              @click="previewS3Cleanup"
+          >
+            {{ s3CleanupLoading ? "Calculating..." : "Preview S3 cleanup" }}
+          </button>
+        </div>
+        <div v-if="s3CleanupError" class="storage-cleanup-error">{{ s3CleanupError }}</div>
+        <div v-if="s3CleanupPreview" class="storage-cleanup-preview">
+          <template v-if="s3CleanupPreview.cleanupRequired">
+            <strong>
+              {{ s3CleanupPreview.candidateCount }} recordings ·
+              {{ formatSize(s3CleanupPreview.candidateBytes) }} can be freed
+            </strong>
+            <span>Reasons: {{ s3CleanupPreview.reasons.map(cleanupReasonLabel).join(", ") }}</span>
+            <span v-if="!s3CleanupPreview.enoughEligibleData" class="storage-cleanup-warning">
+              Eligible recordings cannot free all required S3 space.
+            </span>
+            <span v-if="s3StoragePolicy && !s3StoragePolicy.deletionEnabled" class="storage-cleanup-warning">
+              Deletion is locked. Set RECORDING_S3_DELETION_ENABLED=true only after reviewing this list.
+            </span>
+            <details v-if="s3CleanupPreview.candidateCount > 0">
+              <summary>Show S3 candidates</summary>
+              <ul>
+                <li v-for="candidate in s3CleanupPreview.candidates" :key="candidate.recordingId">
+                  {{ new Date(candidate.finishedAt).toLocaleString() }} ·
+                  {{ formatSize(candidate.s3Bytes) }} ·
+                  {{ candidate.objectCount }} objects ·
+                  {{ candidate.storageType }} ·
+                  {{ candidate.reasons.map(cleanupReasonLabel).join(", ") }}
+                </li>
+              </ul>
+            </details>
+            <button
+                v-if="s3CleanupPreview.candidateCount > 0"
+                type="button"
+                class="cleanup-run-button"
+                :disabled="s3CleanupRunning || !s3StoragePolicy?.deletionEnabled"
+                @click="runS3Cleanup"
+            >
+              {{ s3CleanupRunning ? "Deleting..." : "Permanently delete from S3" }}
+            </button>
+          </template>
+          <strong v-else>No S3 recordings are eligible for cleanup.</strong>
+        </div>
+        <div v-if="s3CleanupResult" class="storage-cleanup-result">
+          S3 cleanup finished: {{ s3CleanupResult.deletedCount }} deleted,
+          {{ s3CleanupResult.failedCount }} failed,
+          {{ formatSize(s3CleanupResult.freedBytes) }} freed.
         </div>
       </div>
 

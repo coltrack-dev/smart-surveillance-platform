@@ -1,11 +1,12 @@
 package com.coltrack.recordingservice.service;
 
-import com.coltrack.recordingservice.config.RecordingStoragePolicyProperties;
-import com.coltrack.recordingservice.dto.StorageCleanupPreviewResponse;
+import com.coltrack.recordingservice.config.S3Properties;
+import com.coltrack.recordingservice.config.S3StoragePolicyProperties;
+import com.coltrack.recordingservice.dto.S3CleanupPreviewResponse;
 import com.coltrack.recordingservice.model.RecordingEntity;
 import com.coltrack.recordingservice.model.RecordingObjectEntity;
 import com.coltrack.recordingservice.model.RecordingStatus;
-import com.coltrack.recordingservice.model.StorageHealthStatus;
+import com.coltrack.recordingservice.model.RecordingStorageType;
 import com.coltrack.recordingservice.repository.RecordingObjectRepository;
 import com.coltrack.recordingservice.repository.RecordingRepository;
 import org.junit.jupiter.api.Test;
@@ -13,94 +14,101 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.util.unit.DataSize;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class RecordingStorageCleanupServiceTest {
+class S3StorageManagementServiceTest {
 
     @Mock
     private RecordingRepository recordingRepository;
-
     @Mock
     private RecordingObjectRepository recordingObjectRepository;
-
     @Mock
     private RecordingStorageService recordingStorageService;
+    @Mock
+    private S3StorageService s3StorageService;
 
     @Test
-    void previewsExpiredHybridRecordingWithoutDeletingIt() {
+    void previewsExpiredS3OnlyRecording() {
         UUID recordingId = UUID.randomUUID();
-        RecordingEntity recording = recording(recordingId, 200L);
-
-        when(recordingStorageService.getSnapshot()).thenReturn(snapshot(200));
+        RecordingEntity recording = recording(recordingId);
+        when(recordingObjectRepository.sumActiveSizeBytes()).thenReturn(200L);
         when(recordingRepository
                 .findByProtectedFromDeletionFalseAndStatusInOrderByFinishedAtAsc(any()))
                 .thenReturn(List.of(recording));
-        when(recordingStorageService.getRecordingDirectorySize(recording.getFilePath()))
-                .thenReturn(200L);
-        when(recordingObjectRepository
-                .findActiveByRecordingId(recordingId))
+        when(recordingObjectRepository.findActiveByRecordingId(recordingId))
                 .thenReturn(List.of(object(recordingId, 200L)));
+        when(recordingStorageService.hasRecordingFiles(recording.getFilePath()))
+                .thenReturn(false);
 
-        StorageCleanupPreviewResponse preview = service(false).preview();
+        S3CleanupPreviewResponse preview = service(false, false).preview();
 
         assertTrue(preview.cleanupRequired());
-        assertEquals(List.of("RETENTION_EXPIRED"), preview.reasons());
         assertEquals(1, preview.candidateCount());
         assertEquals(200, preview.candidateBytes());
-        assertTrue(preview.enoughEligibleData());
+        assertEquals(RecordingStorageType.S3, preview.candidates().getFirst().storageType());
+        assertEquals(List.of("S3_RETENTION_EXPIRED"), preview.reasons());
     }
 
     @Test
-    void excludesLocalOnlyRecordingByDefault() {
+    void excludesHybridRecordingByDefault() {
         UUID recordingId = UUID.randomUUID();
-        RecordingEntity recording = recording(recordingId, 200L);
-
-        when(recordingStorageService.getSnapshot()).thenReturn(snapshot(200));
+        RecordingEntity recording = recording(recordingId);
+        when(recordingObjectRepository.sumActiveSizeBytes()).thenReturn(200L);
         when(recordingRepository
                 .findByProtectedFromDeletionFalseAndStatusInOrderByFinishedAtAsc(any()))
                 .thenReturn(List.of(recording));
-        when(recordingStorageService.getRecordingDirectorySize(recording.getFilePath()))
-                .thenReturn(200L);
-        when(recordingObjectRepository
-                .findActiveByRecordingId(recordingId))
-                .thenReturn(List.of());
+        when(recordingObjectRepository.findActiveByRecordingId(recordingId))
+                .thenReturn(List.of(object(recordingId, 200L)));
+        when(recordingStorageService.hasRecordingFiles(recording.getFilePath()))
+                .thenReturn(true);
 
-        StorageCleanupPreviewResponse preview = service(false).preview();
+        S3CleanupPreviewResponse preview = service(false, false).preview();
 
-        assertFalse(preview.cleanupRequired());
         assertEquals(0, preview.candidateCount());
+        assertTrue(preview.cleanupRequired());
     }
 
-    private RecordingStorageCleanupService service(boolean deleteLocalOnly) {
-        RecordingStoragePolicyProperties policy =
-                new RecordingStoragePolicyProperties();
-        policy.setMaximumLocalSize(DataSize.ofBytes(1_000));
+    @Test
+    void refusesDeletionUntilExplicitlyEnabled() {
+        assertThrows(ResponseStatusException.class, () -> service(false, false).runCleanup());
+    }
+
+    private S3StorageManagementService service(boolean deletionEnabled, boolean deleteHybrid) {
+        S3StoragePolicyProperties policy = new S3StoragePolicyProperties();
+        policy.setMaximumSize(DataSize.ofBytes(1_000));
         policy.setCleanupTargetPercent(90);
         policy.setRetentionDays(30);
-        policy.setMinimumFreePercent(15);
-        policy.setEmergencyFreePercent(5);
         policy.setMaxRecordingsPerRun(100);
-        policy.setDeleteLocalOnlyEnabled(deleteLocalOnly);
+        policy.setDeletionEnabled(deletionEnabled);
+        policy.setDeleteHybridEnabled(deleteHybrid);
 
-        return new RecordingStorageCleanupService(
+        S3Properties properties = new S3Properties();
+        properties.setEnabled(true);
+        properties.setBucket("recordings-test");
+        properties.setPrefix("recordings");
+
+        return new S3StorageManagementService(
                 recordingRepository,
                 recordingObjectRepository,
                 recordingStorageService,
+                s3StorageService,
+                properties,
                 policy
         );
     }
 
-    private RecordingEntity recording(UUID id, long sizeBytes) {
+    private RecordingEntity recording(UUID id) {
         return RecordingEntity.builder()
                 .id(id)
                 .cameraId(UUID.randomUUID())
@@ -108,8 +116,6 @@ class RecordingStorageCleanupServiceTest {
                 .startedAt(Instant.parse("2026-01-01T00:00:00Z"))
                 .finishedAt(Instant.parse("2026-01-01T01:00:00Z"))
                 .status(RecordingStatus.STOPPED)
-                .segmentsCount(1)
-                .sizeBytes(sizeBytes)
                 .build();
     }
 
@@ -117,21 +123,9 @@ class RecordingStorageCleanupServiceTest {
         return RecordingObjectEntity.builder()
                 .id(UUID.randomUUID())
                 .recordingId(recordingId)
+                .s3Key("recordings/segment.mkv")
                 .sizeBytes(sizeBytes)
                 .sequenceNumber(0)
                 .build();
-    }
-
-    private RecordingStorageService.StorageSnapshot snapshot(long recordingBytes) {
-        return new RecordingStorageService.StorageSnapshot(
-                10_000,
-                5_000,
-                5_000,
-                recordingBytes,
-                StorageHealthStatus.HEALTHY,
-                20,
-                10,
-                Instant.parse("2026-09-12T12:00:00Z")
-        );
     }
 }

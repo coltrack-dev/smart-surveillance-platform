@@ -330,7 +330,7 @@ public class RecordingStorageCleanupService {
             long localBytes
     ) {
         List<RecordingObjectEntity> objects = recordingObjectRepository
-                .findByRecordingIdOrderBySequenceNumberAsc(recording.getId());
+                .findActiveByRecordingId(recording.getId());
         if (objects.isEmpty() || localBytes <= 0) {
             return false;
         }

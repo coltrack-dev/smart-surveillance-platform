@@ -212,7 +212,7 @@ public class RecordingQueryService {
         boolean local = recordingStorageService.hasRecordingFiles(
                 recording.getFilePath()
         );
-        boolean s3 = recordingObjectRepository.existsByRecordingId(
+        boolean s3 = recordingObjectRepository.existsActiveByRecordingId(
                 recording.getId()
         );
 

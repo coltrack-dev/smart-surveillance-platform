@@ -72,6 +72,14 @@ recording:
     access-key: ${WASABI_ACCESS_KEY}
     secret-key: ${WASABI_SECRET_KEY}
     region: ${WASABI_REGION:us-central-1}
+    prefix: ${RECORDING_S3_PREFIX:recordings}
+    management:
+      maximum-size: ${RECORDING_S3_MAXIMUM_SIZE:500GB}
+      cleanup-target-percent: ${RECORDING_S3_CLEANUP_TARGET_PERCENT:90}
+      retention-days: ${RECORDING_S3_RETENTION_DAYS:180}
+      max-recordings-per-run: ${RECORDING_S3_MAX_RECORDINGS_PER_RUN:100}
+      deletion-enabled: ${RECORDING_S3_DELETION_ENABLED:false}
+      delete-hybrid-enabled: ${RECORDING_S3_DELETE_HYBRID_ENABLED:false}
   playback:
     cache-directory: ./data/playback-cache
     ttl: 1h

@@ -382,7 +382,7 @@ public class RecordingPlaybackService {
         }
 
         List<RecordingObjectEntity> objects = recordingObjectRepository
-                .findByRecordingIdOrderBySequenceNumberAsc(recordingId);
+                .findActiveByRecordingId(recordingId);
 
         if (!objects.isEmpty()) {
             return downloadObjects(cacheDirectory, objects);

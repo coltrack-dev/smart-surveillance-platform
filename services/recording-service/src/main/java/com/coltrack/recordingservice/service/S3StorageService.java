@@ -1,6 +1,7 @@
 package com.coltrack.recordingservice.service;
 
 import com.coltrack.recordingservice.config.S3Properties;
+import com.coltrack.recordingservice.config.S3StoragePolicyProperties;
 import com.coltrack.recordingservice.model.RecordingObjectEntity;
 import com.coltrack.recordingservice.model.RecordingSession;
 import com.coltrack.recordingservice.repository.RecordingObjectRepository;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 
 import java.io.IOException;
 
@@ -42,6 +44,7 @@ public class S3StorageService
 
     private final S3Client s3Client;
     private final S3Properties properties;
+    private final S3StoragePolicyProperties storagePolicy;
     private final RecordingObjectRepository recordingObjectRepository;
 
     @Override
@@ -78,6 +81,8 @@ public class S3StorageService
 
             throw new IllegalStateException("Recording directory contains no files: " + directory);
         }
+
+        assertWithinRecordingQuota(files);
 
         /*
          * Если метод вызывается повторно для той же сессии,
@@ -226,6 +231,27 @@ public class S3StorageService
         return fileName.endsWith(".mkv");
     }
 
+    private void assertWithinRecordingQuota(List<Path> files) {
+        long uploadBytes = 0;
+        try {
+            for (Path file : files) {
+                uploadBytes = Math.addExact(uploadBytes, Files.size(file));
+            }
+        } catch (IOException | ArithmeticException exception) {
+            throw new IllegalStateException("Unable to calculate S3 upload size", exception);
+        }
+
+        long usedBytes = recordingObjectRepository.sumActiveSizeBytes();
+        long maximumBytes = storagePolicy.getMaximumSize().toBytes();
+        if (usedBytes > maximumBytes || uploadBytes > maximumBytes - usedBytes) {
+            throw new IllegalStateException(
+                    "S3 recording quota would be exceeded: used=" + usedBytes
+                            + ", upload=" + uploadBytes
+                            + ", maximum=" + maximumBytes
+            );
+        }
+    }
+
     @Override
     public void deleteRecording(RecordingSession session) {
 
@@ -339,5 +365,18 @@ public class S3StorageService
                     exception
             );
         }
+    }
+
+    public void deleteObject(String s3Key) {
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("S3 storage is disabled");
+        }
+        s3Client.deleteObject(
+                DeleteObjectRequest.builder()
+                        .bucket(properties.getBucket())
+                        .key(s3Key)
+                        .build()
+        );
+        log.info("Deleted s3://{}/{}", properties.getBucket(), s3Key);
     }
 }

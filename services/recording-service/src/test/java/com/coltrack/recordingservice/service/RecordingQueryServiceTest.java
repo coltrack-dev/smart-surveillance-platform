@@ -48,7 +48,7 @@ class RecordingQueryServiceTest {
                 .thenReturn(Optional.of(recording));
         when(recordingStorageService.hasRecordingFiles(recording.getFilePath()))
                 .thenReturn(true);
-        when(recordingObjectRepository.existsByRecordingId(recordingId))
+        when(recordingObjectRepository.existsActiveByRecordingId(recordingId))
                 .thenReturn(true);
 
         RecordingResponse response = service().setProtected(recordingId, true);
