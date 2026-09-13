@@ -81,6 +81,36 @@ class RecordingStorageCleanupServiceTest {
         assertEquals(0, preview.candidateCount());
     }
 
+    @Test
+    void reportsCleanupRequiredWhenDiskThresholdIsBreachedWithoutCandidates() {
+        when(recordingStorageService.getSnapshot()).thenReturn(
+                new RecordingStorageService.StorageSnapshot(
+                        10_000,
+                        400,
+                        9_600,
+                        200,
+                        StorageHealthStatus.CRITICAL,
+                        20,
+                        10,
+                        Instant.parse("2026-09-13T15:30:00Z")
+                )
+        );
+        when(recordingRepository
+                .findByProtectedFromDeletionFalseAndStatusInOrderByFinishedAtAsc(any()))
+                .thenReturn(List.of());
+
+        StorageCleanupPreviewResponse preview = service(false).preview();
+
+        assertTrue(preview.cleanupRequired());
+        assertEquals(List.of(
+                "MINIMUM_FREE_SPACE_BREACHED",
+                "EMERGENCY_FREE_SPACE_BREACHED"
+        ), preview.reasons());
+        assertEquals(1_100, preview.bytesToFree());
+        assertEquals(0, preview.candidateCount());
+        assertFalse(preview.enoughEligibleData());
+    }
+
     private RecordingStorageCleanupService service(boolean deleteLocalOnly) {
         RecordingStoragePolicyProperties policy =
                 new RecordingStoragePolicyProperties();

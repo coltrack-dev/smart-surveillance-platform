@@ -129,7 +129,7 @@ public class RecordingStorageCleanupService {
         long bytesToFree = Math.max(capacityBytesToFree, retentionBytesToFree);
 
         return new StorageCleanupPreviewResponse(
-                !selected.isEmpty(),
+                bytesToFree > 0,
                 List.copyOf(globalReasons),
                 snapshot.recordingBytes(),
                 maximumLocalBytes,

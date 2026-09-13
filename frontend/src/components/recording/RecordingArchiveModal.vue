@@ -1082,6 +1082,7 @@ onUnmounted(stopAnalyticsPolling);
               </ul>
             </details>
             <button
+                v-if="cleanupPreview.candidateCount > 0"
                 type="button"
                 class="cleanup-run-button"
                 :disabled="cleanupRunning"
