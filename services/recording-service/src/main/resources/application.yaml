@@ -5,6 +5,12 @@ spring:
   application:
     name: recording-service
 
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_recording_schema_history
+
   datasource:
     url: jdbc:postgresql://192.168.13.128:5432/surveillance_db
     username: surveillance_user
@@ -12,7 +18,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
 
 #  autoconfigure:
 #    exclude:
@@ -82,6 +88,8 @@ recording:
       delete-hybrid-enabled: ${RECORDING_S3_DELETE_HYBRID_ENABLED:false}
       require-verified-before-deletion: ${RECORDING_S3_REQUIRE_VERIFIED_BEFORE_DELETION:true}
       reconciliation-grace-period: ${RECORDING_S3_RECONCILIATION_GRACE_PERIOD:5m}
+      automatic-cleanup-enabled: ${RECORDING_S3_AUTOMATIC_CLEANUP_ENABLED:false}
+      automatic-cleanup-delay: ${RECORDING_S3_AUTOMATIC_CLEANUP_DELAY:1h}
   playback:
     cache-directory: ./data/playback-cache
     ttl: 1h

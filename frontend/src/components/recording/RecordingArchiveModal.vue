@@ -19,7 +19,8 @@ import type {
   S3StoragePolicy,
   S3CleanupPreview,
   S3CleanupRunResult,
-  S3ReconciliationResult
+  S3ReconciliationResult,
+  S3ReconciliationProblem
 } from "@/types/Recording";
 
 import {
@@ -37,6 +38,8 @@ import {
   runS3StorageCleanup,
   getS3Reconciliation,
   runS3Reconciliation,
+  acknowledgeS3Problem,
+  deleteS3Orphan,
   setRecordingProtection
 } from "@/api/recordingApi";
 
@@ -505,6 +508,27 @@ async function reconcileS3(): Promise<void> {
     s3ReconciliationError.value = "S3 reconciliation failed.";
   } finally {
     s3ReconciliationRunning.value = false;
+  }
+}
+
+async function acknowledgeProblem(problem: S3ReconciliationProblem): Promise<void> {
+  try {
+    await acknowledgeS3Problem(problem.s3Key);
+    await loadS3Reconciliation();
+  } catch (error) {
+    console.error("Unable to acknowledge S3 problem", error);
+    s3ReconciliationError.value = "Unable to acknowledge S3 problem.";
+  }
+}
+
+async function deleteOrphan(problem: S3ReconciliationProblem): Promise<void> {
+  if (!window.confirm(`Permanently delete all versions of ${problem.s3Key}?`)) return;
+  try {
+    await deleteS3Orphan(problem.s3Key);
+    await Promise.all([loadS3Reconciliation(), loadS3Storage()]);
+  } catch (error) {
+    console.error("Unable to delete S3 orphan", error);
+    s3ReconciliationError.value = "Unable to delete S3 orphan.";
   }
 }
 
@@ -1208,6 +1232,13 @@ onUnmounted(stopAnalyticsPolling);
                   · actual {{ formatSize(problem.actualBytes) }}
                 </template>
                 <template v-if="problem.details"> · {{ problem.details }}</template>
+                <button type="button" @click="acknowledgeProblem(problem)">Acknowledge</button>
+                <button
+                    v-if="problem.type === 'ORPHAN' || problem.type === 'DELETE_INCOMPLETE'"
+                    type="button"
+                    class="cleanup-run-button"
+                    @click="deleteOrphan(problem)"
+                >Delete orphan</button>
               </li>
             </ul>
           </details>
@@ -1217,7 +1248,8 @@ onUnmounted(stopAnalyticsPolling);
           <span v-if="s3StoragePolicy">
             Retention {{ s3StoragePolicy.retentionDays }} days ·
             target {{ s3StoragePolicy.cleanupTargetPercent }}% ·
-            {{ s3StoragePolicy.deleteHybridEnabled ? "S3 and HYBRID" : "S3-only recordings" }}
+            {{ s3StoragePolicy.deleteHybridEnabled ? "S3 and HYBRID" : "S3-only recordings" }} ·
+            auto cleanup {{ s3StoragePolicy.automaticCleanupEnabled ? "enabled" : "disabled" }}
           </span>
           <button
               type="button"

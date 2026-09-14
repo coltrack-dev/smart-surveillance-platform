@@ -38,6 +38,9 @@ class S3StorageManagementServiceTest {
     private RecordingStorageService recordingStorageService;
     @Mock
     private S3StorageService s3StorageService;
+    @Mock private DistributedLockService distributedLockService;
+    @Mock private RecordingUsageGuard recordingUsageGuard;
+    @Mock private CleanupHistoryService cleanupHistoryService;
 
     @Test
     void previewsExpiredS3OnlyRecording() {
@@ -106,7 +109,10 @@ class S3StorageManagementServiceTest {
                 recordingStorageService,
                 s3StorageService,
                 properties,
-                policy
+                policy,
+                distributedLockService,
+                recordingUsageGuard,
+                cleanupHistoryService
         );
     }
 

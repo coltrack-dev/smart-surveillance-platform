@@ -15,6 +15,10 @@ import com.coltrack.recordingservice.dto.S3StoragePolicyResponse;
 import com.coltrack.recordingservice.dto.S3StorageStatusResponse;
 import com.coltrack.recordingservice.dto.S3ReconciliationProblemResponse;
 import com.coltrack.recordingservice.dto.S3ReconciliationResponse;
+import com.coltrack.recordingservice.dto.S3ProblemActionRequest;
+import com.coltrack.recordingservice.dto.CleanupRunHistoryResponse;
+import com.coltrack.recordingservice.dto.CleanupRunHistoryItemResponse;
+import com.coltrack.recordingservice.service.CleanupHistoryService;
 import com.coltrack.recordingservice.client.StreamClient;
 import com.coltrack.recordingservice.model.RecordingStatus;
 import com.coltrack.recordingservice.service.RecordingManager;
@@ -48,6 +52,7 @@ public class RecordingController {
     private final RecordingStorageCleanupService recordingStorageCleanupService;
     private final S3StorageManagementService s3StorageManagementService;
     private final S3ReconciliationService s3ReconciliationService;
+    private final CleanupHistoryService cleanupHistoryService;
 
     @GetMapping
     public RecordingPageResponse findRecordings(
@@ -123,6 +128,28 @@ public class RecordingController {
     @GetMapping("/storage/s3/problems")
     public List<S3ReconciliationProblemResponse> getS3Problems() {
         return s3ReconciliationService.getProblems();
+    }
+
+    @PostMapping("/storage/s3/problems/acknowledge")
+    public void acknowledgeS3Problem(@Valid @RequestBody S3ProblemActionRequest request) {
+        s3ReconciliationService.acknowledge(request.s3Key());
+    }
+
+    @PostMapping("/storage/s3/problems/delete-orphan")
+    public java.util.Map<String, Long> deleteS3Orphan(
+            @Valid @RequestBody S3ProblemActionRequest request) {
+        return java.util.Map.of("freedBytes", s3ReconciliationService.deleteOrphan(request.s3Key()));
+    }
+
+    @GetMapping("/storage/cleanup/history")
+    public List<CleanupRunHistoryResponse> cleanupHistory(
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
+        return cleanupHistoryService.latest(limit);
+    }
+
+    @GetMapping("/storage/cleanup/history/{runId}/items")
+    public List<CleanupRunHistoryItemResponse> cleanupHistoryItems(@PathVariable UUID runId) {
+        return cleanupHistoryService.items(runId);
     }
 
     @PatchMapping("/{recordingId}/protection")

@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,9 +36,12 @@ class S3ReconciliationServiceTest {
     private S3ReconciliationRunRepository runRepository;
     @Mock
     private S3StorageService s3StorageService;
+    @Mock private DistributedLockService distributedLockService;
 
     @Test
     void verifiesCatalogObjectsAndDetectsMissingObject() {
+        when(distributedLockService.execute(anyLong(), any(), any()))
+                .thenAnswer(invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(2)).get());
         RecordingObjectEntity verified = object("recordings/verified.mkv", 100L);
         RecordingObjectEntity missing = object("recordings/missing.mkv", 50L);
         when(recordingObjectRepository.findAllActive())
@@ -86,7 +90,8 @@ class S3ReconciliationServiceTest {
                 runRepository,
                 s3StorageService,
                 properties,
-                policy
+                policy,
+                distributedLockService
         );
     }
 

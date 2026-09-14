@@ -19,6 +19,8 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
 
 import java.io.IOException;
 
@@ -27,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
@@ -52,6 +55,8 @@ public class S3StorageService
     private final S3Properties properties;
     private final S3StoragePolicyProperties storagePolicy;
     private final RecordingObjectRepository recordingObjectRepository;
+    private final RecordingUsageGuard recordingUsageGuard;
+    private final DistributedLockService distributedLockService;
 
     @Override
     public void uploadRecording(RecordingSession session) {
@@ -60,6 +65,20 @@ public class S3StorageService
             log.debug("S3 upload disabled");
             return;
         }
+
+        try (RecordingUsageGuard.Lease ignored = recordingUsageGuard.acquire(
+                session.getId(), "EXPORT", Duration.ofHours(2))) {
+            distributedLockService.executeBlocking(
+                    DistributedLockService.S3_CLEANUP,
+                    "S3 mutation",
+                    () -> {
+                        uploadRecordingLocked(session);
+                        return null;
+                    });
+        }
+    }
+
+    private void uploadRecordingLocked(RecordingSession session) {
 
         Path directory = Paths.get(session.getFilePath());
 
@@ -88,7 +107,7 @@ public class S3StorageService
             throw new IllegalStateException("Recording directory contains no files: " + directory);
         }
 
-        assertWithinRecordingQuota(files);
+        assertWithinRecordingQuota(session, files);
 
         /*
          * Если метод вызывается повторно для той же сессии,
@@ -149,6 +168,29 @@ public class S3StorageService
                                 .toString()
                 );
 
+        long fileSize;
+        try {
+            fileSize = Files.size(file);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to determine recording file size: " + file, exception);
+        }
+
+        Optional<RecordingObjectEntity> existing = recordingObjectRepository.findActiveByS3Key(s3Key);
+        if (existing.isPresent()) {
+            Optional<StoredObjectMetadata> remote = inspectObject(s3Key);
+            if (remote.isPresent() && remote.get().sizeBytes() == fileSize) {
+                RecordingObjectEntity object = existing.get();
+                object.setVerificationStatus(com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED);
+                object.setActualSizeBytes(fileSize);
+                object.setVerifiedAt(Instant.now());
+                object.setVerificationError(null);
+                recordingObjectRepository.save(object);
+                addSessionKey(session, s3Key);
+                log.info("Skipping idempotent S3 upload recordingId={}, key={}", session.getId(), s3Key);
+                return;
+            }
+        }
+
         log.info(
                 "Uploading {} -> s3://{}/{}",
                 file,
@@ -179,7 +221,9 @@ public class S3StorageService
                 session,
                 s3Key,
                 file,
-                sequenceNumber
+                sequenceNumber,
+                fileSize,
+                existing.orElse(null)
         );
     }
 
@@ -187,37 +231,31 @@ public class S3StorageService
             RecordingSession session,
             String s3Key,
             Path localFile,
-            int sequenceNumber
+            int sequenceNumber,
+            long fileSize,
+            RecordingObjectEntity existing
     ) {
-
-        long fileSize;
-
-        try {
-
-            fileSize = Files.size(localFile);
-
-        } catch (IOException exception) {
-
-            throw new IllegalStateException("Unable to determine recording file size: " + localFile, exception);
-        }
-
-        RecordingObjectEntity entity =
-                RecordingObjectEntity.builder()
+        RecordingObjectEntity entity = existing != null
+                ? existing
+                : RecordingObjectEntity.builder()
                         .id(UUID.randomUUID())
                         .recordingId(session.getId())
                         .s3Key(s3Key)
-                        .fileName(localFile
-                                        .getFileName()
-                                        .toString()
-                        )
-                        .sizeBytes(fileSize)
-                        .sequenceNumber(sequenceNumber)
-                        .uploadedAt(Instant.now())
                         .build();
+
+        entity.setFileName(localFile.getFileName().toString());
+        entity.setSizeBytes(fileSize);
+        entity.setSequenceNumber(sequenceNumber);
+        entity.setUploadedAt(Instant.now());
+        entity.setCleanupStatus(com.coltrack.recordingservice.model.S3ObjectCleanupStatus.AVAILABLE);
+        entity.setVerificationStatus(com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED);
+        entity.setActualSizeBytes(fileSize);
+        entity.setVerifiedAt(Instant.now());
+        entity.setVerificationError(null);
 
         recordingObjectRepository.save(entity);
 
-        session.getS3Keys().add(s3Key);
+        addSessionKey(session, s3Key);
 
         log.debug(
                 "Saved recording object recordingId={}, key={}, sequence={}",
@@ -237,11 +275,23 @@ public class S3StorageService
         return fileName.endsWith(".mkv");
     }
 
-    private void assertWithinRecordingQuota(List<Path> files) {
+    private void addSessionKey(RecordingSession session, String s3Key) {
+        if (!session.getS3Keys().contains(s3Key)) {
+            session.getS3Keys().add(s3Key);
+        }
+    }
+
+    private void assertWithinRecordingQuota(RecordingSession session, List<Path> files) {
         long uploadBytes = 0;
         try {
             for (Path file : files) {
-                uploadBytes = Math.addExact(uploadBytes, Files.size(file));
+                String key = buildObjectKey(session, file.getFileName().toString());
+                long fileSize = Files.size(file);
+                long catalogedSize = recordingObjectRepository.findActiveByS3Key(key)
+                        .map(RecordingObjectEntity::getSizeBytes)
+                        .filter(java.util.Objects::nonNull)
+                        .orElse(0L);
+                uploadBytes = Math.addExact(uploadBytes, Math.max(0L, fileSize - catalogedSize));
             }
         } catch (IOException | ArithmeticException exception) {
             throw new IllegalStateException("Unable to calculate S3 upload size", exception);
@@ -373,17 +423,60 @@ public class S3StorageService
         }
     }
 
-    public void deleteObject(String s3Key) {
+    public long deleteObjectCompletely(String s3Key) {
         if (!properties.isEnabled()) {
             throw new IllegalStateException("S3 storage is disabled");
         }
-        s3Client.deleteObject(
-                DeleteObjectRequest.builder()
-                        .bucket(properties.getBucket())
-                        .key(s3Key)
-                        .build()
-        );
-        log.info("Deleted s3://{}/{}", properties.getBucket(), s3Key);
+        long freedBytes = 0;
+        List<VersionedObject> versionsToDelete = new ArrayList<>();
+        String keyMarker = null;
+        String versionMarker = null;
+        boolean truncated;
+        do {
+            ListObjectVersionsResponse response = s3Client.listObjectVersions(
+                    ListObjectVersionsRequest.builder()
+                            .bucket(properties.getBucket())
+                            .prefix(s3Key)
+                            .keyMarker(keyMarker)
+                            .versionIdMarker(versionMarker)
+                            .build());
+            for (var version : response.versions()) {
+                if (!s3Key.equals(version.key())) continue;
+                versionsToDelete.add(new VersionedObject(version.versionId()));
+                freedBytes = Math.addExact(freedBytes, version.size());
+            }
+            for (var marker : response.deleteMarkers()) {
+                if (!s3Key.equals(marker.key())) continue;
+                versionsToDelete.add(new VersionedObject(marker.versionId()));
+            }
+            truncated = response.isTruncated();
+            keyMarker = response.nextKeyMarker();
+            versionMarker = response.nextVersionIdMarker();
+        } while (truncated);
+
+        for (VersionedObject version : versionsToDelete) {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(properties.getBucket())
+                    .key(s3Key)
+                    .versionId(version.versionId())
+                    .build());
+        }
+
+        if (versionsToDelete.isEmpty()) {
+            Optional<StoredObjectMetadata> current = inspectObject(s3Key);
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(properties.getBucket()).key(s3Key).build());
+            freedBytes = current.map(StoredObjectMetadata::sizeBytes).orElse(0L);
+        }
+        log.info("Deleted all versions s3://{}/{} freedBytes={}", properties.getBucket(), s3Key, freedBytes);
+        return freedBytes;
+    }
+
+    public void deleteObject(String s3Key) {
+        deleteObjectCompletely(s3Key);
+    }
+
+    private record VersionedObject(String versionId) {
     }
 
     public Optional<StoredObjectMetadata> inspectObject(String s3Key) {

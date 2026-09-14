@@ -55,4 +55,7 @@ public class S3ReconciliationIssueEntity {
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
+
+    @Column(name = "resolution", length = 32)
+    private String resolution;
 }

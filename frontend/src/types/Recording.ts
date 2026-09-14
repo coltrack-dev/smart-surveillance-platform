@@ -181,6 +181,8 @@ export interface S3StoragePolicy {
     deletionEnabled: boolean;
     deleteHybridEnabled: boolean;
     requireVerifiedBeforeDeletion: boolean;
+    automaticCleanupEnabled: boolean;
+    automaticCleanupDelaySeconds: number;
 }
 
 export interface S3CleanupCandidate {

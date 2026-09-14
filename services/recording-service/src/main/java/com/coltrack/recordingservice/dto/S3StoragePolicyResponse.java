@@ -8,6 +8,8 @@ public record S3StoragePolicyResponse(
         int maxRecordingsPerRun,
         boolean deletionEnabled,
         boolean deleteHybridEnabled,
-        boolean requireVerifiedBeforeDeletion
+        boolean requireVerifiedBeforeDeletion,
+        boolean automaticCleanupEnabled,
+        long automaticCleanupDelaySeconds
 ) {
 }

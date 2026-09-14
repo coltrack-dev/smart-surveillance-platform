@@ -19,6 +19,8 @@ public class S3StoragePolicyProperties {
     private boolean deleteHybridEnabled = false;
     private boolean requireVerifiedBeforeDeletion = true;
     private Duration reconciliationGracePeriod = Duration.ofMinutes(5);
+    private boolean automaticCleanupEnabled = false;
+    private Duration automaticCleanupDelay = Duration.ofHours(1);
 
     @PostConstruct
     void validate() {
@@ -38,6 +40,9 @@ public class S3StoragePolicyProperties {
             throw new IllegalStateException(
                     "recording.s3.management.reconciliation-grace-period must not be negative"
             );
+        }
+        if (automaticCleanupDelay == null || automaticCleanupDelay.isNegative() || automaticCleanupDelay.isZero()) {
+            throw new IllegalStateException("recording.s3.management.automatic-cleanup-delay must be positive");
         }
     }
 }

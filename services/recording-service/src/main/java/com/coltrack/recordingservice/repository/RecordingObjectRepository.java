@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Collection;
 import java.util.UUID;
+import java.util.Optional;
 
 public interface RecordingObjectRepository
         extends JpaRepository<RecordingObjectEntity, UUID> {
@@ -44,6 +45,31 @@ public interface RecordingObjectRepository
     boolean existsActiveByRecordingId(
             @Param("recordingId") UUID recordingId
     );
+
+    @Query("""
+            select case when count(o) > 0 then true else false end
+            from RecordingObjectEntity o
+            where o.recordingId = :recordingId
+              and o.verificationStatus = com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED
+              and (o.cleanupStatus is null or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED)
+            """)
+    boolean existsVerifiedActiveByRecordingId(@Param("recordingId") UUID recordingId);
+
+    @Query("""
+            select o from RecordingObjectEntity o
+            where o.recordingId = :recordingId
+              and o.verificationStatus = com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED
+              and (o.cleanupStatus is null or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED)
+            order by o.sequenceNumber asc
+            """)
+    List<RecordingObjectEntity> findVerifiedActiveByRecordingId(@Param("recordingId") UUID recordingId);
+
+    @Query("""
+            select o from RecordingObjectEntity o
+            where o.s3Key = :s3Key
+              and (o.cleanupStatus is null or o.cleanupStatus <> com.coltrack.recordingservice.model.S3ObjectCleanupStatus.DELETED)
+            """)
+    Optional<RecordingObjectEntity> findActiveByS3Key(@Param("s3Key") String s3Key);
 
     @Query("""
             select coalesce(sum(o.sizeBytes), 0)

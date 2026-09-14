@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 import java.time.Instant;
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -52,6 +53,8 @@ public class RecordingPlaybackService {
 
     private final RecordingPlaybackProperties properties;
 
+    private final RecordingUsageGuard recordingUsageGuard;
+
     /**
      * Не позволяет двум запросам одновременно собирать
      * один и тот же playback-кэш.
@@ -66,6 +69,9 @@ public class RecordingPlaybackService {
         verifyRecordingExists(
                 recordingId
         );
+
+        RecordingUsageGuard.Lease usageLease = recordingUsageGuard.acquire(
+                recordingId, "PLAYBACK", Duration.ofMinutes(30));
 
         ReentrantLock lock =
                 locks.computeIfAbsent(
@@ -266,6 +272,7 @@ public class RecordingPlaybackService {
                         lock
                 );
             }
+            usageLease.close();
         }
     }
 
@@ -382,16 +389,19 @@ public class RecordingPlaybackService {
         }
 
         List<RecordingObjectEntity> objects = recordingObjectRepository
-                .findActiveByRecordingId(recordingId);
+                .findVerifiedActiveByRecordingId(recordingId);
 
         if (!objects.isEmpty()) {
             return downloadObjects(cacheDirectory, objects);
         }
 
-        throw new ResponseStatusException(
-                HttpStatus.NOT_FOUND,
-                "Recording contains no media files"
-        );
+        if (recordingObjectRepository.existsActiveByRecordingId(recordingId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.GONE,
+                    "Recording S3 objects are missing or have not passed reconciliation"
+            );
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Recording contains no media files");
     }
 
     private List<Path> listLocalFiles(String filePath) throws IOException {
@@ -977,6 +987,9 @@ public class RecordingPlaybackService {
             );
         }
 
+        RecordingUsageGuard.Lease usageLease = recordingUsageGuard.acquire(
+                recordingId, "EXPORT", Duration.ofMinutes(30));
+
         ReentrantLock lock =
                 locks.computeIfAbsent(
                         recordingId,
@@ -1069,6 +1082,7 @@ public class RecordingPlaybackService {
                         lock
                 );
             }
+            usageLease.close();
         }
     }
 

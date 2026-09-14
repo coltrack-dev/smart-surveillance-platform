@@ -5,5 +5,6 @@ public enum S3ObjectVerificationStatus {
     VERIFIED,
     MISSING,
     SIZE_MISMATCH,
-    ERROR
+    ERROR,
+    ACKNOWLEDGED
 }

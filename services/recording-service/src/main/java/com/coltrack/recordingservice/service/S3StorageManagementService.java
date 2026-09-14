@@ -46,6 +46,9 @@ public class S3StorageManagementService {
     private final S3StorageService s3StorageService;
     private final S3Properties s3Properties;
     private final S3StoragePolicyProperties policy;
+    private final DistributedLockService distributedLockService;
+    private final RecordingUsageGuard recordingUsageGuard;
+    private final CleanupHistoryService cleanupHistoryService;
     private final AtomicBoolean cleanupRunning = new AtomicBoolean(false);
 
     public S3StorageStatusResponse getStatus() {
@@ -79,7 +82,9 @@ public class S3StorageManagementService {
                 policy.getMaxRecordingsPerRun(),
                 policy.isDeletionEnabled(),
                 policy.isDeleteHybridEnabled(),
-                policy.isRequireVerifiedBeforeDeletion()
+                policy.isRequireVerifiedBeforeDeletion(),
+                policy.isAutomaticCleanupEnabled(),
+                policy.getAutomaticCleanupDelay().toSeconds()
         );
     }
 
@@ -138,6 +143,31 @@ public class S3StorageManagementService {
     }
 
     public S3CleanupRunResponse runCleanup() {
+        return runCleanup("MANUAL");
+    }
+
+    public S3CleanupRunResponse runCleanup(String trigger) {
+        if (!s3Properties.isEnabled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 storage is disabled");
+        }
+        if (!policy.isDeletionEnabled()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "S3 deletion is disabled; set RECORDING_S3_DELETION_ENABLED=true explicitly"
+            );
+        }
+        return cleanupHistoryService.track("S3", trigger,
+                () -> distributedLockService.execute(
+                        DistributedLockService.S3_CLEANUP, "S3 cleanup", this::runCleanupLocked),
+                result -> new CleanupHistoryService.Metrics(
+                        result.attemptedCount(), result.deletedCount(), result.failedCount(), result.freedBytes()),
+                result -> result.results().stream()
+                        .map(item -> new CleanupHistoryService.Item(
+                                item.recordingId(), null, item.status().name(), item.freedBytes(), item.error()))
+                        .toList());
+    }
+
+    private S3CleanupRunResponse runCleanupLocked() {
         if (!s3Properties.isEnabled()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 storage is disabled");
         }
@@ -210,6 +240,9 @@ public class S3StorageManagementService {
                                 != com.coltrack.recordingservice.model.S3ObjectVerificationStatus.VERIFIED)) {
             return null;
         }
+        if (recordingUsageGuard.isInUse(recording.getId())) {
+            return null;
+        }
         long s3Bytes = objects.stream()
                 .map(RecordingObjectEntity::getSizeBytes)
                 .filter(java.util.Objects::nonNull)
@@ -238,7 +271,8 @@ public class S3StorageManagementService {
     private S3CleanupResultItemResponse deleteCandidate(S3CleanupCandidateResponse candidate) {
         RecordingEntity recording = recordingRepository.findById(candidate.recordingId()).orElse(null);
         if (recording == null || recording.isProtectedFromDeletion()
-                || !FINISHED_STATUSES.contains(recording.getStatus())) {
+                || !FINISHED_STATUSES.contains(recording.getStatus())
+                || recordingUsageGuard.isInUse(candidate.recordingId())) {
             return failed(candidate.recordingId(), 0, "Recording is no longer eligible for S3 cleanup");
         }
         boolean local = recordingStorageService.hasRecordingFiles(recording.getFilePath());
@@ -261,10 +295,10 @@ public class S3StorageManagementService {
             object.setDeletionReason(String.join(",", candidate.reasons()));
             recordingObjectRepository.saveAndFlush(object);
             try {
-                s3StorageService.deleteObject(object.getS3Key());
+                long actualFreedBytes = s3StorageService.deleteObjectCompletely(object.getS3Key());
                 object.setCleanupStatus(S3ObjectCleanupStatus.DELETED);
                 object.setDeletedAt(Instant.now());
-                freedBytes += object.getSizeBytes() == null ? 0 : object.getSizeBytes();
+                freedBytes += actualFreedBytes;
             } catch (RuntimeException exception) {
                 object.setCleanupStatus(S3ObjectCleanupStatus.DELETE_FAILED);
                 object.setDeletionReason(exception.getMessage());

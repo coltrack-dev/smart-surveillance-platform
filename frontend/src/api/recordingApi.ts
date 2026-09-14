@@ -135,6 +135,17 @@ export async function getS3Problems(): Promise<S3ReconciliationProblem[]> {
     return response.data;
 }
 
+export async function acknowledgeS3Problem(s3Key: string): Promise<void> {
+    await http.post("/recordings/storage/s3/problems/acknowledge", { s3Key });
+}
+
+export async function deleteS3Orphan(s3Key: string): Promise<{freedBytes: number}> {
+    const response = await http.post<{freedBytes: number}>(
+        "/recordings/storage/s3/problems/delete-orphan", { s3Key }, { timeout: 120000 }
+    );
+    return response.data;
+}
+
 export function resolveRecordingDownloadUrl(recording: Recording): string {
     if (recording.downloadUrl.startsWith("http")) {
         return recording.downloadUrl;

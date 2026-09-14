@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -44,9 +45,15 @@ public class S3ReconciliationService {
     private final S3StorageService s3StorageService;
     private final S3Properties s3Properties;
     private final S3StoragePolicyProperties policy;
+    private final DistributedLockService distributedLockService;
     private final AtomicBoolean reconciliationRunning = new AtomicBoolean(false);
 
     public S3ReconciliationResponse run() {
+        return distributedLockService.execute(
+                DistributedLockService.S3_RECONCILIATION, "S3 reconciliation", this::runLocked);
+    }
+
+    private S3ReconciliationResponse runLocked() {
         if (!s3Properties.isEnabled()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 storage is disabled");
         }
@@ -74,6 +81,9 @@ public class S3ReconciliationService {
                 try {
                     var actual = s3StorageService.inspectObject(object.getS3Key());
                     if (actual.isEmpty()) {
+                        if (object.getVerificationStatus() == S3ObjectVerificationStatus.ACKNOWLEDGED) {
+                            continue;
+                        }
                         if (isInsideGracePeriod(object.getUploadedAt(), graceCutoff)) {
                             continue;
                         }
@@ -193,6 +203,58 @@ public class S3ReconciliationService {
                         issue.getFirstDetectedAt()
                 )));
         return List.copyOf(problems);
+    }
+
+    @Transactional
+    public void acknowledge(String s3Key) {
+        var object = recordingObjectRepository.findActiveByS3Key(s3Key);
+        if (object.isPresent()) {
+            if (!PROBLEM_STATUSES.contains(object.get().getVerificationStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 object has no active problem");
+            }
+            object.get().setVerificationStatus(S3ObjectVerificationStatus.ACKNOWLEDGED);
+            object.get().setVerificationError("Acknowledged by operator");
+            object.get().setVerifiedAt(Instant.now());
+            recordingObjectRepository.saveAndFlush(object.get());
+            return;
+        }
+        S3ReconciliationIssueEntity issue = issueRepository.findByS3Key(s3Key)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "S3 problem not found"));
+        issue.setResolvedAt(Instant.now());
+        issue.setLastCheckedAt(Instant.now());
+        issue.setResolution("ACKNOWLEDGED");
+        issueRepository.saveAndFlush(issue);
+    }
+
+    @Transactional
+    public long deleteOrphan(String s3Key) {
+        if (!policy.isDeletionEnabled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 deletion is disabled");
+        }
+        return distributedLockService.execute(
+                DistributedLockService.S3_CLEANUP, "S3 cleanup", () -> deleteOrphanLocked(s3Key));
+    }
+
+    private long deleteOrphanLocked(String s3Key) {
+        S3ReconciliationIssueEntity issue = issueRepository.findByS3Key(s3Key)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "S3 orphan not found"));
+        if (issue.getResolvedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 problem is already resolved");
+        }
+        if (issue.getProblemType() != S3ReconciliationProblemType.ORPHAN
+                && issue.getProblemType() != S3ReconciliationProblemType.DELETE_INCOMPLETE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "S3 problem is not an orphan object");
+        }
+        String prefix = s3Properties.getPrefix() == null ? "" : s3Properties.getPrefix().strip();
+        if (prefix.isBlank() || !s3Key.startsWith(prefix.endsWith("/") ? prefix : prefix + "/")) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Refusing to delete an object outside RECORDING_S3_PREFIX");
+        }
+        long freed = s3StorageService.deleteObjectCompletely(s3Key);
+        issue.setResolvedAt(Instant.now());
+        issue.setLastCheckedAt(Instant.now());
+        issue.setResolution("DELETED");
+        issueRepository.saveAndFlush(issue);
+        return freed;
     }
 
     private void mark(

@@ -48,7 +48,7 @@ class RecordingQueryServiceTest {
                 .thenReturn(Optional.of(recording));
         when(recordingStorageService.hasRecordingFiles(recording.getFilePath()))
                 .thenReturn(true);
-        when(recordingObjectRepository.existsActiveByRecordingId(recordingId))
+        when(recordingObjectRepository.existsVerifiedActiveByRecordingId(recordingId))
                 .thenReturn(true);
 
         RecordingResponse response = service().setProtected(recordingId, true);
@@ -57,6 +57,20 @@ class RecordingQueryServiceTest {
         assertTrue(response.protectedFromDeletion());
         assertEquals(RecordingStorageType.HYBRID, response.storageType());
         verify(recordingRepository).saveAndFlush(recording);
+    }
+
+    @Test
+    void reportsMissingWhenOnlyUnverifiedCatalogRowsRemain() {
+        UUID recordingId = UUID.randomUUID();
+        RecordingEntity recording = RecordingEntity.builder()
+                .id(recordingId).cameraId(UUID.randomUUID()).filePath("/recordings/missing").build();
+        when(recordingRepository.findById(recordingId)).thenReturn(Optional.of(recording));
+        when(recordingStorageService.hasRecordingFiles(recording.getFilePath())).thenReturn(false);
+        when(recordingObjectRepository.existsVerifiedActiveByRecordingId(recordingId)).thenReturn(false);
+
+        RecordingResponse response = service().setProtected(recordingId, false);
+
+        assertEquals(RecordingStorageType.MISSING, response.storageType());
     }
 
     @Test

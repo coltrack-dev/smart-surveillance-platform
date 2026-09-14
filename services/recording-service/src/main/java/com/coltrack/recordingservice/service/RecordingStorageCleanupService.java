@@ -46,6 +46,9 @@ public class RecordingStorageCleanupService {
     private final RecordingStorageService recordingStorageService;
     private final RecordingStoragePolicyProperties policy;
     private final AtomicBoolean cleanupRunning = new AtomicBoolean(false);
+    private final DistributedLockService distributedLockService;
+    private final RecordingUsageGuard recordingUsageGuard;
+    private final CleanupHistoryService cleanupHistoryService;
 
     public StoragePolicyResponse getPolicy() {
         long maximumLocalBytes = policy.getMaximumLocalSize().toBytes();
@@ -144,6 +147,18 @@ public class RecordingStorageCleanupService {
     }
 
     public StorageCleanupRunResponse runCleanup() {
+        return cleanupHistoryService.track("LOCAL", "MANUAL",
+                () -> distributedLockService.execute(
+                        DistributedLockService.LOCAL_CLEANUP, "Local cleanup", this::runCleanupLocked),
+                result -> new CleanupHistoryService.Metrics(
+                        result.attemptedCount(), result.deletedCount(), result.failedCount(), result.freedBytes()),
+                result -> result.results().stream()
+                        .map(item -> new CleanupHistoryService.Item(
+                                item.recordingId(), null, item.status().name(), item.freedBytes(), item.error()))
+                        .toList());
+    }
+
+    private StorageCleanupRunResponse runCleanupLocked() {
         if (!cleanupRunning.compareAndSet(false, true)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -200,6 +215,8 @@ public class RecordingStorageCleanupService {
                 )
                 .stream()
                 .filter(this::hasEligibleCleanupStatus)
+                .filter(this::hasDedicatedRecordingDirectory)
+                .filter(recording -> !recordingUsageGuard.isInUse(recording.getId()))
                 .map(recording -> toCandidate(recording, retentionCutoff))
                 .flatMap(Optional::stream)
                 .filter(candidate -> candidate.localBytes() > 0)
@@ -269,7 +286,9 @@ public class RecordingStorageCleanupService {
                 .orElse(null);
         if (recording == null
                 || recording.isProtectedFromDeletion()
-                || !FINISHED_STATUSES.contains(recording.getStatus())) {
+                || !FINISHED_STATUSES.contains(recording.getStatus())
+                || !hasDedicatedRecordingDirectory(recording)
+                || recordingUsageGuard.isInUse(candidate.recordingId())) {
             return new StorageCleanupResultItemResponse(
                     candidate.recordingId(),
                     RecordingCleanupStatus.DELETE_FAILED,
@@ -325,12 +344,23 @@ public class RecordingStorageCleanupService {
         }
     }
 
+    private boolean hasDedicatedRecordingDirectory(RecordingEntity recording) {
+        try {
+            java.nio.file.Path fileName = java.nio.file.Path.of(recording.getFilePath())
+                    .normalize()
+                    .getFileName();
+            return fileName != null && fileName.toString().equals(recording.getId().toString());
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
     private boolean hasCompleteS3Copy(
             RecordingEntity recording,
             long localBytes
     ) {
         List<RecordingObjectEntity> objects = recordingObjectRepository
-                .findActiveByRecordingId(recording.getId());
+                .findVerifiedActiveByRecordingId(recording.getId());
         if (objects.isEmpty() || localBytes <= 0) {
             return false;
         }

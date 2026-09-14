@@ -35,6 +35,9 @@ class RecordingStorageCleanupServiceTest {
 
     @Mock
     private RecordingStorageService recordingStorageService;
+    @Mock private DistributedLockService distributedLockService;
+    @Mock private RecordingUsageGuard recordingUsageGuard;
+    @Mock private CleanupHistoryService cleanupHistoryService;
 
     @Test
     void previewsExpiredHybridRecordingWithoutDeletingIt() {
@@ -48,7 +51,7 @@ class RecordingStorageCleanupServiceTest {
         when(recordingStorageService.getRecordingDirectorySize(recording.getFilePath()))
                 .thenReturn(200L);
         when(recordingObjectRepository
-                .findActiveByRecordingId(recordingId))
+                .findVerifiedActiveByRecordingId(recordingId))
                 .thenReturn(List.of(object(recordingId, 200L)));
 
         StorageCleanupPreviewResponse preview = service(false).preview();
@@ -72,12 +75,27 @@ class RecordingStorageCleanupServiceTest {
         when(recordingStorageService.getRecordingDirectorySize(recording.getFilePath()))
                 .thenReturn(200L);
         when(recordingObjectRepository
-                .findActiveByRecordingId(recordingId))
+                .findVerifiedActiveByRecordingId(recordingId))
                 .thenReturn(List.of());
 
         StorageCleanupPreviewResponse preview = service(false).preview();
 
         assertFalse(preview.cleanupRequired());
+        assertEquals(0, preview.candidateCount());
+    }
+
+    @Test
+    void excludesLegacySharedDirectory() {
+        UUID recordingId = UUID.randomUUID();
+        RecordingEntity recording = recording(recordingId, 200L);
+        recording.setFilePath("/data/recordings/camera/2026-08-16");
+        when(recordingStorageService.getSnapshot()).thenReturn(snapshot(200));
+        when(recordingRepository
+                .findByProtectedFromDeletionFalseAndStatusInOrderByFinishedAtAsc(any()))
+                .thenReturn(List.of(recording));
+
+        StorageCleanupPreviewResponse preview = service(true).preview();
+
         assertEquals(0, preview.candidateCount());
     }
 
@@ -126,7 +144,10 @@ class RecordingStorageCleanupServiceTest {
                 recordingRepository,
                 recordingObjectRepository,
                 recordingStorageService,
-                policy
+                policy,
+                distributedLockService,
+                recordingUsageGuard,
+                cleanupHistoryService
         );
     }
 
@@ -134,7 +155,7 @@ class RecordingStorageCleanupServiceTest {
         return RecordingEntity.builder()
                 .id(id)
                 .cameraId(UUID.randomUUID())
-                .filePath("/data/recordings/recording-1")
+                .filePath("/data/recordings/" + id)
                 .startedAt(Instant.parse("2026-01-01T00:00:00Z"))
                 .finishedAt(Instant.parse("2026-01-01T01:00:00Z"))
                 .status(RecordingStatus.STOPPED)
