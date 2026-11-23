@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 @Component
 @RequiredArgsConstructor
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Component;
 public class StreamWebSocketPublisher {
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    @Value("${app.security.mode:legacy}")
+    private String securityMode;
 
     public void onStreamStarted(StreamStartedEvent event) {
 
@@ -24,7 +27,7 @@ public class StreamWebSocketPublisher {
                 new StreamEventWs(
                         event.cameraId(),
                         "RUNNING",
-                        event.hlsUrl(),
+                        "oidc".equalsIgnoreCase(securityMode) ? null : event.hlsUrl(),
                         null
                 );
 

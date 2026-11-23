@@ -29,7 +29,12 @@ public class StreamEventConsumer {
     public void consume(ConsumerRecord<String, Object> record) {
 
         Object event = record.value();
-        log.info("Received stream event: {}", event);
+        Object cameraId = event instanceof StreamStartedEvent e ? e.cameraId()
+                : event instanceof StreamRecoveredEvent e ? e.cameraId()
+                : event instanceof StreamStoppedEvent e ? e.cameraId()
+                : event instanceof StreamFailedEvent e ? e.cameraId()
+                : event instanceof StreamReconnectingEvent e ? e.cameraId() : "unknown";
+        log.info("Received stream event type={} cameraId={}", event.getClass().getSimpleName(), cameraId);
 
         if (event instanceof StreamStartedEvent e) {
 

@@ -38,7 +38,7 @@ class StreamingSecurityConfigurationTest {
     }
 
     @Test
-    void deniesLegacyMediaAndWebSocketRoutes() {
+    void deniesLegacyMediaAndAllowsWebSocketHandshakeForStompLayerAuthorization() {
         client.mutateWith(mockJwt())
                 .get().uri("/media-hls/camera/index.m3u8")
                 .exchange()
@@ -47,7 +47,7 @@ class StreamingSecurityConfigurationTest {
         client.mutateWith(mockJwt())
                 .get().uri("/ws")
                 .exchange()
-                .expectStatus().isForbidden();
+                .expectStatus().isOk();
     }
 
     @Test

@@ -1,4 +1,47 @@
-# Phase 3.2A — Identity foundation migration status
+# Phase 3.2B — Tenant ownership migration status
+
+## Phase 3.2C isolated migration evidence
+
+On 2026-11-23 the migration SQL was applied in order to a disposable `postgres:17-alpine` container (`phase32c-isolated-pg`), backed only by a 512 MiB tmpfs and published only on `127.0.0.1:25439`. A synthetic pre-ownership Camera and enabled Broadcast were created first; identity V1 and Camera V1–V3, Stream V1–V3 SQL were then applied. No project database, named volume, running Surveillance container, or application stack was used.
+
+The check returned `camera_unassigned=1`, `broadcast_unassigned=1`, `lease_unassigned=1`, and `tenant_scoped_camera_visible=0` for an arbitrary tenant. The six tenant indexes (`ix_cameras_tenant_camera_number`, `uk_cameras_tenant_id_id`, `ix_camera_deletion_tombstones_tenant_deleted`, `ix_broadcasts_tenant_enabled_updated`, `ix_broadcasts_tenant_camera`, `ix_stream_consumer_leases_tenant_camera`) were present. This verifies SQL acceptance and the intended nullable/no-backfill behavior on this PostgreSQL version; it does not verify Flyway startup, schema-history interaction, app startup ordering, or existing installation drift.
+
+### Rollback status
+
+Manual reverse DDL **PASSED only before ownership assignment**: on the same disposable database, all `tenant_id` values were still NULL; the Phase 3.2C indexes/table/columns and identity schema were removed in reverse order, and a follow-up catalog query found zero remaining tenant ownership columns and no identity schema. This was a direct PostgreSQL rollback check, not an application Flyway down migration.
+
+Rollback after ownership assignment remains **BLOCKED / not demonstrated**. Migrations intentionally have no automatic Flyway down migration. Dropping ownership columns after values are assigned loses authorization data and is prohibited; recovery must use a verified database backup/restore or a forward repair migration. No production database or backup was touched. Before rollout, test Flyway upgrade/history and restore on a copy of each supported schema version, including interruption/restart.
+
+No automatic backfill is approved. Legacy Camera, Broadcast and lease rows that remain `tenant_id IS NULL` must stay invisible to Streaming until an explicit owner-mapping and audited backfill procedure is separately approved. Surveillance continues to use legacy unscoped semantics.
+
+## Implemented, additive, not executed
+
+Two new migrations are present:
+
+| Owner | Migration | Change |
+|---|---|---|
+| camera-service | `V2__camera_tenant_ownership.sql` | Nullable `cameras.tenant_id`; `(tenant_id,camera_number)` index and `(tenant_id,id)` unique support index. |
+| stream-service | `V3__broadcast_and_stream_lease_tenant_ownership.sql` | Nullable `broadcasts.tenant_id` and `stream_consumer_leases.tenant_id`; tenant-leading camera/list indexes. |
+
+The migrations preserve all existing IDs, numbers, public IDs and playback versions. They do not set a default, assign any existing row, enforce `NOT NULL`, add a cross-service FK, or change existing columns. No migration was run. No production or Surveillance database was accessed.
+
+Each service keeps its own Flyway history (`flyway_camera_schema_history`, `flyway_stream_schema_history`; identity-service separately owns `flyway_identity_schema_history`). In Streaming Compose, camera and stream services wait for healthy identity-service so the identity schema is initialized before tenant membership queries. Their ownership migrations are service-local and have no dependency on each other's tables; no central always-on migration service was added. Before production rollout, still establish a release-time migration order, isolated backup/restore evidence, and least-privilege runtime/migration DB roles.
+
+The existing Streaming database is isolated from Surveillance. Newly created rows through OIDC Camera APIs are assigned from verified `TenantContext`; Broadcast tenant is copied from its authorized Camera. Existing nullable rows, including preexisting Broadcasts, remain inaccessible to SaaS users until an explicit operator-reviewed mapping and backfill is approved. A tenant UUID supplied in a request body is ignored/not accepted as ownership.
+
+Do not apply these migrations to an existing database as part of application startup. First verify target URL, database, schema, role and backup. Migration execution, data inventory, backfill, constraints and rollback remain separate operator-reviewed actions.
+
+## Staged rollout still required
+
+1. Apply additive migrations only to a disposable Streaming database; verify the Flyway history and indexes.
+2. Read-only inventory existing Cameras, Broadcasts and leases, including orphan/duplicate relationship checks.
+3. Keep all unknown ownership null and inaccessible; prepare an evidence-backed, reviewed mapping outside source control.
+4. Backfill only explicitly approved rows in resumable audited batches. Re-run read-only counts and tenant-parent consistency checks.
+5. Add tenant-qualified uniqueness/composite FK constraints only after owner mapping is complete; introduce `NOT NULL` only for tables whose legacy contract permits it.
+6. Evaluate transaction-local RLS with restricted non-owner roles and connection-pool tests as defense in depth. Application authorization remains mandatory.
+7. Take and restore-test backups before every ownership-changing rollout. After tenant writes begin, prefer forward repair or a verified restore over dropping columns.
+
+## Phase 3.2A — Identity foundation migration status (history)
 
 Identity-service now owns an additive Flyway migration at `services/identity-service/src/main/resources/db/migration/V1__identity_foundation.sql`. It creates only `identity.users`, `identity.tenants`, fixed `identity.roles`, and `identity.tenant_memberships`, with issuer+subject uniqueness, status/role constraints, foreign keys and membership lookup index. It runs in the isolated Streaming PostgreSQL database with history table `flyway_identity_schema_history`; Keycloak has a separate database and volume. Runtime and migration credentials are not yet separated, which must be corrected before a production deployment.
 

@@ -8,6 +8,7 @@ import com.coltrack.cameraservice.entity.RtspUrlFormat;
 import com.coltrack.cameraservice.entity.VideoProcessingMode;
 import com.coltrack.cameraservice.dto.CameraConnectionResponse;
 import com.coltrack.cameraservice.repository.CameraRepository;
+import com.coltrack.cameraservice.repository.CameraDeletionTombstoneRepository;
 
 import com.coltrack.cameraservice.repository.LbsLocationRepository;
 import com.coltrack.events.CameraDeletedEvent;
@@ -22,6 +23,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -37,6 +44,9 @@ public class CameraService {
     private final CameraCredentialsCipher credentialsCipher;
     private final RtspUrlResolver rtspUrlResolver;
 
+    @Autowired(required = false)
+    private CameraDeletionTombstoneRepository deletionTombstones;
+
     public CameraEntity create(
             String name,
             UUID lbsLocationId,
@@ -46,6 +56,22 @@ public class CameraService {
             RtspUrlFormat rtspUrlFormat,
             VideoProcessingMode videoProcessingMode,
             boolean autoStart
+    ) {
+
+        return create(name, lbsLocationId, rtspUrl, rtspUsername, rtspPassword,
+                rtspUrlFormat, videoProcessingMode, autoStart, null);
+    }
+
+    public CameraEntity create(
+            String name,
+            UUID lbsLocationId,
+            String rtspUrl,
+            String rtspUsername,
+            String rtspPassword,
+            RtspUrlFormat rtspUrlFormat,
+            VideoProcessingMode videoProcessingMode,
+            boolean autoStart,
+            UUID tenantId
     ) {
 
         LbsLocationEntity lbsLocation = null;
@@ -66,6 +92,7 @@ public class CameraService {
         CameraEntity camera =
                 CameraEntity.builder()
                         .id(UUID.randomUUID())
+                        .tenantId(tenantId)
                         .cameraNumber(
                                 repository.nextCameraNumber()
                         )
@@ -94,7 +121,8 @@ public class CameraService {
                         "",//camera.getLocation(),
                         camera.getRtspUrl(),
                         camera.isAutoStart(),
-                        camera.getCreatedAt()
+                        camera.getCreatedAt(),
+                        camera.getTenantId()
                 )
         );
 
@@ -105,6 +133,10 @@ public class CameraService {
     public Page<CameraEntity> findAll(Pageable pageable) {
 
         return repository.findAll(pageable);
+    }
+
+    public Page<CameraEntity> findAll(UUID tenantId, Pageable pageable) {
+        return repository.findAllByTenantId(tenantId, pageable);
     }
 
     public CameraEntity findById(
@@ -119,6 +151,15 @@ public class CameraService {
 
     }
 
+    public CameraEntity findById(UUID id, UUID tenantId) {
+        return repository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+    }
+
+    public java.util.Optional<CameraEntity> findOptionalById(UUID id) {
+        return repository.findById(id);
+    }
+
     public CameraEntity update(
             UUID id,
             String name,
@@ -130,9 +171,25 @@ public class CameraService {
             VideoProcessingMode videoProcessingMode
     ) {
 
+        return update(id, name, lbsLocationId, rtspUrl, rtspUsername, rtspPassword,
+                rtspUrlFormat, videoProcessingMode, null);
+    }
+
+    public CameraEntity update(
+            UUID id,
+            String name,
+            UUID lbsLocationId,
+            String rtspUrl,
+            String rtspUsername,
+            String rtspPassword,
+            RtspUrlFormat rtspUrlFormat,
+            VideoProcessingMode videoProcessingMode,
+            UUID tenantId
+    ) {
+
 
         CameraEntity camera =
-                findById(id);
+                tenantId == null ? findById(id) : findById(id, tenantId);
 
 
         LbsLocationEntity lbsLocation = null;
@@ -177,7 +234,8 @@ public class CameraService {
                                 ? lbsLocation.getName()
                                 : null,
                         camera.getRtspUrl(),
-                        Instant.now()
+                        Instant.now(),
+                        camera.getTenantId()
                 )
         );
 
@@ -194,20 +252,38 @@ public class CameraService {
         );
     }
 
+    public CameraConnectionResponse connection(UUID id, UUID tenantId) {
+        CameraEntity camera = findById(id, tenantId);
+        return new CameraConnectionResponse(camera.getId(), rtspUrlResolver.resolve(camera),
+                camera.getVideoProcessingMode());
+    }
+
+    @Transactional
     public void delete(UUID id) {
+        deleteAndPublish(findById(id));
+    }
 
-        CameraEntity camera = findById(id);
+    @Transactional
+    public void delete(UUID id, UUID tenantId) {
+        deleteAndPublish(findById(id, tenantId));
+    }
 
+    private void deleteAndPublish(CameraEntity camera) {
+        Instant deletedAt = Instant.now();
+        if (deletionTombstones != null) deletionTombstones.save(camera.getId(), camera.getTenantId(), deletedAt);
+        else if (camera.getTenantId() != null) {
+            throw new IllegalStateException("Camera deletion tombstone store is required for tenant-owned Cameras");
+        }
         repository.delete(camera);
-
-        kafkaTemplate.send(
-                KafkaTopics.CAMERA_EVENTS,
-                id.toString(),
-                new CameraDeletedEvent(
-                        id,
-                        Instant.now()
-                )
-        );
+        Runnable publish = () -> kafkaTemplate.send(KafkaTopics.CAMERA_EVENTS, camera.getId().toString(),
+                new CameraDeletedEvent(camera.getId(), deletedAt, camera.getTenantId()));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { publish.run(); }
+            });
+        } else {
+            publish.run();
+        }
     }
 
     public CameraEntity heartbeat(UUID id) {
@@ -231,6 +307,16 @@ public class CameraService {
                 )
         );
 
+        return camera;
+    }
+
+    public CameraEntity heartbeat(UUID id, UUID tenantId) {
+        CameraEntity camera = findById(id, tenantId);
+        Instant now = Instant.now();
+        camera.setStatus(CameraStatus.ONLINE);
+        camera.setLastHeartbeat(now);
+        repository.save(camera);
+        kafkaTemplate.send(KafkaTopics.CAMERA_HEARTBEAT, id.toString(), new CameraHeartbeatEvent(id, now));
         return camera;
     }
 }

@@ -14,6 +14,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.coltrack.streamservice.model.StreamStatus;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import static org.mockito.Mockito.*;
 
@@ -68,6 +69,21 @@ class BroadcastServiceTest {
 
         org.junit.jupiter.api.Assertions.assertThrows(BroadcastService.PrivateBroadcastException.class,
                 () -> service.playbackToken(broadcast.publicId()));
+    }
+
+    @Test
+    void legacySurveillanceStillAllowsEnabledPublicBroadcastPlayback() {
+        BroadcastRepository repository = mock(BroadcastRepository.class);
+        PlaybackTokenService tokenService = mock(PlaybackTokenService.class);
+        BroadcastProperties properties = new BroadcastProperties();
+        Broadcast broadcast = new Broadcast(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                BroadcastVisibility.PUBLIC, true, 2, Instant.now(), Instant.now());
+        when(repository.findByPublicId(broadcast.publicId())).thenReturn(Optional.of(broadcast));
+        when(tokenService.issue(eq(broadcast.id()), eq(2L), any(), isNull(), isNull())).thenReturn("legacy-token");
+        BroadcastService service = new BroadcastService(repository, mock(CameraClient.class),
+                mock(StreamManager.class), tokenService, properties);
+
+        assertEquals("legacy-token", service.playbackToken(broadcast.publicId()).token());
     }
 
     private static Broadcast broadcast(UUID id, UUID cameraId, boolean enabled, Instant now) {

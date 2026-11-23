@@ -31,13 +31,13 @@ public class StreamEventConsumer {
     ) {
 
         Object event = record.value();
-
-
-        log.info(
-                "Stream event received offset={} event={}",
-                record.offset(),
-                event
-        );
+        Object cameraId = event instanceof StreamStartedEvent e ? e.cameraId()
+                : event instanceof StreamStoppedEvent e ? e.cameraId()
+                : event instanceof StreamFailedEvent e ? e.cameraId()
+                : event instanceof StreamReconnectingEvent e ? e.cameraId()
+                : event instanceof StreamRecoveredEvent e ? e.cameraId() : "unknown";
+        log.info("Stream event received offset={} type={} cameraId={}", record.offset(),
+                event.getClass().getSimpleName(), cameraId);
 
 
         if (event instanceof StreamStartedEvent started) {
@@ -117,10 +117,9 @@ public class StreamEventConsumer {
          * Поэтому логическую запись здесь не останавливаем.
          */
         log.warn(
-                "Stream failed temporarily camera={} reason={}; " +
+                "Stream failed temporarily camera={}; " +
                         "recording worker will reconnect independently",
-                event.cameraId(),
-                event.reason()
+                event.cameraId()
         );
     }
 }

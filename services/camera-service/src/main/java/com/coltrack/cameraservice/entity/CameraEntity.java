@@ -30,6 +30,10 @@ public class CameraEntity {
     @Id
     private UUID id;
 
+    @Column(name = "tenant_id")
+    @JsonIgnore
+    private UUID tenantId;
+
     @Column(
             name = "camera_number",
             nullable = false,

@@ -36,7 +36,10 @@ public class StreamingSecurityConfiguration {
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .pathMatchers("/api/playback/**", "/broadcast-play/**").permitAll()
-                        .pathMatchers("/media-hls/**", "/hls/**", "/ws", "/ws/**").denyAll()
+                        // Browser WebSocket APIs cannot set an HTTP Authorization header;
+                        // STOMP CONNECT is authenticated and tenant-scoped by websocket-service.
+                        .pathMatchers("/ws", "/ws/**").permitAll()
+                        .pathMatchers("/media-hls/**", "/hls/**").denyAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))
                 .build();

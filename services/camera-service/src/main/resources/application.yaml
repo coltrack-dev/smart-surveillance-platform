@@ -37,6 +37,16 @@ environment:
 server:
   port: 8091
 
+app:
+  security:
+    mode: ${APP_SECURITY_MODE:legacy}
+    oidc:
+      issuer-uri: ${APP_SECURITY_OIDC_ISSUER_URI:}
+      jwk-set-uri: ${APP_SECURITY_OIDC_JWK_SET_URI:}
+      audience: ${APP_SECURITY_OIDC_AUDIENCE:}
+    internal:
+      workload-secret: ${STREAMING_INTERNAL_JWT_SECRET:}
+
 camera:
   credentials:
     key: ${CAMERA_CREDENTIALS_KEY:}

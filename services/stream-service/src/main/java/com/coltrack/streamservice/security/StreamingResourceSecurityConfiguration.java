@@ -31,6 +31,7 @@ public class StreamingResourceSecurityConfiguration {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/playback/**", "/broadcast-play/**").permitAll()
+                        .requestMatchers("/hls/**", "/ws", "/ws/**").denyAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))

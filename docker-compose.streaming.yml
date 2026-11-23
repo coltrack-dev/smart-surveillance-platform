@@ -141,9 +141,16 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:?Set a base64 encoded 32-byte key}
+      APP_SECURITY_MODE: oidc
+      APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+      APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
+      APP_SECURITY_OIDC_AUDIENCE: streaming-api
+      STREAMING_INTERNAL_JWT_SECRET: ${STREAMING_INTERNAL_JWT_SECRET:?Set a base64 encoded 32-byte internal service key}
       JAVA_OPTS: ${CAMERA_JAVA_OPTS:--Xms128m -Xmx384m}
     depends_on:
       streaming-postgres:
+        condition: service_healthy
+      identity-service:
         condition: service_healthy
       kafka:
         condition: service_started
@@ -166,6 +173,7 @@ services:
       APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
       APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
       APP_SECURITY_OIDC_AUDIENCE: streaming-api
+      STREAMING_INTERNAL_JWT_SECRET: ${STREAMING_INTERNAL_JWT_SECRET:?Set a base64 encoded 32-byte internal service key}
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_HLS_PATH: /data/hls
       STREAM_INGEST_AGENT_ENABLED: "true"
@@ -186,6 +194,8 @@ services:
       - streaming-hls-data:/data/hls
     depends_on:
       streaming-postgres:
+        condition: service_healthy
+      identity-service:
         condition: service_healthy
       kafka:
         condition: service_started
@@ -220,6 +230,11 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8099/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   websocket-service:
@@ -232,9 +247,23 @@ services:
     image: surveillance/websocket-service:streaming
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
+      SPRING_DATASOURCE_USERNAME: streaming
+      SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+      APP_SECURITY_MODE: oidc
+      APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+      APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
+      APP_SECURITY_OIDC_AUDIENCE: streaming-api
+      APP_WEBSOCKET_ALLOWED_ORIGINS: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
       JAVA_OPTS: ${WEBSOCKET_JAVA_OPTS:--Xms96m -Xmx256m}
     depends_on:
       kafka:
+        condition: service_started
+      streaming-postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      camera-service:
         condition: service_started
     restart: unless-stopped
 
@@ -261,12 +290,18 @@ services:
     ports:
       - "${STREAMING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STREAMING_GATEWAY_PORT:-8081}:8080"
     depends_on:
-      - camera-service
-      - stream-service
-      - websocket-service
-      - identity-service
-      - keycloak
-      - mediamtx
+      camera-service:
+        condition: service_started
+      stream-service:
+        condition: service_started
+      websocket-service:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+      identity-service:
+        condition: service_healthy
     restart: unless-stopped
 
   broadcast-player:

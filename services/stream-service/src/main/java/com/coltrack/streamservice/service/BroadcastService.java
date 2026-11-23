@@ -6,6 +6,10 @@ import com.coltrack.streamservice.model.Broadcast;
 import com.coltrack.streamservice.model.BroadcastVisibility;
 import com.coltrack.streamservice.repository.BroadcastRepository;
 import com.coltrack.streamservice.service.StreamManager;
+import com.coltrack.identity.model.TenantMembership;
+import com.coltrack.identity.security.JdbcTenantMembershipResolver;
+import com.coltrack.identity.security.TenantContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -21,15 +25,24 @@ public class BroadcastService {
     private final StreamManager streamManager;
     private final PlaybackTokenService tokens;
     private final BroadcastProperties properties;
+    private final JdbcTenantMembershipResolver membershipResolver;
 
+    @Autowired
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
-                            BroadcastProperties properties) {
+                            BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver) {
         this.repository = repository;
         this.cameraClient = cameraClient;
         this.streamManager = streamManager;
         this.tokens = tokens;
         this.properties = properties;
+        this.membershipResolver = membershipResolver;
+    }
+
+    public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
+                            StreamManager streamManager, PlaybackTokenService tokens,
+                            BroadcastProperties properties) {
+        this(repository, cameraClient, streamManager, tokens, properties, null);
     }
 
     public synchronized Broadcast create(UUID cameraId) {
@@ -47,16 +60,42 @@ public class BroadcastService {
         });
     }
 
+    public synchronized Broadcast create(UUID cameraId, UUID tenantId, BroadcastVisibility visibility) {
+        Optional<Broadcast> existingForTenant = repository.findByCamera(cameraId, tenantId);
+        if (existingForTenant.isPresent()) return existingForTenant.get();
+        // The camera_id unique constraint may find a legacy/unassigned or inconsistent row.
+        // Never claim it for a tenant or leak which tenant owns it.
+        if (repository.findByCamera(cameraId).isPresent()) throw new BroadcastNotFoundException(cameraId);
+        try {
+            cameraClient.connection(cameraId, tenantId); // signed workload context verifies camera ownership
+            return repository.create(UUID.randomUUID(), cameraId, UUID.randomUUID(), visibility, tenantId, Instant.now());
+        } catch (DuplicateKeyException race) {
+            return repository.findByCamera(cameraId, tenantId).orElseThrow(() -> new BroadcastNotFoundException(cameraId));
+        }
+    }
+
     public Broadcast get(UUID id) {
         return repository.find(id).orElseThrow(() -> new BroadcastNotFoundException(id));
+    }
+
+    public Broadcast get(UUID id, UUID tenantId) {
+        return repository.find(id, tenantId).orElseThrow(() -> new BroadcastNotFoundException(id));
     }
 
     public List<Broadcast> list() {
         return repository.findAll();
     }
 
+    public List<Broadcast> list(UUID tenantId) {
+        return repository.findAll(tenantId);
+    }
+
     public Optional<Broadcast> findByCamera(UUID cameraId) {
         return repository.findByCamera(cameraId);
+    }
+
+    public Optional<Broadcast> findByCamera(UUID cameraId, UUID tenantId) {
+        return repository.findByCamera(cameraId, tenantId);
     }
 
     public synchronized Broadcast setEnabled(UUID id, boolean enabled) {
@@ -77,9 +116,30 @@ public class BroadcastService {
         return get(id);
     }
 
+    public synchronized Broadcast setEnabled(UUID id, UUID tenantId, boolean enabled) {
+        Broadcast current = get(id, tenantId);
+        if (current.enabled() == enabled) {
+            if (enabled) acquireBroadcastLease(current);
+            return get(id, tenantId);
+        }
+        if (enabled) {
+            Broadcast updated = repository.setEnabled(id, tenantId, true, Instant.now());
+            acquireBroadcastLease(updated);
+            return get(id, tenantId);
+        }
+        repository.setEnabled(id, tenantId, false, Instant.now());
+        streamManager.release(current.cameraId(), tenantId, broadcastConsumerId(id));
+        return get(id, tenantId);
+    }
+
     public synchronized Broadcast setVisibility(UUID id, BroadcastVisibility visibility) {
         get(id);
         return repository.setVisibility(id, visibility, Instant.now());
+    }
+
+    public synchronized Broadcast setVisibility(UUID id, UUID tenantId, BroadcastVisibility visibility) {
+        get(id, tenantId);
+        return repository.setVisibility(id, tenantId, visibility, Instant.now());
     }
 
     public synchronized void delete(UUID id) {
@@ -89,8 +149,19 @@ public class BroadcastService {
         streamManager.release(current.cameraId(), broadcastConsumerId(id));
     }
 
+    public synchronized void delete(UUID id, UUID tenantId) {
+        Broadcast current = repository.find(id, tenantId).orElse(null);
+        if (current == null) throw new BroadcastNotFoundException(id);
+        repository.delete(id, tenantId);
+        streamManager.release(current.cameraId(), tenantId, broadcastConsumerId(id));
+    }
+
     public synchronized void deleteForCamera(UUID cameraId) {
         repository.findByCamera(cameraId).ifPresent(broadcast -> delete(broadcast.id()));
+    }
+
+    public synchronized void deleteForCamera(UUID cameraId, UUID tenantId) {
+        repository.findByCamera(cameraId, tenantId).ifPresent(broadcast -> delete(broadcast.id(), tenantId));
     }
 
     public PlaybackInfo playbackInfo(UUID id) {
@@ -100,27 +171,69 @@ public class BroadcastService {
                 player, "<iframe src=\"" + player + "?embed=1\" title=\"Live broadcast\" referrerpolicy=\"no-referrer\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen loading=\"lazy\"></iframe>");
     }
 
+    public PlaybackInfo playbackInfo(UUID id, UUID tenantId) {
+        return playbackInfo(get(id, tenantId));
+    }
+
+    private PlaybackInfo playbackInfo(Broadcast broadcast) {
+        String player = properties.getPlayerBaseUrl() + "/" + broadcast.publicId();
+        return new PlaybackInfo(broadcast.publicId(), broadcast.visibility(), broadcast.enabled(),
+                player, "<iframe src=\"" + player + "?embed=1\" title=\"Live broadcast\" referrerpolicy=\"no-referrer\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen loading=\"lazy\"></iframe>");
+    }
+
     public PlaybackToken playbackToken(UUID publicId) {
         Broadcast broadcast = repository.findByPublicId(publicId).orElseThrow(() -> new BroadcastNotFoundException(publicId));
+        if (membershipResolver != null && broadcast.tenantId() == null) throw new BroadcastNotFoundException(publicId);
         if (broadcast.visibility() != BroadcastVisibility.PUBLIC) throw new PrivateBroadcastException();
         if (!broadcast.enabled()) throw new BroadcastOfflineException();
         Instant expiresAt = Instant.now().plus(properties.getPlaybackTtl());
-        String token = tokens.issue(broadcast.id(), broadcast.playbackVersion(), expiresAt);
+        String token = tokens.issue(broadcast.id(), broadcast.playbackVersion(), expiresAt, broadcast.tenantId(), null);
         String playlist = "/broadcast-play/" + publicId + "/index.m3u8?token=" + token;
         return new PlaybackToken(expiresAt, token, playlist);
     }
 
+    public PlaybackToken playbackToken(UUID publicId, TenantContext viewer) {
+        Broadcast broadcast = repository.findByPublicId(publicId).orElseThrow(() -> new BroadcastNotFoundException(publicId));
+        if (!broadcast.enabled()) throw new BroadcastOfflineException();
+        if (broadcast.visibility() == BroadcastVisibility.PUBLIC) return playbackToken(publicId);
+        if (viewer == null || broadcast.tenantId() == null || !broadcast.tenantId().equals(viewer.tenantId())
+                || membershipResolver == null
+                || !membershipResolver.hasPermission(viewer.userId(), viewer.tenantId(), "playback.view")) {
+            throw new PrivateBroadcastException();
+        }
+        Instant expiresAt = Instant.now().plus(properties.getPlaybackTtl());
+        String token = tokens.issue(broadcast.id(), broadcast.playbackVersion(), expiresAt,
+                broadcast.tenantId(), viewer.userId());
+        return new PlaybackToken(expiresAt, token,
+                "/broadcast-play/" + publicId + "/index.m3u8?token=" + token);
+    }
+
     public Broadcast authorizePlayback(UUID publicId, String token, Instant now) {
         Broadcast broadcast = repository.findByPublicId(publicId).orElseThrow(() -> new BroadcastNotFoundException(publicId));
-        if (broadcast.visibility() != BroadcastVisibility.PUBLIC || !broadcast.enabled()
-                || !tokens.isValid(token, broadcast.id(), broadcast.playbackVersion(), now)) {
+        var grant = tokens.verify(token, now).orElseThrow(PrivateBroadcastException::new);
+        if (!broadcast.enabled() || !grant.broadcastId().equals(broadcast.id())
+                || grant.playbackVersion() != broadcast.playbackVersion()) {
+            throw new PrivateBroadcastException();
+        }
+        if (broadcast.visibility() == BroadcastVisibility.PUBLIC) {
+            if ((membershipResolver != null && broadcast.tenantId() == null)
+                    || (broadcast.tenantId() != null && !broadcast.tenantId().equals(grant.tenantId()))) {
+                throw new PrivateBroadcastException();
+            }
+        } else if (broadcast.tenantId() == null || !broadcast.tenantId().equals(grant.tenantId())
+                || grant.userId() == null || membershipResolver == null
+                || !membershipResolver.hasPermission(grant.userId(), grant.tenantId(), "playback.view")) {
             throw new PrivateBroadcastException();
         }
         return broadcast;
     }
 
     private void acquireBroadcastLease(Broadcast broadcast) {
-        streamManager.acquire(broadcast.cameraId(), broadcastConsumerId(broadcast.id()), "BROADCAST");
+        if (broadcast.tenantId() == null) {
+            streamManager.acquire(broadcast.cameraId(), broadcastConsumerId(broadcast.id()), "BROADCAST");
+        } else {
+            streamManager.acquire(broadcast.cameraId(), broadcast.tenantId(), broadcastConsumerId(broadcast.id()), "BROADCAST");
+        }
     }
 
     private String broadcastConsumerId(UUID id) { return "broadcast:" + id; }

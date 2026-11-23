@@ -3,6 +3,9 @@ package com.coltrack.streamservice.controller;
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
+import com.coltrack.identity.security.AuthenticatedPrincipal;
+import com.coltrack.identity.security.TenantAuthorization;
+import com.coltrack.identity.security.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -11,6 +14,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
@@ -29,11 +34,20 @@ public class BroadcastPlaybackController {
     private final BroadcastProperties properties;
     private final BroadcastRateLimiter rateLimiter;
     private final RestClient.Builder restClientBuilder;
+    private final TenantAuthorization tenantAuthorization;
 
     @GetMapping("/api/playback/{publicId}/token")
-    public BroadcastService.PlaybackToken issueToken(@PathVariable UUID publicId, HttpServletRequest request) {
+    public BroadcastService.PlaybackToken issueToken(@PathVariable UUID publicId, HttpServletRequest request,
+                                                     @AuthenticationPrincipal Jwt jwt,
+                                                     @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant) {
         checkRateLimit("token:", request);
-        return broadcastService.playbackToken(publicId);
+        if (jwt == null || selectedTenant == null) return broadcastService.playbackToken(publicId);
+        try {
+            TenantContext context = tenantAuthorization.require(principal(jwt), selectedTenant, "playback.view");
+            return broadcastService.playbackToken(publicId, context);
+        } catch (TenantAuthorization.TenantMembershipRequiredException | TenantAuthorization.TenantPermissionDeniedException e) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
     }
 
     @GetMapping("/broadcast-play/{publicId}/{fileName}")
@@ -124,6 +138,12 @@ public class BroadcastPlaybackController {
 
     private static String trimSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private static AuthenticatedPrincipal principal(Jwt jwt) {
+        return new AuthenticatedPrincipal(jwt.getIssuer().toString(), jwt.getSubject(),
+                jwt.getClaimAsString("email"), Boolean.TRUE.equals(jwt.getClaim("email_verified")),
+                jwt.getClaimAsString("name"));
     }
 
     @ExceptionHandler(BroadcastService.PrivateBroadcastException.class)

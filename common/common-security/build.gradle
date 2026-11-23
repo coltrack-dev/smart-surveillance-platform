@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api 'org.springframework.security:spring-security-oauth2-jose'
+    api 'org.springframework:spring-jdbc'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

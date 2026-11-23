@@ -1,18 +1,28 @@
 # Phase 3.1 — Tenant data model and isolation
 
+## Phase 3.2B implementation status (2026-11-23)
+
+Camera, Broadcast and stream-consumer lease now have nullable `tenant_id` columns in additive service-owned migrations. Camera CRUD and check-stream operations in Streaming OIDC mode resolve membership and role from validated issuer+subject plus the selected tenant, then use tenant-qualified repository lookup. Broadcast ownership is derived from the authorized Camera and cannot be supplied by the browser. Stream management resolves the Camera through the signed service-to-service tenant delegation before changing a tenant lease. A missing tenant owner is never found by these scoped lookups; there is no default tenant or automatic backfill.
+
+The migration files are `camera-service V2` and `stream-service V3`. They have **not** been applied to any database. Their columns remain nullable and there are no cross-schema foreign keys yet. Surveillance continues through the legacy unscoped code path in its trusted deployment. Stream sessions remain one per globally unique Camera ID; leases are tenant-qualified and stopping one consumer leaves other leases intact.
+
+Internal Stream-to-Camera requests use a short-lived HS256 workload JWT with fixed issuer/audience and a signed `tenant_id` claim. Camera ignores request tenant headers on `/internal/cameras/**` and scopes metadata/connection reads by the verified claim. Browser JWTs are not sent to Rust ingest-agent. Camera deletion events include tenant context; Streaming ignores legacy unscoped delete events rather than performing global cleanup. The stream management response omits internal HLS URL and error diagnostics in OIDC mode.
+
+**Not yet complete:** tenant provisioning and membership administration, a complete HTTP/controller authorization matrix (especially Camera update/delete/check/list cases), WebSocket tenant authorization/fanout, tenant context on Stream status events, full Kafka event credential cleanup, Recording/Analytics ownership, DB role separation/RLS, owner-approved backfill, and production public-ingress review. LBS/category references are not tenant-owned in this phase. Streaming stays private.
+
 ## Phase 3.2A implementation note
 
-The isolated Streaming database now has the identity schema described below and `common-security` defines User, Tenant, TenantMembership, Role and authorization interfaces. This does not change Camera, Broadcast, Stream lease, Recording or Analytics schemas; those records still have no tenant owner. The identity migration is implemented but was not executed during this phase. See `TENANT_MIGRATION_PLAN.md` and `PHASE_3_2A_VALIDATION.md`.
+At the end of Phase 3.2A, the isolated Streaming database had the identity schema described below, while Camera, Broadcast and Stream lease did not yet have owner columns. That historical status is superseded by the Phase 3.2B status above. The identity migration remains unexecuted; see `TENANT_MIGRATION_PLAN.md` and `PHASE_3_2A_VALIDATION.md`.
 
 ## Current domain
 
-Camera is the camera-service authoritative model: UUID, globally unique camera_number, name, RTSP address/username/encrypted password, processing mode, status, autoStart, heartbeat, category and optional LBS. It has no owner tenant. Camera JSON ignores credential fields, but the API has no authorization.
+Camera is the camera-service authoritative model: UUID, globally unique camera_number, name, RTSP address/username/encrypted password, processing mode, status, autoStart, heartbeat, category and optional LBS. Its owner is nullable during compatibility rollout. In Streaming, only a selected active membership can access a matching non-null `tenant_id`; Surveillance retains its trusted legacy API.
 
 Stream is runtime state keyed by Camera UUID. StreamManager sessions and durable stream_consumer_leases coordinate shared ingest; Stream must not become a duplicate camera model. Broadcast is a stream-service JDBC row with camera_id, public_id, visibility, enabled, playback_version and timestamps. Current Broadcast migrations add no camera FK or tenant owner. Recording and Analytics rows refer to camera/resource IDs without tenant ownership. Each service has its own Flyway history; services may point to one PostgreSQL database.
 
 ## Ownership invariant
 
-Each SaaS Camera has exactly one immutable tenant owner. Stream inherits tenant through Camera. Broadcast must have the same tenant as its Camera. Ownership transfer is an audited workflow, never a normal update. A missing/unassigned owner is inaccessible from tenant APIs. Do not infer ownership from a UUID, camera number, RTSP host or public ID.
+Each assigned SaaS Camera has exactly one immutable tenant owner. Stream inherits tenant through Camera. Broadcast must have the same tenant as its Camera. Current owner columns are nullable for legacy compatibility; no ownership transfer or backfill workflow exists yet. A missing/unassigned owner is inaccessible from tenant APIs. Do not infer ownership from a UUID, camera number, RTSP host or public ID.
 
 Recording sessions, objects, analytics jobs/events, exports and cleanup tasks inherit ownership from their Camera or parent. Child records must not be queried without tenant-qualified parent scope. Shared physical source across tenants is unsupported until an explicit sharing model exists.
 

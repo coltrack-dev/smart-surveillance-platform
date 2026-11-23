@@ -5,6 +5,7 @@ import com.coltrack.streamservice.model.Broadcast;
 import com.coltrack.streamservice.model.BroadcastVisibility;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
+import com.coltrack.identity.security.TenantAuthorization;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -84,7 +85,8 @@ class BroadcastPlaybackControllerTest {
         });
 
         BroadcastPlaybackController controller = new BroadcastPlaybackController(
-                service, properties, new BroadcastRateLimiter(), builder);
+                service, properties, new BroadcastRateLimiter(), builder,
+                new TenantAuthorization((principal, tenant) -> java.util.Optional.empty(), (principal, tenant, permission) -> false));
         ExecutorService workers = Executors.newFixedThreadPool(32);
         try {
             List<Future<Integer>> requests = new ArrayList<>();

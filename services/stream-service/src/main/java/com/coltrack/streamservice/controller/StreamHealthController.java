@@ -3,11 +3,20 @@ package com.coltrack.streamservice.controller;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.model.StreamStatus;
 import com.coltrack.streamservice.service.StreamManager;
+import com.coltrack.streamservice.client.CameraClient;
+import com.coltrack.identity.security.AuthenticatedPrincipal;
+import com.coltrack.identity.security.TenantAuthorization;
+import com.coltrack.identity.security.TenantContext;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -24,6 +33,10 @@ public class StreamHealthController {
 
 
     private final StreamManager streamManager;
+    private final CameraClient cameraClient;
+    private final TenantAuthorization tenantAuthorization;
+    @Value("${app.security.mode:legacy}")
+    private String securityMode;
 
 
     /**
@@ -36,8 +49,25 @@ public class StreamHealthController {
      */
     @GetMapping("/{cameraId}/health")
     public Map<String, Object> health(
-            @PathVariable UUID cameraId
+            @PathVariable UUID cameraId,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant
     ) {
+
+        if ("oidc".equalsIgnoreCase(securityMode)) {
+            if (jwt == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+            if (selectedTenant == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "X-Tenant-ID is required");
+            try {
+                tenantAuthorization.require(new AuthenticatedPrincipal(jwt.getIssuer().toString(), jwt.getSubject(),
+                        jwt.getClaimAsString("email"), Boolean.TRUE.equals(jwt.getClaim("email_verified")),
+                        jwt.getClaimAsString("name")), selectedTenant, "camera.read");
+                cameraClient.findById(cameraId, selectedTenant);
+            } catch (TenantAuthorization.TenantMembershipRequiredException e) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+            } catch (TenantAuthorization.TenantPermissionDeniedException e) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            }
+        }
 
         log.info(
                 "Checking stream health camera={}",

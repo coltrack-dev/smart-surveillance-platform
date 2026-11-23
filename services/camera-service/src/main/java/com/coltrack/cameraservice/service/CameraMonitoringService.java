@@ -5,6 +5,8 @@ import com.coltrack.cameraservice.entity.CameraStatus;
 import com.coltrack.cameraservice.repository.CameraRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -48,6 +50,15 @@ public class CameraMonitoringService {
 
         return repository.save(camera);
 
+    }
+
+    public CameraEntity checkCamera(UUID id, UUID tenantId) {
+        CameraEntity camera = repository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        boolean online = checker.check(rtspUrlResolver.resolve(camera));
+        camera.setStatus(online ? CameraStatus.ONLINE : CameraStatus.ERROR);
+        camera.setLastHeartbeat(Instant.now());
+        return repository.save(camera);
     }
 
 

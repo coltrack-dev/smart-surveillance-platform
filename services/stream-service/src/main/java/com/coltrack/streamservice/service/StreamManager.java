@@ -25,6 +25,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -68,6 +69,8 @@ public class StreamManager implements StreamListener {
     //private final StreamEventPublisher streamWebSocketPublisher;
     private final StreamWebSocketPublisher streamWebSocketPublisher;
     private final StreamConsumerLeaseRepository leaseRepository;
+    @Value("${app.security.mode:legacy}")
+    private String securityMode;
 
     /**
      * Active camera streams.
@@ -91,15 +94,30 @@ public class StreamManager implements StreamListener {
         return acquire(cameraId, LEGACY_CONSUMER_ID, LEGACY_CONSUMER_TYPE);
     }
 
+    public synchronized StreamSession start(UUID cameraId, UUID tenantId) {
+        return acquire(cameraId, tenantId, LEGACY_CONSUMER_ID, LEGACY_CONSUMER_TYPE);
+    }
+
     public synchronized StreamSession acquire(UUID cameraId, String consumerId, String consumerType) {
+        return acquire(cameraId, null, consumerId, consumerType);
+    }
+
+    public synchronized StreamSession acquire(UUID cameraId, UUID tenantId, String consumerId, String consumerType) {
         if (consumerId == null || consumerId.isBlank() || consumerId.length() > 160) {
             throw new IllegalArgumentException("consumerId must contain 1 to 160 characters");
         }
-        leaseRepository.acquire(cameraId, consumerId, consumerType);
-        return ensureWorker(cameraId);
+        if ("oidc".equalsIgnoreCase(securityMode) && tenantId == null) {
+            throw new IllegalStateException("Tenant context is required for Streaming stream leases");
+        }
+        leaseRepository.acquire(cameraId, tenantId, consumerId, consumerType);
+        return ensureWorker(cameraId, tenantId);
     }
 
     private StreamSession ensureWorker(UUID cameraId) {
+        return ensureWorker(cameraId, null);
+    }
+
+    private StreamSession ensureWorker(UUID cameraId, UUID tenantId) {
         StreamSession existing = sessions.get(cameraId);
         if (existing != null) {
             /*
@@ -116,7 +134,9 @@ public class StreamManager implements StreamListener {
             sessions.remove(cameraId);
         }
 
-        CameraConnectionDto camera = cameraClient.connection(cameraId);
+        CameraConnectionDto camera = tenantId == null
+                ? cameraClient.connection(cameraId)
+                : cameraClient.connection(cameraId, tenantId);
         StreamSession session = StreamSession.builder()
                 .cameraId(camera.id())
                 .rtspUrl(camera.rtspUrl())
@@ -162,14 +182,30 @@ public class StreamManager implements StreamListener {
         release(cameraId, LEGACY_CONSUMER_ID);
     }
 
+    public synchronized void stop(UUID cameraId, UUID tenantId) {
+        release(cameraId, tenantId, LEGACY_CONSUMER_ID);
+    }
+
     public synchronized void release(UUID cameraId, String consumerId) {
         leaseRepository.release(cameraId, consumerId);
         if (!leaseRepository.hasConsumers(cameraId)) stopWorker(cameraId);
     }
 
+    public synchronized void release(UUID cameraId, UUID tenantId, String consumerId) {
+        leaseRepository.release(cameraId, tenantId, consumerId);
+        if (!leaseRepository.hasConsumers(cameraId, tenantId) && !leaseRepository.hasConsumers(cameraId)) {
+            stopWorker(cameraId);
+        }
+    }
+
     public synchronized void releaseAll(UUID cameraId) {
         leaseRepository.releaseAll(cameraId);
         stopWorker(cameraId);
+    }
+
+    public synchronized void releaseAll(UUID cameraId, UUID tenantId) {
+        leaseRepository.releaseAll(cameraId, tenantId);
+        if (!leaseRepository.hasConsumers(cameraId)) stopWorker(cameraId);
     }
 
     public synchronized void reconcileAutoStart(UUID cameraId) {
@@ -178,6 +214,17 @@ public class StreamManager implements StreamListener {
             acquire(cameraId, CAMERA_AUTO_START_CONSUMER_ID, CAMERA_AUTO_START_CONSUMER_TYPE);
         } else {
             release(cameraId, CAMERA_AUTO_START_CONSUMER_ID);
+        }
+    }
+
+    public synchronized void reconcileAutoStart(UUID cameraId, UUID tenantId) {
+        CameraDto camera = tenantId == null ? cameraClient.findById(cameraId) : cameraClient.findById(cameraId, tenantId);
+        if (camera.autoStart()) {
+            if (tenantId == null) acquire(cameraId, CAMERA_AUTO_START_CONSUMER_ID, CAMERA_AUTO_START_CONSUMER_TYPE);
+            else acquire(cameraId, tenantId, CAMERA_AUTO_START_CONSUMER_ID, CAMERA_AUTO_START_CONSUMER_TYPE);
+        } else {
+            if (tenantId == null) release(cameraId, CAMERA_AUTO_START_CONSUMER_ID);
+            else release(cameraId, tenantId, CAMERA_AUTO_START_CONSUMER_ID);
         }
     }
 
@@ -231,15 +278,20 @@ public class StreamManager implements StreamListener {
             leaseRepository.reconcileBroadcastLeases();
             Set<UUID> desiredCameras = new HashSet<>();
             for (StreamConsumerLease lease : leaseRepository.findAll()) {
+                if ("oidc".equalsIgnoreCase(securityMode) && lease.tenantId() == null) continue;
                 if (CAMERA_AUTO_START_CONSUMER_TYPE.equals(lease.consumerType())) {
                     try {
-                        CameraDto camera = cameraClient.findById(lease.cameraId());
+                        CameraDto camera = lease.tenantId() == null
+                                ? cameraClient.findById(lease.cameraId())
+                                : cameraClient.findById(lease.cameraId(), lease.tenantId());
                         if (!camera.autoStart()) {
-                            leaseRepository.release(lease.cameraId(), CAMERA_AUTO_START_CONSUMER_ID);
+                            if (lease.tenantId() == null) leaseRepository.release(lease.cameraId(), CAMERA_AUTO_START_CONSUMER_ID);
+                            else leaseRepository.release(lease.cameraId(), lease.tenantId(), CAMERA_AUTO_START_CONSUMER_ID);
                             continue;
                         }
                     } catch (org.springframework.web.client.HttpClientErrorException.NotFound deletedCamera) {
-                        leaseRepository.releaseAll(lease.cameraId());
+                        if (lease.tenantId() == null) leaseRepository.releaseAll(lease.cameraId());
+                        else leaseRepository.releaseAll(lease.cameraId(), lease.tenantId());
                         continue;
                     } catch (RuntimeException cameraServiceError) {
                         log.warn("Could not reconcile camera auto-start lease camera={}", lease.cameraId(), cameraServiceError);
@@ -249,7 +301,7 @@ public class StreamManager implements StreamListener {
                 }
                 desiredCameras.add(lease.cameraId());
                 try {
-                    ensureWorker(lease.cameraId());
+                    ensureWorker(lease.cameraId(), lease.tenantId());
                 } catch (RuntimeException error) {
                     log.warn("Could not reconcile stream lease camera={} consumer={}", lease.cameraId(), lease.consumerId(), error);
                 }
@@ -270,6 +322,17 @@ public class StreamManager implements StreamListener {
         return cameraClient.findAll();
     }
 
+    public Collection<CameraDto> findAvailableCameras(UUID tenantId) {
+        return cameraClient.findAll(tenantId);
+    }
+
+    public Collection<StreamSession> findAll(UUID tenantId) {
+        Set<UUID> cameraIds = new HashSet<>();
+        leaseRepository.findAll(tenantId).forEach(lease -> cameraIds.add(lease.cameraId()));
+        return sessions.entrySet().stream().filter(entry -> cameraIds.contains(entry.getKey()))
+                .map(Map.Entry::getValue).toList();
+    }
+
     /**
      * Called when FFmpeg started successfully.
      * CameraStreamWorker invokes this method.
@@ -287,7 +350,7 @@ public class StreamManager implements StreamListener {
                 new StreamStartedEvent(
                         UUID.randomUUID(),
                         cameraId,
-                        session.getHlsUrl(),
+                        "oidc".equalsIgnoreCase(securityMode) ? null : session.getHlsUrl(),
                         Instant.now()
                 );
 

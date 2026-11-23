@@ -20,6 +20,13 @@ public interface CameraRepository
             CameraStatus status
     );
 
+    org.springframework.data.domain.Page<CameraEntity> findAllByTenantId(
+            UUID tenantId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    Optional<CameraEntity> findByIdAndTenantId(UUID id, UUID tenantId);
+
     @Modifying
     @Query("""
                 update CameraEntity c
@@ -30,6 +37,22 @@ public interface CameraRepository
             """)
     int updateStatus(
             @Param("cameraId") UUID cameraId,
+            @Param("status") CameraStatus status,
+            @Param("reason") String reason,
+            @Param("changedAt") Instant changedAt
+    );
+
+    @Modifying
+    @Query("""
+                update CameraEntity c
+                   set c.status = :status,
+                       c.lastError = :reason,
+                       c.lastStatusChangedAt = :changedAt
+                 where c.id = :cameraId and c.tenantId = :tenantId
+            """)
+    int updateStatus(
+            @Param("cameraId") UUID cameraId,
+            @Param("tenantId") UUID tenantId,
             @Param("status") CameraStatus status,
             @Param("reason") String reason,
             @Param("changedAt") Instant changedAt

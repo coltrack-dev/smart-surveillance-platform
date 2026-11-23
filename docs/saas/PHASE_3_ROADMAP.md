@@ -1,20 +1,18 @@
 # Phase 3 — Roadmap after architecture review
 
-## Phase 3.2A result — OIDC foundation
+## Phase 3.2A result — OIDC foundation (historical; Phase 3.2B status follows)
 
 Implemented: pinned Keycloak development service isolated to Streaming; realm import with public SPA client and PKCE S256; dedicated Keycloak database/volume; dedicated Streaming PostgreSQL database/volume; provider-neutral security interfaces and initial User/Tenant/Membership/Role schema; authenticated identity discovery and membership lookup endpoints; issuer/JWKS/audience JWT validation in gateway, stream-service and identity-service; authenticated Streaming management routes; Vue Keycloak login guard for protected routes; preserved Surveillance legacy security mode. The migration is additive and has not been run against any existing database. See `IDENTITY_ARCHITECTURE.md` and `SECURITY_BOUNDARIES.md`.
 
-Not complete: no tenant provisioning/onboarding API; no role-based authorization in Camera/Stream/Broadcast domain operations; no Camera/Broadcast/Recording/Analytics owner fields or backfill; no OIDC auth on direct internal Camera/WebSocket/agent paths; no authenticated WebSocket support; no private-member playback authorization; no browser login or live Keycloak integration run. Streaming remains loopback-only and is not approved for public ingress.
+At the Phase 3.2A checkpoint these items were incomplete: tenant provisioning/onboarding, resource authorization/ownership, internal service identity, WebSocket authorization and private-member playback. Phase 3.2B progress and remaining gaps are listed below. Streaming remains loopback-only and is not approved for public ingress.
 
-## Phase 3.2B — Tenant-scoped authorization (next)
+## Phase 3.2B — Tenant ownership and scoped APIs (implemented, validation incomplete)
 
-- Add reviewed tenant provisioning/invitation and membership lifecycle operations, with audit and OWNER/ADMIN controls.
-- Add tenant context resolution at the gateway/application boundary from validated issuer+subject and an active membership; never trust a selected tenant ID alone.
-- Implement tenant-scoped Camera, Stream and Broadcast repositories and object-level permission checks, including internal Camera connection lookup.
-- Add resource owner columns through reviewed additive migrations and operator-approved backfill; keep unowned legacy rows inaccessible to SaaS.
-- Wire role evaluator to management permissions and add cross-tenant IDOR tests.
-- Define internal service identity and secure Camera/WebSocket/agent endpoints; keep browser JWT away from ingest-agent.
-- Gate: isolated DB migration, membership authorization, cross-tenant denial, all existing Surveillance behavior preserved.
+Implemented in source: nullable owner columns via Camera V2 and Stream V3 additive Flyway migrations; tenant-scoped Camera CRUD/check/heartbeat; role-aware Camera, Stream and Broadcast API checks; Broadcast owner inherited from Camera; tenant-aware Stream leases and service-owned recovery; signed tenant workload JWT for Camera internal reads; Stream membership recheck for private playback; tenant-scoped Camera deletion event cleanup; legacy Surveillance paths retained. No migration has been executed and no existing row has been assigned a tenant.
+
+Focused tests cover the role matrix, workload JWT validation/header forgery, Camera ownership service, Camera internal workload auth, Stream stop authorization/cross-tenant lookup, Broadcast tenant creation/lookup, private playback membership revocation and tenant-scoped Camera deletion cleanup. See the Phase 3.2B appendix in `docs/TEST_INVENTORY.md` for exact methods/results. No browser E2E, Docker, load, database migration or public-ingress test was run.
+
+Before Phase 3.2C: complete Camera controller tests for list/update/delete/check/start; test anonymous PRIVATE playback and HTTP expiry/tamper/revocation; add Broadcast controller role/IDOR tests; add restart/lease recovery tests against an isolated migrated DB; add tenant context to Stream status Kafka events and WebSocket delivery; verify all OIDC configurations fail closed; decide LBS/category ownership; approve staged migration/backfill and DB grants. Keep Streaming private until these gates pass.
 
 ## Phase 3.1 result
 
@@ -91,3 +89,17 @@ These are future tests, not executed in Phase 3.1. Keep Java methods, parameteri
 ## Pilot exit criteria
 
 Every management/internal route authenticates; every tenant resource operation checks owner/membership; unknown data is quarantined; PUBLIC requires owner consent and PRIVATE denies anonymous; WebSocket and Kafka are tenant-aware; media credentials/path are scoped; no RTSP secret reaches Kafka/browser/logs; rate limits/audit/backup recovery are proven; Surveillance behavior and data remain unchanged; security review approves an exact public route/port allowlist.
+# Phase 3.2C cross-transport gate (2026-11-23)
+
+**Status: BLOCKED; Phase 3.2 is not complete and Streaming is not approved for public ingress.** Focused tests now cover tenant-bound STOMP sessions, membership revocation on outbound frames, persisted-owner Kafka routing, spoofed Camera deletion tenant claims, protected HLS proxy behavior with a mocked upstream, and unassigned legacy ownership rows on isolated PostgreSQL. Additive SQL application and manual reverse DDL rollback with all ownership values NULL passed in the disposable database. Legacy Surveillance unit compatibility and both Compose static configurations passed.
+
+The remaining gate is evidence, not a feature expansion: controller-level IDOR coverage is incomplete for Camera update/delete/list/status, Stream start/read/list, Broadcast list/read/delete/playback-info and lease operations. Live STOMP/Kafka delivery, real MediaMTX HLS token expiry/revocation/cross-tenant denial, Flyway startup/history and rollback after ownership assignment are unverified. Do not expose Streaming publicly or claim Phase 3.2 completion until these checks pass in an isolated environment.
+
+Next sequence:
+
+1. Complete the remaining focused controller tests and run each affected Gradle `Test` task separately with exact filters.
+2. Add a small isolated two-tenant Kafka + WebSocket integration scenario and verify active-session membership revocation.
+3. Add isolated Gateway-to-MediaMTX HLS tests for PUBLIC/PRIVATE, tenant mismatch, expired/tampered grant, disable/delete, membership revocation, segments and keys.
+4. Validate Flyway startup/history and restore behavior against disposable databases seeded from supported legacy schema snapshots; only manual pre-assignment reverse DDL has been verified. Do not run migrations on Surveillance/production databases.
+5. Review all non-Streaming consumers and internal service credentials before enabling SaaS deployments; Recording, Analytics, search and admin/debug surfaces must remain private until tenant-aware.
+6. Only after evidence matrix is all PASS, conduct a separate security review and explicit deployment approval.

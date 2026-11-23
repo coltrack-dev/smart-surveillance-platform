@@ -16,6 +16,13 @@ public record CameraRegisteredEvent(
 
         boolean autoStart,
 
-        Instant createdAt
+        Instant createdAt,
 
-) {}
+        UUID tenantId
+
+) {
+    public CameraRegisteredEvent(UUID cameraId, String name, String location, String rtspUrl,
+                                 boolean autoStart, Instant createdAt) {
+        this(cameraId, name, location, rtspUrl, autoStart, createdAt, null);
+    }
+}

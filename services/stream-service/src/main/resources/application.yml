@@ -91,3 +91,7 @@ app:
       issuer-uri: ${APP_SECURITY_OIDC_ISSUER_URI:}
       jwk-set-uri: ${APP_SECURITY_OIDC_JWK_SET_URI:}
       audience: ${APP_SECURITY_OIDC_AUDIENCE:}
+
+streaming:
+  internal:
+    workload-secret: ${STREAMING_INTERNAL_JWT_SECRET:}

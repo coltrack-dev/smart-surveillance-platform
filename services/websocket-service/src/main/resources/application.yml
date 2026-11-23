@@ -1,6 +1,16 @@
 server:
   port: 8096
 
+app:
+  security:
+    mode: ${APP_SECURITY_MODE:legacy}
+    oidc:
+      issuer-uri: ${APP_SECURITY_OIDC_ISSUER_URI:}
+      jwk-set-uri: ${APP_SECURITY_OIDC_JWK_SET_URI:}
+      audience: ${APP_SECURITY_OIDC_AUDIENCE:}
+  websocket:
+    allowed-origins: ${APP_WEBSOCKET_ALLOWED_ORIGINS:}
+
 spring:
   application:
     name: websocket-service
@@ -20,6 +30,11 @@ spring:
       properties:
         spring.json.trusted.packages: com.coltrack.events.websocket
         spring.json.use.type.headers: true
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:}
+    username: ${SPRING_DATASOURCE_USERNAME:}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
 
 management:
   endpoints:
