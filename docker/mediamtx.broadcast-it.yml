@@ -1,0 +1,18 @@
+# Isolated integration-test config. The anonymous read grant is scoped to the
+# synthetic test source and is reachable only on the private broadcast-it net.
+logLevel: info
+rtsp: yes
+hls: yes
+api: no
+metrics: no
+pprof: no
+hlsAlwaysRemux: yes
+hlsVariant: mpegts
+hlsSegmentCount: 6
+hlsSegmentDuration: 2s
+
+authMethod: internal
+authInternalUsers: []
+
+paths:
+  all_others: {}

@@ -22,8 +22,8 @@ export default createRouter({
             component: () => import('../views/Analytics.vue')
         },
         {
-            path: '/player/:broadcastId',
-            name: 'broadcast-player',
+            path: '/watch/:publicId',
+            name: 'broadcast-watch',
             component: () => import('../views/BroadcastPlayer.vue')
         }
     ]

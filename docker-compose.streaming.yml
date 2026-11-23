@@ -29,40 +29,19 @@ services:
     environment:
       MTX_AUTHINTERNALUSERS_0_USER: ${STREAMING_MEDIA_PUBLISH_USER:?Set a MediaMTX publish username}
       MTX_AUTHINTERNALUSERS_0_PASS: ${STREAMING_MEDIA_PUBLISH_PASSWORD:?Set a long random MediaMTX publish password}
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_0_ACTION: publish
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_0_PATH: "~^[0-9a-f-]{36}$"
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_1_ACTION: read
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_1_PATH: "~^[0-9a-f-]{36}$"
       MTX_AUTHINTERNALUSERS_1_USER: ${STREAMING_MEDIA_READ_USER:?Set a MediaMTX read username}
       MTX_AUTHINTERNALUSERS_1_PASS: ${STREAMING_MEDIA_READ_PASSWORD:?Set a long random MediaMTX read password}
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_ACTION: read
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_PATH: "~^[0-9a-f-]{36}$"
     volumes:
       - ./docker/mediamtx.streaming.yml:/mediamtx.yml:ro
     expose:
       - "8554"
       - "8888"
-    restart: unless-stopped
-
-  rtsp-test-publisher:
-    profiles: ["test-publishers"]
-    image: linuxserver/ffmpeg:7.1.1
-    command:
-      - -re
-      - -f
-      - lavfi
-      - -i
-      - testsrc=size=1280x720:rate=25
-      - -c:v
-      - libx264
-      - -preset
-      - veryfast
-      - -tune
-      - zerolatency
-      - -pix_fmt
-      - yuv420p
-      - -f
-      - rtsp
-      - -rtsp_transport
-      - tcp
-      - rtsp://${STREAMING_MEDIA_PUBLISH_USER:?Set a MediaMTX publish username}:${STREAMING_MEDIA_PUBLISH_PASSWORD:?Set a long random MediaMTX publish password}@mediamtx:8554/test-source
-    depends_on:
-      mediamtx:
-        condition: service_started
     restart: unless-stopped
 
   video-ingest-agent:
@@ -142,7 +121,7 @@ services:
       BROADCAST_MANAGEMENT_TOKEN: ${BROADCAST_MANAGEMENT_TOKEN:?Set a long random management token}
       BROADCAST_PLAYBACK_SECRET: ${BROADCAST_PLAYBACK_SECRET:?Set a long random playback signing secret}
       BROADCAST_PLAYBACK_TTL: ${BROADCAST_PLAYBACK_TTL:-PT10M}
-      BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/player}
+      BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/watch}
       BROADCAST_RATE_LIMIT_PER_MINUTE: ${BROADCAST_RATE_LIMIT_PER_MINUTE:-300}
       CORS_ALLOWED_ORIGIN: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
       JAVA_OPTS: ${STREAM_JAVA_OPTS:--Xms128m -Xmx384m}
@@ -191,6 +170,7 @@ services:
       STREAM_SERVICE_URL: http://stream-service:8094
       MEDIAMTX_HLS_URL: http://mediamtx:8888
       WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
+      CORS_ALLOWED_ORIGIN: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
     ports:
       - "${STREAMING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STREAMING_GATEWAY_PORT:-8081}:8080"
     depends_on:

@@ -3,6 +3,7 @@ package com.coltrack.streamservice.service;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.model.Broadcast;
+import com.coltrack.streamservice.model.BroadcastVisibility;
 import com.coltrack.streamservice.model.StreamSession;
 import com.coltrack.streamservice.repository.BroadcastRepository;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class BroadcastServiceTest {
     }
 
     @Test
-    void enablingBroadcastReusesAnAlreadyRunningStream() {
+    void enablingBroadcastAcquiresIndependentLeaseForExistingStream() {
         BroadcastRepository repository = mock(BroadcastRepository.class);
         CameraClient cameraClient = mock(CameraClient.class);
         StreamManager streamManager = mock(StreamManager.class);
@@ -42,18 +43,34 @@ class BroadcastServiceTest {
         UUID broadcastId = UUID.randomUUID();
         UUID cameraId = UUID.randomUUID();
         Instant now = Instant.now();
-        Broadcast broadcast = new Broadcast(broadcastId, cameraId, false, false, 0, now, now);
+        Broadcast broadcast = broadcast(broadcastId, cameraId, false, now);
         when(repository.find(broadcastId)).thenReturn(Optional.of(broadcast));
-        when(streamManager.find(cameraId)).thenReturn(StreamSession.builder().cameraId(cameraId).workerRunning(true).build());
-        when(repository.setState(eq(broadcastId), eq(true), eq(false), any())).thenReturn(
-                new Broadcast(broadcastId, cameraId, true, false, 1, now, now));
+        when(repository.setEnabled(eq(broadcastId), eq(true), any())).thenReturn(
+                new Broadcast(broadcastId, cameraId, UUID.randomUUID(), BroadcastVisibility.PRIVATE, true, 1, now, now));
         when(repository.find(broadcastId)).thenReturn(Optional.of(broadcast),
-                Optional.of(new Broadcast(broadcastId, cameraId, true, false, 1, now, now)));
+                Optional.of(new Broadcast(broadcastId, cameraId, UUID.randomUUID(), BroadcastVisibility.PRIVATE, true, 1, now, now)));
 
         new BroadcastService(repository, cameraClient, streamManager, tokenService, properties)
                 .setEnabled(broadcastId, true);
 
+        verify(streamManager).acquire(cameraId, "broadcast:" + broadcastId, "BROADCAST");
         verify(streamManager, never()).start(cameraId);
-        verify(repository).setState(eq(broadcastId), eq(true), eq(false), any());
+        verify(repository).setEnabled(eq(broadcastId), eq(true), any());
+    }
+
+    @Test
+    void privateBroadcastDoesNotReceiveAnonymousPlaybackToken() {
+        BroadcastRepository repository = mock(BroadcastRepository.class);
+        Broadcast broadcast = broadcast(UUID.randomUUID(), UUID.randomUUID(), true, Instant.now());
+        when(repository.findByPublicId(broadcast.publicId())).thenReturn(Optional.of(broadcast));
+        BroadcastService service = new BroadcastService(repository, mock(CameraClient.class), mock(StreamManager.class),
+                mock(PlaybackTokenService.class), new BroadcastProperties());
+
+        org.junit.jupiter.api.Assertions.assertThrows(BroadcastService.PrivateBroadcastException.class,
+                () -> service.playbackToken(broadcast.publicId()));
+    }
+
+    private static Broadcast broadcast(UUID id, UUID cameraId, boolean enabled, Instant now) {
+        return new Broadcast(id, cameraId, UUID.randomUUID(), BroadcastVisibility.PRIVATE, enabled, 0, now, now);
     }
 }

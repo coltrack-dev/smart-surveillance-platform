@@ -6,8 +6,9 @@ import java.util.UUID;
 public record Broadcast(
         UUID id,
         UUID cameraId,
+        UUID publicId,
+        BroadcastVisibility visibility,
         boolean enabled,
-        boolean ownsStream,
         long playbackVersion,
         Instant createdAt,
         Instant updatedAt

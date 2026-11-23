@@ -64,6 +64,11 @@ spring:
               predicates:
                 - Path=/broadcast-play/**
 
+            - id: playback-token
+              uri: ${STREAM_SERVICE_URL:http://localhost:8094}
+              predicates:
+                - Path=/api/playback/**
+
 
             #
             # Recording Service

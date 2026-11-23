@@ -1,6 +1,7 @@
 package com.coltrack.streamservice.client;
 
 import com.coltrack.streamservice.config.IngestAgentProperties;
+import com.coltrack.streamservice.config.BroadcastProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -19,14 +20,17 @@ import java.util.UUID;
 public class MediaHlsClient {
 
     private final RestClient restClient;
+    private final BroadcastProperties broadcastProperties;
 
     public MediaHlsClient(
             RestClient.Builder builder,
-            IngestAgentProperties properties
+            IngestAgentProperties properties,
+            BroadcastProperties broadcastProperties
     ) {
         this.restClient = builder
                 .baseUrl(properties.getInternalHlsBaseUrl())
                 .build();
+        this.broadcastProperties = broadcastProperties;
     }
 
     /**
@@ -54,6 +58,10 @@ public class MediaHlsClient {
             restClient.get()
                     .uri(cameraPath + segmentName.get())
                     .header(HttpHeaders.RANGE, "bytes=0-0")
+                    .headers(headers -> headers.setBasicAuth(
+                            broadcastProperties.getMediaReadUsername(),
+                            broadcastProperties.getMediaReadPassword()
+                    ))
                     .retrieve()
                     .toBodilessEntity();
             return true;
@@ -66,6 +74,10 @@ public class MediaHlsClient {
     private String getText(String path) {
         return restClient.get()
                 .uri(path)
+                .headers(headers -> headers.setBasicAuth(
+                        broadcastProperties.getMediaReadUsername(),
+                        broadcastProperties.getMediaReadPassword()
+                ))
                 .retrieve()
                 .body(String.class);
     }

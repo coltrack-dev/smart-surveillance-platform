@@ -5,6 +5,7 @@
 .vscode
 
 **/build
+**/target
 **/.gradle
 **/out
 
@@ -17,3 +18,27 @@ logs
 
 .env
 docker-compose.override.yml
+
+# Dockerfile.service compiles from these Gradle modules only. Exclude large
+# repository data, inference assets, Rust sources and local tools from this
+# root build context, then allowlist the Gradle inputs it copies.
+**
+!gradlew
+!settings.gradle
+!build.gradle
+!gradle.properties
+!gradle/
+!gradle/**
+!common/
+!common/**
+!gateway/
+!gateway/**
+!services/
+!services/**
+common/**/build/
+common/**/.gradle/
+gateway/**/build/
+gateway/**/.gradle/
+services/**/build/
+services/**/.gradle/
+services/**/data/

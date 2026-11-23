@@ -1,0 +1,109 @@
+# Isolated integration-test overlay. Always use the broadcast-it project name.
+# It owns a separate database, network and named volume from both deployment modes.
+services:
+  mediamtx:
+    environment:
+      MTX_AUTHINTERNALUSERS_2_USER: ${BROADCAST_IT_RTSP_PUBLISH_USER:?Set an isolated test publisher username}
+      MTX_AUTHINTERNALUSERS_2_PASS: ${BROADCAST_IT_RTSP_PUBLISH_PASSWORD:?Set an isolated test publisher password}
+      MTX_AUTHINTERNALUSERS_2_PERMISSIONS_0_ACTION: publish
+      MTX_AUTHINTERNALUSERS_2_PERMISSIONS_0_PATH: test-source
+      MTX_AUTHINTERNALUSERS_3_USER: any
+      MTX_AUTHINTERNALUSERS_3_PERMISSIONS_0_ACTION: read
+      MTX_AUTHINTERNALUSERS_3_PERMISSIONS_0_PATH: test-source
+    volumes:
+      - ./docker/mediamtx.broadcast-it.yml:/mediamtx.yml:ro
+
+  postgres:
+    # Reuse the locally available PostgreSQL image; this test DB is fresh and
+    # uses only portable Flyway/JDBC features.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: broadcast_it
+      POSTGRES_USER: broadcast_it
+      POSTGRES_PASSWORD: broadcast_it_local_only
+    volumes:
+      - broadcast-it-postgres-data:/var/lib/postgresql/data
+      - ./docker/broadcast-it-camera-schema.sql:/docker-entrypoint-initdb.d/00-camera-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U broadcast_it -d broadcast_it"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  camera-service:
+    image: surveillance/camera-service:demo
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/broadcast_it
+      SPRING_DATASOURCE_USERNAME: broadcast_it
+      SPRING_DATASOURCE_PASSWORD: broadcast_it_local_only
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  video-ingest-agent:
+    image: surveillance/video-ingest-agent:demo
+
+  rtsp-test-publisher:
+    profiles: ["test-publishers"]
+    image: linuxserver/ffmpeg:7.1.1
+    command:
+      - -hide_banner
+      - -loglevel
+      - error
+      - -re
+      - -f
+      - lavfi
+      - -i
+      - testsrc=size=640x360:rate=10
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -g
+      - "20"
+      - -threads
+      - "2"
+      - -pix_fmt
+      - yuv420p
+      - -f
+      - rtsp
+      - -rtsp_transport
+      - tcp
+      # Test-only source credentials. The RTSP source URL is consumed as an
+      # FFmpeg argument and never emitted at info/debug log levels.
+      - rtsp://${BROADCAST_IT_RTSP_PUBLISH_USER:?Set an isolated test publisher username}:${BROADCAST_IT_RTSP_PUBLISH_PASSWORD:?Set an isolated test publisher password}@mediamtx:8554/test-source
+    depends_on:
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
+  websocket-service:
+    image: surveillance/websocket-service:demo
+
+  camera-gateway:
+    image: surveillance/camera-gateway:demo
+    environment:
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/
+    volumes:
+      - ./gateway/camera-gateway/src/main/resources/application.yaml:/config/application.yaml:ro
+    ports: !override
+      - "127.0.0.1:18081:8080"
+
+  stream-service:
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/broadcast_it
+      SPRING_DATASOURCE_USERNAME: broadcast_it
+      SPRING_DATASOURCE_PASSWORD: broadcast_it_local_only
+      BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/watch}
+
+  broadcast-player:
+    build:
+      args:
+        VITE_API_URL: http://127.0.0.1:18081/api
+    ports: !override
+      - "127.0.0.1:5173:80"
+
+volumes:
+  broadcast-it-postgres-data:

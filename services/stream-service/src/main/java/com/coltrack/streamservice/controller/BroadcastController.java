@@ -2,6 +2,7 @@ package com.coltrack.streamservice.controller;
 
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.model.Broadcast;
+import com.coltrack.streamservice.model.BroadcastVisibility;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +31,7 @@ public class BroadcastController {
             return ResponseEntity.badRequest().build();
         }
         Broadcast existing = service.findByCamera(request.cameraId()).orElse(null);
-        Broadcast broadcast = service.create(request.cameraId());
+        Broadcast broadcast = service.create(request.cameraId(), request.visibility() == null ? BroadcastVisibility.PRIVATE : request.visibility());
         return ResponseEntity.status(existing == null ? HttpStatus.CREATED : HttpStatus.OK).body(broadcast);
     }
 
@@ -54,6 +55,14 @@ public class BroadcastController {
         return service.setEnabled(id, request.enabled());
     }
 
+    @PutMapping("/{id}/visibility")
+    public Broadcast visibility(@RequestHeader(value = "Authorization", required = false) String authorization,
+                               @PathVariable UUID id, @RequestBody VisibilityRequest request) {
+        authorize(authorization);
+        if (request == null || request.visibility() == null) throw new IllegalArgumentException("visibility is required");
+        return service.setVisibility(id, request.visibility());
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@RequestHeader(value = "Authorization", required = false) String authorization,
@@ -63,10 +72,10 @@ public class BroadcastController {
     }
 
     @GetMapping("/{id}/playback")
-    public BroadcastService.PlaybackInfo playback(@RequestHeader(value = "Authorization", required = false) String authorization,
-                                                  @PathVariable UUID id) {
+    public BroadcastService.PlaybackInfo playbackInfo(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                                      @PathVariable UUID id) {
         authorize(authorization);
-        return service.playback(id);
+        return service.playbackInfo(id);
     }
 
     private void authorize(String authorization) {
@@ -77,8 +86,9 @@ public class BroadcastController {
         }
     }
 
-    public record CreateBroadcastRequest(UUID cameraId) {}
+    public record CreateBroadcastRequest(UUID cameraId, BroadcastVisibility visibility) {}
     public record EnabledRequest(boolean enabled) {}
+    public record VisibilityRequest(BroadcastVisibility visibility) {}
 
     @ExceptionHandler(BroadcastService.BroadcastNotFoundException.class)
     public ResponseEntity<ErrorResponse> notFound(RuntimeException error) {
@@ -88,6 +98,11 @@ public class BroadcastController {
     @ExceptionHandler(BroadcastService.BroadcastOfflineException.class)
     public ResponseEntity<ErrorResponse> offline(RuntimeException error) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(error.getMessage()));
+    }
+
+    @ExceptionHandler(BroadcastService.PrivateBroadcastException.class)
+    public ResponseEntity<ErrorResponse> privateBroadcast() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorResponse("Authentication required"));
     }
 
     @ExceptionHandler(UnauthorizedException.class)

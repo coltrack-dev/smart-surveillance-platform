@@ -1,12 +1,14 @@
 package com.coltrack.streamservice.repository;
 
 import com.coltrack.streamservice.model.Broadcast;
+import com.coltrack.streamservice.model.BroadcastVisibility;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -30,17 +32,26 @@ public class BroadcastRepository {
         return jdbc.query("SELECT * FROM broadcasts WHERE camera_id = ?", ROW_MAPPER, cameraId).stream().findFirst();
     }
 
+    public Optional<Broadcast> findByPublicId(UUID publicId) {
+        return jdbc.query("SELECT * FROM broadcasts WHERE public_id = ?", ROW_MAPPER, publicId).stream().findFirst();
+    }
+
     public List<Broadcast> findAll() {
         return jdbc.query("SELECT * FROM broadcasts ORDER BY created_at DESC", ROW_MAPPER);
     }
 
-    public Broadcast create(UUID id, UUID cameraId, Instant now) {
-        jdbc.update("INSERT INTO broadcasts (id, camera_id, enabled, owns_stream, playback_version, created_at, updated_at) VALUES (?, ?, FALSE, FALSE, 0, ?, ?)", id, cameraId, now, now);
+    public Broadcast create(UUID id, UUID cameraId, UUID publicId, BroadcastVisibility visibility, Instant now) {
+        jdbc.update("INSERT INTO broadcasts (id, camera_id, public_id, visibility, enabled, owns_stream, playback_version, created_at, updated_at) VALUES (?, ?, ?, ?, FALSE, FALSE, 0, ?, ?)", id, cameraId, publicId, visibility.name(), Timestamp.from(now), Timestamp.from(now));
         return find(id).orElseThrow();
     }
 
-    public Broadcast setState(UUID id, boolean enabled, boolean ownsStream, Instant now) {
-        jdbc.update("UPDATE broadcasts SET playback_version = playback_version + CASE WHEN enabled <> ? THEN 1 ELSE 0 END, enabled = ?, owns_stream = ?, updated_at = ? WHERE id = ?", enabled, enabled, ownsStream, now, id);
+    public Broadcast setEnabled(UUID id, boolean enabled, Instant now) {
+        jdbc.update("UPDATE broadcasts SET playback_version = playback_version + CASE WHEN broadcasts.enabled <> ? THEN 1 ELSE 0 END, enabled = ?, updated_at = ? WHERE id = ?", enabled, enabled, Timestamp.from(now), id);
+        return find(id).orElseThrow();
+    }
+
+    public Broadcast setVisibility(UUID id, BroadcastVisibility visibility, Instant now) {
+        jdbc.update("UPDATE broadcasts SET playback_version = playback_version + CASE WHEN broadcasts.visibility <> ? THEN 1 ELSE 0 END, visibility = ?, updated_at = ? WHERE id = ?", visibility.name(), visibility.name(), Timestamp.from(now), id);
         return find(id).orElseThrow();
     }
 
@@ -52,8 +63,9 @@ public class BroadcastRepository {
         return new Broadcast(
                 rs.getObject("id", UUID.class),
                 rs.getObject("camera_id", UUID.class),
+                rs.getObject("public_id", UUID.class),
+                BroadcastVisibility.valueOf(rs.getString("visibility")),
                 rs.getBoolean("enabled"),
-                rs.getBoolean("owns_stream"),
                 rs.getLong("playback_version"),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("updated_at").toInstant()

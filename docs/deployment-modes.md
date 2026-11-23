@@ -21,7 +21,7 @@ The supported baseline is `docker-compose.demo.yml`; the root `docker-compose.ym
 | stream-service | Kafka, camera-service, MediaMTX, ingest-agent | Yes (Broadcast table) | Broadcast management requires Bearer token; playback requires short-lived signed token |
 | websocket-service | Kafka | No | Via gateway only; add authorization before public use |
 | camera-gateway | Camera, Stream, MediaMTX HLS, WebSocket | No | Loopback port 8081 by default; do not widen before all existing APIs have auth |
-| broadcast-player | camera-gateway playback proxy | No | Loopback port 5173 by default; share links are time-limited |
+| broadcast-player | camera-gateway playback proxy | No | Loopback port 5173 by default; permanent watch URL obtains renewed short-lived media auth |
 | recording-service | Kafka, Camera, Stream | Yes | Not present |
 | analytics-service | Kafka, Camera | Yes | Not present by default (demo profile `container-analytics`) |
 | inference-worker | Kafka, Recording | No | Not present by default (demo profile `inference`) |
@@ -53,7 +53,7 @@ docker compose -p surveillance-streaming -f docker-compose.streaming.yml config
 docker compose -p surveillance-streaming -f docker-compose.streaming.yml up -d
 ```
 
-For streaming set the MediaMTX publish/read credentials, `VIDEO_INGEST_AGENT_TOKEN`, `POSTGRES_PASSWORD`, `CAMERA_CREDENTIALS_KEY`, `BROADCAST_MANAGEMENT_TOKEN`, and `BROADCAST_PLAYBACK_SECRET` to deployment secrets. Use URL-safe publish credentials (letters, digits, underscore, hyphen) because they are embedded in the RTSP URL. Generate the camera key using `openssl rand -base64 32`. The gateway is reachable at `http://127.0.0.1:8081` and the player at `http://127.0.0.1:5173` by default. Broadcast management requires its Bearer secret; playback links use short-lived HMAC tokens, and playlists plus segments/keys are proxied through token validation. This is a single-operator MVP, not multi-user or tenant authorization. No public production ingress or TLS is configured. Keep both bindings on loopback/private ingress; do not expose MediaMTX, agent, Kafka, or service ports.
+For streaming set the MediaMTX publish/read credentials, `VIDEO_INGEST_AGENT_TOKEN`, `POSTGRES_PASSWORD`, `CAMERA_CREDENTIALS_KEY`, `BROADCAST_MANAGEMENT_TOKEN`, and `BROADCAST_PLAYBACK_SECRET` to deployment secrets. Use URL-safe publish credentials (letters, digits, underscore, hyphen) because they are embedded in the RTSP URL. Generate the camera key using `openssl rand -base64 32`. The gateway is reachable at `http://127.0.0.1:8081` and the player at `http://127.0.0.1:5173` by default. Broadcast management requires its Bearer secret. Permanent `/watch/{publicId}` pages request short-lived HMAC authorization and renew it as HLS requests continue; only explicitly PUBLIC broadcasts permit anonymous viewing. PRIVATE broadcasts have no viewer identity or invite implementation yet. This is a single-operator MVP, not multi-user or tenant authorization. No public production ingress or TLS is configured. Keep both bindings on loopback/private ingress; do not expose MediaMTX, agent, Kafka, or service ports.
 
 The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, and project name are retained by default for compatibility. `POSTGRES_HOST`, `POSTGRES_PORT`, `KAFKA_ADVERTISED_HOST`, `KAFKA_EXTERNAL_PORT`, `KAFKA_BIND_ADDRESS`, `MEDIAMTX_BIND_ADDRESS`, `MEDIAMTX_RTSP_PORT`, `MEDIAMTX_HLS_PORT`, `GATEWAY_BIND_ADDRESS`, and `ANALYTICS_SERVICE_URL` let operators replace machine-specific addresses/ports. For demo use across a trusted LAN, configure the correct advertised Kafka address and firewall the host ports; the current demo MediaMTX configuration has no auth, so do not expose its RTSP/HLS ports to the public internet.
 
@@ -73,7 +73,7 @@ The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, 
 - Avoid renaming or deleting the old Compose volumes. The streaming volume names are intentionally separate; migrating Kafka/HLS/recording data is not part of this phase.
 - The gateway's legacy `/media-hls/**` route proxies MediaMTX content and is not the Broadcast player route. MediaMTX credentials and the Broadcast token proxy protect Broadcast playback; existing camera/stream/recording API routes do not have general user authentication. Keep the gateway private until those routes are secured too.
 - Broadcast persistence adds a `broadcasts` table and `flyway_stream_schema_history` to the existing PostgreSQL database. It does not modify Camera/Recording tables or named Docker volumes. Set stable `BROADCAST_MANAGEMENT_TOKEN` and `BROADCAST_PLAYBACK_SECRET` values; rotating the latter invalidates issued links. Enable/disable also increments a playback generation, so old links stay invalid if a Broadcast is re-enabled. The demo mode has development defaults and should not be exposed as a public service.
-- Public Broadcast playback uses `/broadcast-play/{id}/{file}?token=...`; the general `/media-hls/**` route remains unsuitable for shared/public playback. The standalone player runs on port 5173, and player links default to `http://localhost:5173/player` for local testing. Configure `BROADCAST_API_URL` and `BROADCAST_PLAYER_BASE_URL` to match the private browser-accessible endpoints.
+- Broadcast playback uses `/broadcast-play/{publicId}/{file}?token=...`; the general `/media-hls/**` route remains unsuitable for public playback. The standalone player runs on port 5173, and permanent links default to `http://localhost:5173/watch/{publicId}`. Token query parameters must be redacted from ingress logs; player and iframe use `no-referrer`. Configure `BROADCAST_API_URL` and `BROADCAST_PLAYER_BASE_URL` to match the private browser-accessible endpoints.
 - The streaming Compose file contains an optional synthetic RTSP source under profile `test-publishers`; it is omitted by default.
 
 ## Streaming SaaS MVP roadmap
@@ -87,7 +87,7 @@ The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, 
 
 ## Broadcast API and local smoke test
 
-Broadcast management is under `POST/GET /api/v1/broadcasts`, `GET /api/v1/broadcasts/{id}`, `PUT /api/v1/broadcasts/{id}/enabled` (`{"enabled":true|false}`), `DELETE /api/v1/broadcasts/{id}`, and `GET /api/v1/broadcasts/{id}/playback`. Send `Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN` for every management request. Creating for the same camera is idempotent. Playback details contain an expiring playlist URL, player URL and iframe markup. The media URLs do not contain source RTSP credentials.
+Broadcast management is under `POST/GET /api/v1/broadcasts`, `GET /api/v1/broadcasts/{id}`, `PUT /api/v1/broadcasts/{id}/enabled` (`{"enabled":true|false}`), `PUT /api/v1/broadcasts/{id}/visibility`, `DELETE /api/v1/broadcasts/{id}`, and `GET /api/v1/broadcasts/{id}/playback`. Send `Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN` for every management request. Creating for the same camera is idempotent. Playback details contain a permanent player URL and iframe markup. `GET /api/playback/{publicId}/token` returns the current short-lived authorization; the browser player renews it. The media URLs do not contain source RTSP credentials. For isolated integration commands and honest result recording, see [broadcast-integration-tests.md](broadcast-integration-tests.md).
 
 For a local source smoke test after configuring secrets and the PostgreSQL camera schema:
 
@@ -117,4 +117,4 @@ curl -sS http://127.0.0.1:8081/api/v1/broadcasts/BROADCAST_UUID/playback \
   -H "Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN"
 ```
 
-Open the returned `playerUrl`; use `embedHtml` in an iframe. The authorization expires after `BROADCAST_PLAYBACK_TTL` (10 minutes by default), so obtain a fresh playback URL when it expires. Disable or delete the Broadcast to invalidate playback and clean up a stream that Broadcast itself started. An already-running surveillance stream is left running.
+Open the returned permanent `playerUrl`; use `embedHtml` in an iframe. The player renews the temporary HLS token automatically. Disable or delete the Broadcast to invalidate active playback. StreamManager consumer leases ensure disabling a Broadcast does not stop a stream that Surveillance or another consumer still uses.

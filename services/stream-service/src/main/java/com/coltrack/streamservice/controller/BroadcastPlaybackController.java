@@ -1,10 +1,8 @@
 package com.coltrack.streamservice.controller;
 
 import com.coltrack.streamservice.config.BroadcastProperties;
-import com.coltrack.streamservice.model.Broadcast;
-import com.coltrack.streamservice.repository.BroadcastRepository;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
-import com.coltrack.streamservice.service.PlaybackTokenService;
+import com.coltrack.streamservice.service.BroadcastService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -27,23 +25,22 @@ import java.util.regex.Pattern;
 public class BroadcastPlaybackController {
     private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]+)\"");
     private final Semaphore playbackSlots = new Semaphore(32);
-    private final BroadcastRepository repository;
-    private final PlaybackTokenService tokens;
+    private final BroadcastService broadcastService;
     private final BroadcastProperties properties;
     private final BroadcastRateLimiter rateLimiter;
     private final RestClient.Builder restClientBuilder;
 
-    @GetMapping("/broadcast-play/{id}/{fileName}")
-    public ResponseEntity<byte[]> file(@PathVariable UUID id, @PathVariable String fileName,
+    @GetMapping("/api/playback/{publicId}/token")
+    public BroadcastService.PlaybackToken issueToken(@PathVariable UUID publicId, HttpServletRequest request) {
+        checkRateLimit("token:", request);
+        return broadcastService.playbackToken(publicId);
+    }
+
+    @GetMapping("/broadcast-play/{publicId}/{fileName}")
+    public ResponseEntity<byte[]> file(@PathVariable UUID publicId, @PathVariable String fileName,
                                        @RequestParam String token, HttpServletRequest request) {
-        String remote = request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
-        if (!rateLimiter.allow("playback:" + remote, properties.getRateLimitPerMinute())) {
-            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
-        }
-        Broadcast broadcast = repository.find(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        if (!broadcast.enabled() || !tokens.isValid(token, id, broadcast.playbackVersion(), Instant.now())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-        }
+        checkRateLimit("media:", request);
+        var broadcast = broadcastService.authorizePlayback(publicId, token, Instant.now());
         if (!safeFileName(fileName)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         if (!playbackSlots.tryAcquire()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
 
@@ -69,29 +66,37 @@ public class BroadcastPlaybackController {
                 : fileName.endsWith(".ts") ? MediaType.parseMediaType("video/mp2t")
                 : MediaType.APPLICATION_OCTET_STREAM;
         if (fileName.endsWith(".m3u8")) {
-            body = rewritePlaylist(new String(body, StandardCharsets.UTF_8), id, token).getBytes(StandardCharsets.UTF_8);
+            body = rewritePlaylist(new String(body, StandardCharsets.UTF_8), publicId, token).getBytes(StandardCharsets.UTF_8);
         }
         return ResponseEntity.ok()
                 .contentType(contentType)
                 .cacheControl(CacheControl.noStore())
                 .header("X-Content-Type-Options", "nosniff")
+                .header("Referrer-Policy", "no-referrer")
                 .body(body);
     }
 
-    static String rewritePlaylist(String playlist, UUID id, String token) {
+    private void checkRateLimit(String keyPrefix, HttpServletRequest request) {
+        String remote = request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
+        if (!rateLimiter.allow(keyPrefix + remote, properties.getRateLimitPerMinute())) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
+        }
+    }
+
+    static String rewritePlaylist(String playlist, UUID publicId, String token) {
         String[] lines = playlist.split("\\R", -1);
         StringBuilder result = new StringBuilder();
         for (String line : lines) {
             String trimmed = line.trim();
             if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {
-                line = playbackPath(id, safeReference(trimmed), token);
+                line = playbackPath(publicId, safeReference(trimmed), token);
             } else if (line.contains("URI=")) {
                 Matcher matcher = URI_ATTRIBUTE.matcher(line);
                 StringBuffer rewritten = new StringBuffer();
                 boolean foundUri = false;
                 while (matcher.find()) {
                     foundUri = true;
-                    matcher.appendReplacement(rewritten, Matcher.quoteReplacement("URI=\"" + playbackPath(id, safeReference(matcher.group(1)), token) + "\""));
+                    matcher.appendReplacement(rewritten, Matcher.quoteReplacement("URI=\"" + playbackPath(publicId, safeReference(matcher.group(1)), token) + "\""));
                 }
                 if (!foundUri) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid HLS URI attribute");
                 matcher.appendTail(rewritten);
@@ -109,8 +114,8 @@ public class BroadcastPlaybackController {
         return value;
     }
 
-    private static String playbackPath(UUID id, String file, String token) {
-        return "/broadcast-play/" + id + "/" + file + "?token=" + token;
+    private static String playbackPath(UUID publicId, String file, String token) {
+        return "/broadcast-play/" + publicId + "/" + file + "?token=" + token;
     }
 
     private static boolean safeFileName(String value) {
@@ -119,5 +124,20 @@ public class BroadcastPlaybackController {
 
     private static String trimSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    @ExceptionHandler(BroadcastService.PrivateBroadcastException.class)
+    public ResponseEntity<String> privateBroadcast() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Authentication required");
+    }
+
+    @ExceptionHandler(BroadcastService.BroadcastOfflineException.class)
+    public ResponseEntity<String> offline() {
+        return ResponseEntity.status(HttpStatus.GONE).body("Broadcast is unavailable");
+    }
+
+    @ExceptionHandler(BroadcastService.BroadcastNotFoundException.class)
+    public ResponseEntity<String> notFound() {
+        return ResponseEntity.notFound().build();
     }
 }

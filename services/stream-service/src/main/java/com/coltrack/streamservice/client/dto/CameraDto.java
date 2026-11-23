@@ -17,6 +17,8 @@ public record CameraDto(
 
         Instant createdAt,
 
-        Instant lastHeartbeat
+        Instant lastHeartbeat,
+
+        boolean autoStart
 
 ) {}

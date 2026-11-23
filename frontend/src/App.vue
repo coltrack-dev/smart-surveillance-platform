@@ -8,7 +8,7 @@ const route = useRoute()
 
   <div class="app-layout">
 
-    <header v-if="!route.path.startsWith('/player/')" class="header">
+    <header v-if="!route.path.startsWith('/watch/')" class="header">
 
       <h2>
         Smart Surveillance Platform
@@ -17,7 +17,7 @@ const route = useRoute()
     </header>
 
 
-    <main class="content" :class="{ 'player-content': route.path.startsWith('/player/') }">
+    <main class="content" :class="{ 'player-content': route.path.startsWith('/watch/') }">
 
       <router-view />
 
