@@ -1,6 +1,16 @@
 spring:
   application:
     name: stream-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${POSTGRES_HOST:192.168.13.128}:${POSTGRES_PORT:5432}/${POSTGRES_DB:surveillance_db}}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:surveillance_user}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:surveillance_password}}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    table: flyway_stream_schema_history
+    baseline-on-migrate: true
+    baseline-version: 0
 
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -22,7 +32,7 @@ server:
   port: 8094
 
 camera-service:
-  url: http://localhost:8091
+  url: ${CAMERA_SERVICE_URL:http://localhost:8091}
 
 stream:
   ingest-agent:
@@ -36,6 +46,7 @@ stream:
     hls-ready-timeout: ${STREAM_INGEST_AGENT_HLS_READY_TIMEOUT:30s}
     hls-health-interval: ${STREAM_INGEST_AGENT_HLS_HEALTH_INTERVAL:5s}
     hls-failure-threshold: ${STREAM_INGEST_AGENT_HLS_FAILURE_THRESHOLD:2}
+
   hls:
     #path: /opt/surveillance/hls
     path: ./data/hls
@@ -44,6 +55,16 @@ stream:
     playlist-timeout: ${STREAM_RTSP_PLAYLIST_TIMEOUT:30s}
     stale-playlist-timeout: ${STREAM_RTSP_STALE_PLAYLIST_TIMEOUT:15s}
     reconnect-max-delay: ${STREAM_RTSP_RECONNECT_MAX_DELAY:30s}
+
+broadcast:
+  management-token: ${BROADCAST_MANAGEMENT_TOKEN:local-demo-broadcast-management-token}
+  playback-secret: ${BROADCAST_PLAYBACK_SECRET:local-demo-broadcast-playback-secret-change-me}
+  playback-ttl: ${BROADCAST_PLAYBACK_TTL:PT10M}
+  player-base-url: ${BROADCAST_PLAYER_BASE_URL:http://localhost:5173/player}
+  media-read-username: ${STREAMING_MEDIA_READ_USER:stream-reader}
+  media-read-password: ${STREAMING_MEDIA_READ_PASSWORD:local-demo-media-read-password}
+  media-hls-base-url: ${STREAM_INGEST_AGENT_INTERNAL_HLS_BASE_URL:http://localhost:8888}
+  rate-limit-per-minute: ${BROADCAST_RATE_LIMIT_PER_MINUTE:300}
 
 management:
   endpoints:

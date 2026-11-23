@@ -43,7 +43,7 @@ services:
     container_name: surveillance-kafka
 
     ports:
-      - "9092:9092"
+      - "${KAFKA_BIND_ADDRESS:-0.0.0.0}:${KAFKA_EXTERNAL_PORT:-9092}:9092"
 
     environment:
       KAFKA_NODE_ID: 1
@@ -51,7 +51,7 @@ services:
 
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:29093
       #KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://192.168.13.128:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://${KAFKA_ADVERTISED_HOST:-192.168.13.128}:${KAFKA_EXTERNAL_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
@@ -75,8 +75,8 @@ services:
     image: bluenviron/mediamtx:1.13.1
     container_name: surveillance-mediamtx
     ports:
-      - "8554:8554"
-      - "8888:8888"
+      - "${MEDIAMTX_BIND_ADDRESS:-0.0.0.0}:${MEDIAMTX_RTSP_PORT:-8554}:8554"
+      - "${MEDIAMTX_BIND_ADDRESS:-0.0.0.0}:${MEDIAMTX_HLS_PORT:-8888}:8888"
     volumes:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     restart: unless-stopped
@@ -268,7 +268,7 @@ services:
     container_name: surveillance-camera-service
     environment:
       #SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
-      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-192.168.13.128}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -297,6 +297,9 @@ services:
     container_name: surveillance-stream-service
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-192.168.13.128}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_HLS_PATH: /data/hls
       STREAM_RTSP_PROBE_TIMEOUT: ${STREAM_RTSP_PROBE_TIMEOUT:-10s}
@@ -310,6 +313,11 @@ services:
       STREAM_INGEST_AGENT_PUBLISH_RTSP_BASE_URL: rtsp://mediamtx:8554
       STREAM_INGEST_AGENT_INTERNAL_HLS_BASE_URL: http://mediamtx:8888
       STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX: /media-hls
+      STREAMING_MEDIA_READ_USER: ${STREAMING_MEDIA_READ_USER:-stream-reader}
+      STREAMING_MEDIA_READ_PASSWORD: ${STREAMING_MEDIA_READ_PASSWORD:-local-demo-media-read-password}
+      BROADCAST_MANAGEMENT_TOKEN: ${BROADCAST_MANAGEMENT_TOKEN:-local-demo-broadcast-management-token}
+      BROADCAST_PLAYBACK_SECRET: ${BROADCAST_PLAYBACK_SECRET:-local-demo-broadcast-playback-secret-change-me}
+      BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/player}
       STREAM_INGEST_AGENT_HLS_READY_TIMEOUT: ${STREAM_INGEST_AGENT_HLS_READY_TIMEOUT:-30s}
       STREAM_INGEST_AGENT_HLS_HEALTH_INTERVAL: ${STREAM_INGEST_AGENT_HLS_HEALTH_INTERVAL:-5s}
       STREAM_INGEST_AGENT_HLS_FAILURE_THRESHOLD: ${STREAM_INGEST_AGENT_HLS_FAILURE_THRESHOLD:-2}
@@ -342,7 +350,7 @@ services:
     container_name: surveillance-recording-service
     environment:
       #SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-surveillance_db}
-      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-192.168.13.128}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -430,7 +438,7 @@ services:
       MEDIAMTX_HLS_URL: http://mediamtx:8888
       RECORDING_SERVICE_URL: http://recording-service:8095
       WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
-      ANALYTICS_SERVICE_URL: http://host.docker.internal:8097
+      ANALYTICS_SERVICE_URL: ${ANALYTICS_SERVICE_URL:-http://host.docker.internal:8097}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -459,7 +467,7 @@ services:
     container_name: surveillance-analytics-service
 
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.13.128:5432/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-192.168.13.128}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-surveillance_password}
 

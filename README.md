@@ -117,8 +117,8 @@ cp .env.example .env
 
 **Перед первым запуском проверьте конфигурацию:**
 
-- В [docker-compose.demo.yml](docker-compose.demo.yml) PostgreSQL отключён как контейнер, а JDBC URL содержит адрес `192.168.13.128`. Замените адрес в окружении сервисов на адрес своей БД. Одного изменения `POSTGRES_DB` в `.env` для смены хоста недостаточно.
-- Настройте внешний адрес Kafka в `KAFKA_ADVERTISED_LISTENERS`. Он должен быть доступен локальным Java-сервисам и удалённому worker; внутри Compose используется `kafka:29092`.
+- В [docker-compose.demo.yml](docker-compose.demo.yml) PostgreSQL отключён как контейнер. Задайте `POSTGRES_HOST`, `POSTGRES_PORT` и `POSTGRES_DB` для своей БД; адрес Kafka для клиентов вне Compose задаётся через `KAFKA_ADVERTISED_HOST` и `KAFKA_EXTERNAL_PORT`. Внутри Compose используется `kafka:29092`.
+- Для выбора между surveillance demo и streaming foundation, списка связей сервисов и ограничений безопасности см. [руководство по режимам развёртывания](docs/deployment-modes.md).
 - Подготовьте существующую схему БД или восстановите её из своей тестовой среды. Текущая миграция camera-service изменяет таблицу `cameras`, но не создаёт исходную схему; запуск на совершенно пустой БД пока не автоматизирован. У camera-service и analytics-service включён `ddl-auto: validate`.
 - Для аналитики снимков заполните `WASABI_*`: worker и analytics-service должны обращаться к одному хранилищу и префиксу. Названия переменных сохранены для Wasabi, но конфигурация использует S3 endpoint.
 - Замените демонстрационное значение `VIDEO_INGEST_AGENT_TOKEN`. Один и тот же токен должен быть передан агенту и `stream-service`; порт 8098 не следует публиковать наружу.

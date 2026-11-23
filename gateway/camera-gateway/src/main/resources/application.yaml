@@ -52,6 +52,18 @@ spring:
               filters:
                 - RewritePath=/api/v1/streams(?<segment>/?.*), /api/streams${segment}
 
+            - id: broadcast-management
+              uri: ${STREAM_SERVICE_URL:http://localhost:8094}
+              predicates:
+                - Path=/api/v1/broadcasts/**
+              filters:
+                - RewritePath=/api/v1/broadcasts(?<segment>/?.*), /api/broadcasts${segment}
+
+            - id: broadcast-playback
+              uri: ${STREAM_SERVICE_URL:http://localhost:8094}
+              predicates:
+                - Path=/broadcast-play/**
+
 
             #
             # Recording Service

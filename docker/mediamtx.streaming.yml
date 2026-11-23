@@ -1,0 +1,31 @@
+# Streaming profile. Usernames and passwords are overridden with MediaMTX's
+# MTX_AUTHINTERNALUSERS_* environment variables in docker-compose.streaming.yml.
+# MediaMTX stays on the private Compose network in docker-compose.streaming.yml.
+logLevel: info
+rtsp: yes
+hls: yes
+api: no
+metrics: no
+pprof: no
+hlsAlwaysRemux: yes
+hlsVariant: mpegts
+hlsSegmentCount: 6
+hlsSegmentDuration: 2s
+
+authMethod: internal
+authInternalUsers:
+  - user: streaming-publisher
+    pass: configure-via-compose-environment
+    ips: []
+    permissions:
+      - action: publish
+        path:
+  - user: streaming-reader
+    pass: configure-via-compose-environment
+    ips: []
+    permissions:
+      - action: read
+        path:
+
+paths:
+  all_others: {}

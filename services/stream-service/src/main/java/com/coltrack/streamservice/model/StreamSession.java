@@ -21,6 +21,7 @@ public class StreamSession {
     /**
      * Источник RTSP камеры.
      */
+    @JsonIgnore
     private String rtspUrl;
 
     @Builder.Default

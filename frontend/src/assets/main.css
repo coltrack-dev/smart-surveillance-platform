@@ -200,3 +200,7 @@ video {
     padding:20px;
 
 }
+
+.content.player-content {
+    padding: 0;
+}

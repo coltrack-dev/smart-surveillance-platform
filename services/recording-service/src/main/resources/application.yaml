@@ -12,9 +12,9 @@ spring:
     table: flyway_recording_schema_history
 
   datasource:
-    url: jdbc:postgresql://192.168.13.128:5432/surveillance_db
-    username: surveillance_user
-    password: surveillance_password
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${POSTGRES_HOST:192.168.13.128}:${POSTGRES_PORT:5432}/${POSTGRES_DB:surveillance_db}}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:surveillance_user}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:surveillance_password}}
 
   jpa:
     hibernate:
@@ -26,7 +26,7 @@ spring:
 #      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -44,10 +44,10 @@ spring:
 
 # Camera service connection
 camera-service:
-  url: http://localhost:8091
+  url: ${CAMERA_SERVICE_URL:http://localhost:8091}
 
 stream-service:
-  url: http://localhost:8094
+  url: ${STREAM_SERVICE_URL:http://localhost:8094}
 
 
 # Recording storage

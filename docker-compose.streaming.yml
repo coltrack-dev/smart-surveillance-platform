@@ -1,0 +1,216 @@
+name: surveillance-streaming
+
+# Private streaming foundation; not a public SaaS ingress until gateway auth
+# and tenant-scoped playback exist. Sample publishers are intentionally absent.
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - streaming-kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.13.1
+    environment:
+      MTX_AUTHINTERNALUSERS_0_USER: ${STREAMING_MEDIA_PUBLISH_USER:?Set a MediaMTX publish username}
+      MTX_AUTHINTERNALUSERS_0_PASS: ${STREAMING_MEDIA_PUBLISH_PASSWORD:?Set a long random MediaMTX publish password}
+      MTX_AUTHINTERNALUSERS_1_USER: ${STREAMING_MEDIA_READ_USER:?Set a MediaMTX read username}
+      MTX_AUTHINTERNALUSERS_1_PASS: ${STREAMING_MEDIA_READ_PASSWORD:?Set a long random MediaMTX read password}
+    volumes:
+      - ./docker/mediamtx.streaming.yml:/mediamtx.yml:ro
+    expose:
+      - "8554"
+      - "8888"
+    restart: unless-stopped
+
+  rtsp-test-publisher:
+    profiles: ["test-publishers"]
+    image: linuxserver/ffmpeg:7.1.1
+    command:
+      - -re
+      - -f
+      - lavfi
+      - -i
+      - testsrc=size=1280x720:rate=25
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -pix_fmt
+      - yuv420p
+      - -f
+      - rtsp
+      - -rtsp_transport
+      - tcp
+      - rtsp://${STREAMING_MEDIA_PUBLISH_USER:?Set a MediaMTX publish username}:${STREAMING_MEDIA_PUBLISH_PASSWORD:?Set a long random MediaMTX publish password}@mediamtx:8554/test-source
+    depends_on:
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
+  video-ingest-agent:
+    build:
+      context: ./agents/video-ingest-agent
+      dockerfile: Dockerfile
+    image: surveillance/video-ingest-agent:streaming
+    environment:
+      AGENT_ID: ${VIDEO_INGEST_AGENT_ID:-streaming-media-node}
+      AGENT_BIND: 0.0.0.0:8098
+      AGENT_DATA_DIR: /data
+      AGENT_API_TOKEN: ${VIDEO_INGEST_AGENT_TOKEN:?Set a long random ingest token}
+      AGENT_READY_TIMEOUT_SECONDS: ${VIDEO_INGEST_AGENT_READY_TIMEOUT_SECONDS:-30}
+      AGENT_OUTPUT_READY_TIMEOUT_SECONDS: ${VIDEO_INGEST_AGENT_OUTPUT_READY_TIMEOUT_SECONDS:-15}
+      AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS: ${VIDEO_INGEST_AGENT_OUTPUT_HEALTH_INTERVAL_SECONDS:-15}
+      AGENT_OUTPUT_STALL_TIMEOUT_SECONDS: ${VIDEO_INGEST_AGENT_OUTPUT_STALL_TIMEOUT_SECONDS:-15}
+      AGENT_MAX_PIPELINES: ${VIDEO_INGEST_AGENT_MAX_PIPELINES:-8}
+      AGENT_MAX_CONCURRENT_PROBES: ${VIDEO_INGEST_AGENT_MAX_CONCURRENT_PROBES:-4}
+      RUST_LOG: ${VIDEO_INGEST_AGENT_LOG_LEVEL:-info}
+    expose:
+      - "8098"
+    depends_on:
+      mediamtx:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8098/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  camera-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:camera-service
+        MODULE_DIR: services/camera-service
+    image: surveillance/camera-service:streaming
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:?Set a base64 encoded 32-byte key}
+      JAVA_OPTS: ${CAMERA_JAVA_OPTS:--Xms128m -Xmx384m}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      kafka:
+        condition: service_started
+    restart: unless-stopped
+
+  stream-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:stream-service
+        MODULE_DIR: services/stream-service
+    image: surveillance/stream-service:streaming
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CAMERA_SERVICE_URL: http://camera-service:8091
+      STREAM_HLS_PATH: /data/hls
+      STREAM_INGEST_AGENT_ENABLED: "true"
+      STREAM_INGEST_AGENT_URL: http://video-ingest-agent:8098
+      STREAM_INGEST_AGENT_TOKEN: ${VIDEO_INGEST_AGENT_TOKEN:?Set a long random ingest token}
+      STREAM_INGEST_AGENT_PUBLISH_RTSP_BASE_URL: rtsp://${STREAMING_MEDIA_PUBLISH_USER:?Set a MediaMTX publish username}:${STREAMING_MEDIA_PUBLISH_PASSWORD:?Set a long random MediaMTX publish password}@mediamtx:8554
+      STREAM_INGEST_AGENT_INTERNAL_HLS_BASE_URL: http://mediamtx:8888
+      STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX: /media-hls
+      STREAMING_MEDIA_READ_USER: ${STREAMING_MEDIA_READ_USER:?Set a MediaMTX read username}
+      STREAMING_MEDIA_READ_PASSWORD: ${STREAMING_MEDIA_READ_PASSWORD:?Set a long random MediaMTX read password}
+      BROADCAST_MANAGEMENT_TOKEN: ${BROADCAST_MANAGEMENT_TOKEN:?Set a long random management token}
+      BROADCAST_PLAYBACK_SECRET: ${BROADCAST_PLAYBACK_SECRET:?Set a long random playback signing secret}
+      BROADCAST_PLAYBACK_TTL: ${BROADCAST_PLAYBACK_TTL:-PT10M}
+      BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/player}
+      BROADCAST_RATE_LIMIT_PER_MINUTE: ${BROADCAST_RATE_LIMIT_PER_MINUTE:-300}
+      CORS_ALLOWED_ORIGIN: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
+      JAVA_OPTS: ${STREAM_JAVA_OPTS:--Xms128m -Xmx384m}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - streaming-hls-data:/data/hls
+    depends_on:
+      kafka:
+        condition: service_started
+      camera-service:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+      video-ingest-agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  websocket-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:websocket-service
+        MODULE_DIR: services/websocket-service
+    image: surveillance/websocket-service:streaming
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      JAVA_OPTS: ${WEBSOCKET_JAVA_OPTS:--Xms96m -Xmx256m}
+    depends_on:
+      kafka:
+        condition: service_started
+    restart: unless-stopped
+
+  camera-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: gateway:camera-gateway
+        MODULE_DIR: gateway/camera-gateway
+    image: surveillance/camera-gateway:streaming
+    environment:
+      JAVA_OPTS: ${GATEWAY_JAVA_OPTS:--Xms96m -Xmx256m}
+      CAMERA_SERVICE_URL: http://camera-service:8091
+      STREAM_SERVICE_URL: http://stream-service:8094
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
+    ports:
+      - "${STREAMING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STREAMING_GATEWAY_PORT:-8081}:8080"
+    depends_on:
+      - camera-service
+      - stream-service
+      - websocket-service
+      - mediamtx
+    restart: unless-stopped
+
+  broadcast-player:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${BROADCAST_API_URL:-http://localhost:8081/api}
+    image: surveillance/broadcast-player:streaming
+    ports:
+      - "${BROADCAST_PLAYER_BIND_ADDRESS:-127.0.0.1}:${BROADCAST_PLAYER_PORT:-5173}:80"
+    restart: unless-stopped
+
+volumes:
+  streaming-kafka-data:
+  streaming-hls-data:
