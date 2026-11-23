@@ -1,5 +1,22 @@
 # Phase 3 — Roadmap after architecture review
 
+## Phase 3.2D — Multi-tenant security acceptance (2026-11-24)
+
+**Status: BLOCKED for phase completion and public ingress.** In an isolated two-tenant setup, the controller IDOR matrix passed; live Gateway-routed STOMP/Kafka checks passed, including anonymous rejection, tenant destination enforcement, persisted Camera owner routing despite a forged event tenant claim, redaction and active membership revocation. Live HLS playlists/segments passed PUBLIC/PRIVATE, cross-tenant, expiry, tampering, revocation, disable/delete and direct `/media-hls` denial checks. Fresh and legacy Flyway startup plus pre/post ownership backup/restore passed. No Surveillance containers or data were targeted.
+
+Phase 3.2D.1 closed the missing encrypted-key retrieval evidence using an isolated AES-128 HLS source: Gateway playback grant, playlist and authorized 16-byte key returned 200; missing, forged, expired, cross-tenant, revoked, disabled and deleted access were rejected. The separate hostile external key-URI check remains **BLOCKED**: its control playlist returned 200, but the modified playlist request returned 401 (with zero arbitrary upstream requests), rather than a conclusive rewrite rejection. Browser decryption was NOT TESTED. No prior IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load tests were repeated. Keep Streaming loopback/private.
+
+| Acceptance area | Current status | Next action |
+|---|---|---|
+| Camera/Stream/Broadcast route authorization, membership and unassigned rows | PASS (focused controller methods) | Before rollout, add full HTTP binding tests where request conversion/exception mapping is part of the risk. |
+| Shared stream consumer lease acquire/release | PASS (tenant-bound controller delegation plus historical manager tests) | No separate viewer lease API exists; preserve one StreamManager session per Camera. |
+| Gateway/STOMP/Kafka tenant isolation and revocation | PASS (live isolated) | Reuse prior Surveillance destination unit evidence; keep WebSocket service private. |
+| Protected encrypted HLS authorization | PASS for playlist and exact key retrieval; hostile external URI guard BLOCKED | Diagnose the modified-playlist 401 and capture an authorized rejection (expected 502) with zero arbitrary upstream requests; browser AES-128 decode remains untested. |
+| Flyway lifecycle and synthetic backup/restore | PASS (isolated) | Rehearse against supported schema snapshots, measure locks, and establish release migration/restore procedure before production. |
+| Public ingress | NOT APPROVED | Independent security review, encrypted-key decision, TLS/host policy, rate limits and route allowlist remain prerequisites. |
+
+Phase 3.2D is not complete while the hostile external key-URI check and independent public-route review remain unresolved. The encrypted key retrieval gap itself is closed. No public ingress is approved.
+
 ## Phase 3.2A result — OIDC foundation (historical; Phase 3.2B status follows)
 
 Implemented: pinned Keycloak development service isolated to Streaming; realm import with public SPA client and PKCE S256; dedicated Keycloak database/volume; dedicated Streaming PostgreSQL database/volume; provider-neutral security interfaces and initial User/Tenant/Membership/Role schema; authenticated identity discovery and membership lookup endpoints; issuer/JWKS/audience JWT validation in gateway, stream-service and identity-service; authenticated Streaming management routes; Vue Keycloak login guard for protected routes; preserved Surveillance legacy security mode. The migration is additive and has not been run against any existing database. See `IDENTITY_ARCHITECTURE.md` and `SECURITY_BOUNDARIES.md`.
@@ -27,41 +44,43 @@ Camera/Stream -> Kafka -> consumers/workers/WebSocket service.
 
 Identity precedes tenant-scoped API authorization. Ownership columns precede scoped repositories. Tenant-aware Kafka events precede async tenant workers and WebSocket fanout. Playback policies depend on Broadcast ownership and membership. Recording/Analytics require explicit SaaS rollout gates. Media path isolation depends on trusted tenant-to-camera mapping.
 
-## Phase 3.2 — Identity and API protection (remaining work)
+## Phase 3.2 — Identity, ownership and cross-transport authorization
 
-- Review production Keycloak operation, hostname/TLS, client origins, access-token lifetime, signing-key rotation and backup; development `start-dev` config is not production-ready.
-- Add membership lifecycle, tenant authorization and audit; current identity endpoints only discover users and list/resolve existing active memberships.
-- Replace Broadcast's global-secret bypass in OIDC mode with tenant-aware user/member checks; currently gateway authentication alone is in place and no domain tenant check exists.
-- Protect internal Camera connection and WebSocket CONNECT/SUBSCRIBE with workload identity and tenant filtering; no public websocket route is allowed meanwhile.
-- Decide a reviewed, isolated migration/bootstrap approach for first tenant/member. Current new schema is empty and no membership can be granted through API.
-- Gate: 401 without identity, 403 insufficient role, direct-service bypass denied.
+Implemented: Keycloak/OIDC JWT validation; application-owned memberships and role checks; nullable tenant ownership for Camera/Broadcast/Stream consumer leases; scoped management operations; workload-authenticated internal Camera lookup; tenant-bound stream leases; persisted-owner Kafka routing; STOMP tenant subscriptions; short-lived Broadcast playback grants and protected HLS proxy. Isolated service Flyway startup, legacy unassigned rows, two-tenant Gateway/STOMP/Kafka behavior and synthetic backup/restore have been exercised.
 
-## Phase 3.3 — Schema, ownership and scoped queries
+Remaining before Phase 3.2 acceptance or any public ingress:
 
-- Establish one release-time migration authority and verified backup/restore.
-- Add identity tables and nullable tenant ownership fields with additive migrations.
-- Read-only inventory; prepare reviewed mapping and quarantine unknown rows.
-- Scope list/get/mutations, schedulers and child resources. Enforce tenant on parent-child relations.
+- Resolve the live encrypted HLS key scenario if encrypted playlists are enabled; the current synthetic HLS source had no key URI.
+- Add full HTTP binding/controller-slice assertions for the management IDOR matrix where serialization and framework exception mapping matter; current new negative tests call controller methods directly.
+- Add tenant provisioning, membership lifecycle administration and audit trails; the identity API discovers and resolves memberships but does not provision them.
+- Separate runtime and migration database credentials; define supported schema-upgrade order, lock/latency limits, restore rehearsal and a post-assignment forward-repair procedure.
+- Review Keycloak production hostname/TLS, browser origins, token/key rotation, session revocation and backups; development `start-dev` config is not production-ready.
+- Keep Recording, Analytics, search and admin/debug surfaces unavailable to SaaS until ownership and authorization cover their full data lifecycle.
+- Gate: encrypted key access when applicable, independent security review, route/port allowlist, TLS and explicit release authorization.
+
+## Phase 3.3 — Remaining tenant data ownership
+
+- Extend ownership to Recording, Analytics, search and other enabled services; keep them private until then.
+- Prepare a read-only inventory and reviewed mapping for legacy rows; do not automatically assign a default tenant.
+- Scope child resources, schedulers, exports, object storage and cleanup; enforce tenant on parent-child relations.
 - Consider RLS only after transaction-local context, restricted runtime DB roles and pool-reset tests.
-- Gate: Camera and Broadcast cross-tenant IDOR tests and untouched legacy Surveillance compatibility.
+- Gate: cross-tenant tests for every enabled resource and untouched legacy Surveillance behavior.
 
-## Phase 3.4 — Async and media isolation
+## Phase 3.4 — Async and media isolation follow-up
 
-- Version Kafka events with tenant/event/actor context; remove RTSP URL/secrets from messages and audit retention.
-- Consumers validate event tenant against owned resource; retries, DLQ, schedulers and cleanup preserve context.
+- Add schema versioning, actor/audit context, retries and DLQ policy; current tested listeners resolve Camera owner from persisted state and redact source media/error details.
 - Keep shared StreamManager leases and one ingest pipeline per Camera; do not duplicate domain models.
-- Use tenant/camera media namespace with explicit compatibility mapping; enforce per-path MediaMTX authorization and rotate shared credentials.
+- Define tenant/camera MediaMTX path namespace and compatibility mapping; rotate shared media credentials and add a tenant-aware workload identity lifecycle.
 - Make agent API token mandatory in Streaming mode.
-- Gate: cross-tenant media path denial, no credential leaks, restart/lease recovery and one FFmpeg per source.
+- Gate: path isolation, credential rotation, restart/lease recovery and one FFmpeg per source.
 
-## Phase 3.5 — Playback and WebSocket authorization
+## Phase 3.5 — Playback and WebSocket production hardening
 
-- Define explicit public-consent and private member/invitation rules.
-- Bind short-lived grants to tenant, Broadcast, media audience and revocation generation. Recheck on renewal and every playlist/segment/key request.
-- Remove direct /media-hls from public ingress.
-- Filter WebSocket delivery by tenant and membership.
-- Add distributed rate limits, audit events and log redaction.
-- Gate: anonymous private denial, explicit public playback, expired/tampered/revoked denial and membership revocation.
+- Preserve explicit PUBLIC consent and PRIVATE membership policy; tested token issuance and HLS media fetch recheck current grant/membership.
+- Verify encrypted key fetch live when enabled; ensure all reverse proxies redact token query parameters.
+- Add distributed rate limits, audit events and operational log redaction beyond the current in-process limits.
+- Keep direct `/media-hls/**` private; allow only reviewed public Broadcast token/media routes behind TLS.
+- Gate: completed key-path review, renewal/revocation telemetry, abuse controls and public-route security review.
 
 ## Phase 3.6 — Recording and Analytics
 

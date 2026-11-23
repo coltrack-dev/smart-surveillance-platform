@@ -1,5 +1,110 @@
 # Smart Surveillance Platform — реестр тестов
 
+## Phase 3.2D multi-tenant acceptance results (2026-11-24)
+
+**Acceptance: BLOCKED for Phase 3.2D completion / public ingress.** Phase 3.2D.1 verified live encrypted playlist and AES-128 key retrieval through Gateway. A separate hostile external key-URI request returned 401 instead of the expected rewrite rejection, so that guard remains unverified. No prior IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load test was repeated.
+
+### Phase 3.2D.1 — Encrypted HLS key HTTP evidence (2026-11-24)
+
+Environment: Compose project `phase32d-accept-20261123`, isolated Streaming PostgreSQL and Keycloak, loopback Gateway `127.0.0.1:18082`, Stream service `127.0.0.1:18094`, synthetic HLS upstream `127.0.0.1:18088`. Source was an original short H.264 HLS output with `#EXT-X-KEY:METHOD=AES-128,URI="aes.key"` and a 16-byte key. No Docker image was built, no Surveillance resource was operated, and no Gradle task was run. Playback token TTL was 15 seconds for expiry checks. A browser was not used; segment decryption is **NOT TESTED**.
+
+| HTTP scenario | Status / result | Evidence |
+|---|---|---|
+| Tenant A obtains PRIVATE playback grant (`GET /api/playback/{publicId}/token`, validated bearer and `X-Tenant-ID`) | 200 | Grant was accepted by the Gateway-routed media proxy. |
+| Authorized encrypted playlist (`GET /broadcast-play/{publicId}/index.m3u8?token=…`) | 200 | `#EXT-X-KEY` key reference was rewritten to `/broadcast-play/{publicId}/aes.key?token=…`; raw `aes.key` URI and upstream host were absent from returned playlist. |
+| Authorized key (`GET /broadcast-play/{publicId}/aes.key?token=…`) | 200 | Response was exactly 16 bytes and matched the generated key; SHA-256 `8df375a7b8d7d2dab7b92a5232d54e5aeb6ac2c5673428e98178d26cb116d8cb`. |
+| Missing or empty playback grant | 401 / 401 | Both rejected by the HTTP media route. |
+| Modified or forged grant | 401 / 401 | Key requests rejected. |
+| Expired 15-second grant | 401 | Key request after 16 seconds. |
+| Tenant B requests Tenant A PRIVATE playback grant | 401 | Cross-tenant grant denied. |
+| Key after Tenant A membership revocation | 401 | Membership was restored immediately after this isolated check. |
+| Key after Broadcast disable / delete | 401 / 404 | Disable management request returned 200; delete returned 204. |
+| Malformed encoded key resource path | 400 | Rejected at HTTP boundary. |
+| Authorized playlist whose key URI was changed to an absolute external URL | **BLOCKED** | A valid-grant control playlist returned 200; modified playlist request returned 401, not expected 502. The upstream counter recorded zero fetches to the arbitrary path, but that does not prove the rewrite validator rejected the URI. Historical `BroadcastPlaybackControllerTest.rejectsExternalPlaylistReferences` was not rerun. |
+| Captured application/proxy log scan | PASS (bounded) | No access/playback token, key bytes, key Base64 or key SHA-256 match in captured Stream/Gateway/upstream logs. No raw upstream URL appeared in playlist. |
+
+**Decision:** the Phase 3.2D blocker specifically for live encrypted-key retrieval is **RESOLVED**. Phase 3.2D overall remains **BLOCKED** pending a conclusive authorized hostile-URI rejection and independent public-route review. No browser AES decoding was tested. No previously passed tests were repeated.
+
+An auxiliary re-enable request used while sequencing the synthetic disable/delete checks returned HTTP 500 because the minimal isolated stack did not include Camera service for stream reacquisition. The synthetic row was then removed; the two pre-existing synthetic Broadcast enabled flags and their two lease rows were restored from the saved pre-test snapshot. This is an environment limitation observed during fixture handling, not accepted as evidence that the normal full Streaming stack cannot re-enable a Broadcast.
+
+### Source inventory at this snapshot
+
+The current Java source scan finds **150 methods annotated `@Test`**. This is a source count, not the number of tests executed in Phase 3.2D; parameterized invocations and assertions are not expanded.
+
+| Module | `@Test` methods in current sources |
+|---|---:|
+| camera-gateway | 6 |
+| analytics-service | 24 |
+| camera-service | 17 |
+| identity-service | 5 |
+| notification-service | 1 |
+| recording-service | 24 |
+| search-service | 1 |
+| stream-service | 50 |
+| websocket-service | 9 |
+| common-security | 13 |
+| **Total** | **150** |
+
+The previous Phase 3.2C published snapshot listed 136 methods. The current scan is against the changed Phase 3.2D worktree; it must not be confused with the 15 unique focused methods executed below. The old snapshot was not a baseline for recomputing this changed tree. Earlier per-method historical statuses remain in the following inventory sections.
+
+### Focused Java tests executed
+
+| Full test method | Status | Evidence / note |
+|---|---|---|
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.tenantCameraListUsesMembershipScopedRepositoryPath` | PASSED | Selected in the initial focused Phase 3.2D controller run; tenant-scoped service path only. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.absentMembershipDeniesListAndCameraMutationsBeforeAnyLookup` | PASSED | Selected in the initial focused Phase 3.2D run; no Camera/monitoring service access without membership. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.crossTenantCameraMutationsUseScopedLookupsAndReturnNotFound` | PASSED | Selected in the initial focused Phase 3.2D run; update/delete/heartbeat/check-stream use scoped operations and hide the row. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.crossTenantCameraGetIsHiddenWithoutUnscopedFallback` | PASSED | Exact filtered method in Phase 3.2D; cross-tenant GET returns 404 and does not call the unscoped lookup. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.unassignedLegacyCameraIsHiddenByTenantScopedReadAndMutationRoutes` | PASSED | Final exact rerun passed after fixing its missing mocked `findById(id, tenant)` result; the first attempt failed in the fixture with NPE, not in application code. |
+| `com.coltrack.streamservice.controller.StreamTenantAuthorizationTest.missingMembershipDeniesEveryStreamRouteBeforeResourceLookup` | PASSED | Selected in the initial focused Phase 3.2D run; management/read/list/HLS routes are denied before service access. |
+| `com.coltrack.streamservice.controller.StreamTenantAuthorizationTest.crossTenantStartReadUrlAndRemoveAreHiddenBeforeStreamManagerAccess` | PASSED | Selected in the initial focused Phase 3.2D run; cross-tenant camera resolution returns hidden 404 before manager calls. |
+| `com.coltrack.streamservice.controller.StreamTenantAuthorizationTest.streamListsUseTenantScopedLeaseViews` | PASSED | Selected in the initial focused Phase 3.2D run; list and available-camera views use selected tenant. |
+| `com.coltrack.streamservice.controller.StreamTenantAuthorizationTest.unassignedLegacyCameraCannotStartReadStatusOrReleaseAStreamLease` | PASSED | Exact filtered method in Phase 3.2D; unassigned record cannot start/read/status/stop/remove a stream. |
+| `com.coltrack.streamservice.controller.StreamTenantAuthorizationTest.authorizedStartAndStopUseTenantSpecificConsumerLeaseOperations` | PASSED | Exact filtered method in Phase 3.2D; start/stop delegate only to tenant-bound lease operations. |
+| `com.coltrack.streamservice.controller.BroadcastControllerTenantAuthorizationTest.missingMembershipDeniesBroadcastReadDeleteAndPlaybackInfoBeforeServiceCalls` | PASSED | Selected in the initial focused Phase 3.2D run; no service lookup occurs without membership. |
+| `com.coltrack.streamservice.controller.BroadcastControllerTenantAuthorizationTest.crossTenantBroadcastReadsDeleteAndPlaybackInfoUseScopedServiceMethods` | PASSED | Selected in the initial focused Phase 3.2D run; get/list/delete/playback-info use tenant-scoped methods only. |
+| `com.coltrack.streamservice.controller.BroadcastControllerTenantAuthorizationTest.unassignedLegacyBroadcastIsHiddenFromTenantListReadDeleteAndPlaybackInfo` | PASSED | Exact filtered method in Phase 3.2D; unassigned Broadcast is absent and mutations/details use scoped methods. |
+| `com.coltrack.websocketservice.security.WebSocketHttpSecurityTest.oidcPermitsUpgradeButDeniesUnrelatedHttpRoutes` | PASSED | Exact filtered OIDC HTTP security method; WebSocket upgrade allowed for STOMP auth; unrelated HTTP route denied. |
+| `com.coltrack.websocketservice.security.LegacyWebSocketHttpSecurityTest.legacyPermitsTrustedUpgradeButDeniesUnrelatedRoutes` | PASSED | Exact filtered legacy HTTP security method; trusted Surveillance upgrade remains available. |
+
+Each Gradle `Test` task was invoked separately with `--no-daemon --no-parallel --max-workers=1` and a focused `--tests` filter; the follow-up tests added in this turn used exact method filters. No previously passed test was repeated solely for confirmation. The only method rerun in this phase was the new Camera method whose test fixture failed on its first attempt; the fixture was corrected and the same method then passed.
+
+### Live isolated integration evidence
+
+Environment: Compose project `phase32d-accept-20261123`; isolated PostgreSQL 17, Kafka, Keycloak, MediaMTX 1.13.1, Rust ingest-agent and service JARs. Host-facing test ports were loopback-only: Gateway 18082, WebSocket service 18096, PostgreSQL 25440, Keycloak 18180, Kafka 19092, MediaMTX RTSP 18554 and HLS 18888. Browser/test origin was `http://localhost:15173`. Two synthetic tenants and three Camera/Broadcast rows were used; the RTSP publisher generated 640×360 H.264 at 10 fps. No public ingress or load test was used.
+
+| Scenario | Status | Exact result |
+|---|---|---|
+| Gateway STOMP CONNECT: anonymous, Tenant A, Tenant B | PASS | Anonymous socket closed without CONNECTED; A and B each received CONNECTED. |
+| STOMP SUBSCRIBE destination isolation | PASS | A-to-B tenant topic and invalid `/topic/streams` both returned STOMP ERROR. |
+| Kafka owner routing and forged claim | PASS | A Camera event carrying forged Tenant B reached only A through Gateway; internal HLS URL and diagnostic detail were redacted. |
+| Membership revocation on active socket | PASS | After isolated membership status changed to REVOKED, a later Camera event was not delivered to A; membership was restored to ACTIVE. |
+| PUBLIC/PRIVATE playback token policy | PASS | PUBLIC anonymous and A-authenticated grants returned 200; PRIVATE anonymous and Tenant B grant for A's Broadcast returned 401; A PRIVATE grant returned 200. |
+| Protected MediaMTX playlists and segments | PASS | PUBLIC and PRIVATE playlists returned 200 `#EXTM3U`; referenced HLS segments returned 200 (about 1.9 KiB and 2.2 KiB). |
+| Token expiry and modification | PASS | 15-second grant returned 401 at 17.0 seconds; modified grant returned 401 in the earlier isolated probe. |
+| Membership revocation, disable/delete | PASS | Existing PRIVATE grant and renewal were denied on revocation; fresh grant was denied after disable; renewal returned 410; delete returned 204, playback-info 404 and previous grant 404. |
+| Direct `/media-hls/**` bypass | PASS | Anonymous request 401; authenticated request 403. |
+| Live encryption key fetch | BLOCKED | Synthetic playlist had no `EXT-X-KEY`. Previous `BroadcastPlaybackControllerTest.rewritesPlaylistSegmentsAndEncryptionKeyToProtectedUrls` is unit evidence only. |
+| Surveillance WebSocket compatibility | PASS (historical unit only) | Reused `WebSocketEventTenantRoutingTest.legacySurveillanceKeepsExistingGlobalDestinations`; no Surveillance stack was started. |
+
+### Flyway and data restore
+
+| Scenario | Status | Exact evidence |
+|---|---|---|
+| Fresh database service migrations | PASS | Identity V1; Camera baseline 0 + V1–V3; Stream baseline 0 + V1–V3, all history rows `success=true`. |
+| Populated pre-ownership schema backup/restore | PASS | Isolated `pg_dump -Fc`/`pg_restore` restored one Camera, one Broadcast and one lease (`1:1:1`); restored schema had no `tenant_id` columns before upgrade. |
+| Service Flyway upgrade and no automatic ownership | PASS | Camera/Stream histories reached V3; legacy Camera/Broadcast `tenant_id` remained NULL and tenant-qualified queries returned `0:0`; five tenant indexes present. Stream startup later cleared the ephemeral `LEGACY` lease through existing orphan cleanup. |
+| Post-ownership backup/restore | PASS | Synthetic Camera/Broadcast/lease IDs and owner UUID were identical after restore. |
+| Destructive rollback after assignment | NOT RUN | Prohibited for assigned ownership data; no down migration. Backup/restore was tested instead. |
+
+### Explicitly not run
+
+- Playwright/Chromium page/iframe E2E: historical PASS from `docs/broadcast-integration-tests.md` reused; not repeated because player code was unchanged.
+- Load/stress/soak or high-concurrency viewer test: NOT RUN by scope. The historical four-viewer and 32-slot tests are not new Phase 3.2D evidence.
+- Existing Surveillance service/container/data operations: NOT RUN.
+- Public ingress or production migration: NOT RUN.
+- Live encrypted HLS key request: BLOCKED as noted above.
+
 ## Phase 3.2C cross-transport additions and execution record (2026-11-23)
 
 The previous Phase 3.2B source snapshot was 118 Java test methods. A current source scan finds **136 methods** across the repository (`@Test` methods; parameterized invocations and assertions are not expanded). Current source counts: camera-gateway 6, analytics-service 24, camera-service 12, notification-service 1, recording-service 25, search-service 1, stream-service 42, websocket-service 7, identity-service 5, common-security 13. The full per-method table and historical statuses below remain the Phase 3.2B snapshot; do not interpret it as a current 136-method execution report. Exact results for this phase are listed separately.

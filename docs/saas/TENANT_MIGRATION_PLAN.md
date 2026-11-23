@@ -1,5 +1,25 @@
 # Phase 3.2B — Tenant ownership migration status
 
+## Phase 3.2D isolated Flyway lifecycle and restore evidence (2026-11-24)
+
+**Result: PASS for isolated migration/startup and backup/restore checks.** No production or Surveillance database was accessed.
+
+The initial isolated Streaming database started identity-service, camera-service and stream-service from fresh schemas. Observed history tables were `identity.flyway_identity_schema_history` V1, `public.flyway_camera_schema_history` baseline 0 and V1–V3, and `public.flyway_stream_schema_history` baseline 0 and V1–V3; each migration row had `success=true`.
+
+A second disposable DB was created from the pre-owner base schema. Services were staged at the prior migration levels, then populated with one synthetic Camera, Broadcast and Stream consumer lease whose IDs were fixed only for the test. A custom-format backup restored all three rows into a separate pre-owner restore DB. Camera-service and stream-service then started with current Flyway migrations against the populated source. Camera V2/V3 and Stream V3 applied successfully. The legacy Camera and Broadcast stayed `tenant_id IS NULL`, tenant-qualified Camera/Broadcast queries returned zero, and the five tenant-leading indexes were present. No automatic ownership assignment occurred.
+
+On Stream-service restart, the old synthetic `LEGACY` consumer lease was removed by the existing `StreamManager.clearOrphanedLegacyLeases()` startup behavior. This is expected orphan cleanup for an ephemeral legacy API consumer, not a migration backfill. Before restarting Stream-service, the pre-owner backup/restore contained that lease. A separate post-owner backup included an explicitly assigned synthetic tenant on Camera, Broadcast and lease; restoration preserved all three IDs and owner values.
+
+No destructive rollback was attempted after assigning the synthetic tenant. There are no down migrations. A production rollback must restore a verified pre-upgrade backup or use a reviewed forward repair; deleting assigned tenant columns would lose authorization ownership. These checks do not establish migration performance on large production databases, database lock duration, staged release ordering, or migration/runtime credential separation.
+
+| Scenario | Status | Evidence | Residual risk |
+|---|---|---|---|
+| Fresh identity/Camera/Stream Flyway startup | PASS | Isolated PostgreSQL 17 histories above | Does not validate existing installation drift. |
+| Pre-owner backup/restore | PASS | Synthetic pre-owner Camera/Broadcast/lease restored as `1:1:1`; no tenant columns in restored pre-migration schema | Test data only. |
+| Additive upgrade and no Camera/Broadcast backfill | PASS | Service-owned Camera V2/V3 and Stream V3; both resource rows remain NULL; scoped queries return `0:0` | The runtime clears orphaned legacy lease on restart by design. |
+| Post-owner backup/restore | PASS | Synthetic Camera/Broadcast/lease restored with same IDs and owner UUID | No assigned-data rollback/destructive test performed. |
+| Rollback after tenant assignment | NOT RUN | No down migration; backup/restore path validated instead | Requires release-specific restore rehearsal before production. |
+
 ## Phase 3.2C isolated migration evidence
 
 On 2026-11-23 the migration SQL was applied in order to a disposable `postgres:17-alpine` container (`phase32c-isolated-pg`), backed only by a 512 MiB tmpfs and published only on `127.0.0.1:25439`. A synthetic pre-ownership Camera and enabled Broadcast were created first; identity V1 and Camera V1–V3, Stream V1–V3 SQL were then applied. No project database, named volume, running Surveillance container, or application stack was used.
@@ -14,7 +34,7 @@ Rollback after ownership assignment remains **BLOCKED / not demonstrated**. Migr
 
 No automatic backfill is approved. Legacy Camera, Broadcast and lease rows that remain `tenant_id IS NULL` must stay invisible to Streaming until an explicit owner-mapping and audited backfill procedure is separately approved. Surveillance continues to use legacy unscoped semantics.
 
-## Implemented, additive, not executed
+## Migration shape (Phase 3.2B implementation snapshot; execution updated above)
 
 Two new migrations are present:
 
@@ -23,13 +43,13 @@ Two new migrations are present:
 | camera-service | `V2__camera_tenant_ownership.sql` | Nullable `cameras.tenant_id`; `(tenant_id,camera_number)` index and `(tenant_id,id)` unique support index. |
 | stream-service | `V3__broadcast_and_stream_lease_tenant_ownership.sql` | Nullable `broadcasts.tenant_id` and `stream_consumer_leases.tenant_id`; tenant-leading camera/list indexes. |
 
-The migrations preserve all existing IDs, numbers, public IDs and playback versions. They do not set a default, assign any existing row, enforce `NOT NULL`, add a cross-service FK, or change existing columns. No migration was run. No production or Surveillance database was accessed.
+The migrations preserve all existing IDs, numbers, public IDs and playback versions. They do not set a default, assign any existing row, enforce `NOT NULL`, add a cross-service FK, or change existing columns. Phase 3.2D later executed these migrations only through service Flyway startup against isolated disposable databases; no production or Surveillance database was accessed.
 
-Each service keeps its own Flyway history (`flyway_camera_schema_history`, `flyway_stream_schema_history`; identity-service separately owns `flyway_identity_schema_history`). In Streaming Compose, camera and stream services wait for healthy identity-service so the identity schema is initialized before tenant membership queries. Their ownership migrations are service-local and have no dependency on each other's tables; no central always-on migration service was added. Before production rollout, still establish a release-time migration order, isolated backup/restore evidence, and least-privilege runtime/migration DB roles.
+Each service keeps its own Flyway history (`flyway_camera_schema_history`, `flyway_stream_schema_history`; identity-service separately owns `flyway_identity_schema_history`). In Streaming Compose, camera and stream services wait for healthy identity-service so the identity schema is initialized before tenant membership queries. Their ownership migrations are service-local and have no dependency on each other's tables; no central always-on migration service was added. Before production rollout, still establish a release-time migration order and least-privilege runtime/migration DB roles.
 
 The existing Streaming database is isolated from Surveillance. Newly created rows through OIDC Camera APIs are assigned from verified `TenantContext`; Broadcast tenant is copied from its authorized Camera. Existing nullable rows, including preexisting Broadcasts, remain inaccessible to SaaS users until an explicit operator-reviewed mapping and backfill is approved. A tenant UUID supplied in a request body is ignored/not accepted as ownership.
 
-Do not apply these migrations to an existing database as part of application startup. First verify target URL, database, schema, role and backup. Migration execution, data inventory, backfill, constraints and rollback remain separate operator-reviewed actions.
+Before any deployment startup can point at an existing database, verify target URL, database, schema, role and backup. Production migration execution, data inventory, backfill, constraints and rollback remain separate operator-reviewed actions; Phase 3.2D evidence was confined to disposable databases.
 
 ## Staged rollout still required
 
@@ -41,13 +61,13 @@ Do not apply these migrations to an existing database as part of application sta
 6. Evaluate transaction-local RLS with restricted non-owner roles and connection-pool tests as defense in depth. Application authorization remains mandatory.
 7. Take and restore-test backups before every ownership-changing rollout. After tenant writes begin, prefer forward repair or a verified restore over dropping columns.
 
-## Phase 3.2A — Identity foundation migration status (history)
+## Phase 3.2A — Identity foundation migration status (historical checkpoint)
 
 Identity-service now owns an additive Flyway migration at `services/identity-service/src/main/resources/db/migration/V1__identity_foundation.sql`. It creates only `identity.users`, `identity.tenants`, fixed `identity.roles`, and `identity.tenant_memberships`, with issuer+subject uniqueness, status/role constraints, foreign keys and membership lookup index. It runs in the isolated Streaming PostgreSQL database with history table `flyway_identity_schema_history`; Keycloak has a separate database and volume. Runtime and migration credentials are not yet separated, which must be corrected before a production deployment.
 
 The Streaming Compose configuration no longer defaults Camera/Stream services to the old shared Surveillance database. Its new `streaming-db-data` volume is independent. This change does not copy or migrate existing rows; it does not alter any current volume. Do not point the new migration at Surveillance. Existing deployments must retain their previous database configuration and data.
 
-No tenant ownership columns have been added to Camera, Broadcast, Stream leases, Recording or Analytics. No ownership backfill or migration is implemented or executed. A newly initialized Streaming identity schema has no tenants or memberships; the authenticated identity discovery API may create a user row, but cannot grant membership.
+At this earlier checkpoint no tenant ownership columns had been added. Phase 3.2B later added nullable Camera/Broadcast/lease columns, and Phase 3.2D tested those migrations only against isolated databases. No ownership backfill is implemented or approved. A newly initialized Streaming identity schema has no tenants or memberships; authenticated identity discovery may create a user row, but cannot grant membership.
 
 ## Migration authority and sequence for subsequent phases
 
