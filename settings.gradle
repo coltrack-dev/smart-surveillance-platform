@@ -20,6 +20,7 @@ include(
         'common:common-events',
         'common:common-kafka',
         'common:common-logging',
+        'common:common-security',
 
         'gateway:camera-gateway',
 
@@ -29,6 +30,7 @@ include(
         'services:analytics-service',
         'services:search-service',
         'services:stream-service',
+        'services:identity-service',
         "services:websocket-service"
 )
 

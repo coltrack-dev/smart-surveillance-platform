@@ -8,6 +8,7 @@ import com.coltrack.streamservice.service.BroadcastService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,8 @@ public class BroadcastController {
     private final BroadcastService service;
     private final BroadcastProperties properties;
     private final BroadcastRateLimiter rateLimiter;
+    @Value("${app.security.mode:legacy}")
+    private String securityMode;
 
     @PostMapping
     public ResponseEntity<Broadcast> create(@RequestHeader(value = "Authorization", required = false) String authorization,
@@ -80,6 +83,7 @@ public class BroadcastController {
 
     private void authorize(String authorization) {
         if (!rateLimiter.allow("management", 60)) throw new RateLimitException();
+        if ("oidc".equalsIgnoreCase(securityMode)) return;
         String expected = "Bearer " + properties.getManagementToken();
         if (authorization == null || !MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), authorization.getBytes(StandardCharsets.UTF_8))) {
             throw new UnauthorizedException();

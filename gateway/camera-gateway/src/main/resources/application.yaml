@@ -1,6 +1,10 @@
 server:
   port: 8080
 
+app:
+  security:
+    mode: ${APP_SECURITY_MODE:}
+
 spring:
   cloud:
     gateway:
@@ -69,6 +73,12 @@ spring:
               predicates:
                 - Path=/api/playback/**
 
+            - id: identity-service
+              uri: ${IDENTITY_SERVICE_URL:http://localhost:8099}
+              predicates:
+                - Path=/api/v1/identity/**
+              filters:
+                - RewritePath=/api/v1/identity(?<segment>/?.*), /api/identity${segment}
 
             #
             # Recording Service

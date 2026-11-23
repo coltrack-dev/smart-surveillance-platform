@@ -65,6 +65,7 @@ broadcast:
   media-read-password: ${STREAMING_MEDIA_READ_PASSWORD:local-demo-media-read-password}
   media-hls-base-url: ${STREAM_INGEST_AGENT_INTERNAL_HLS_BASE_URL:http://localhost:8888}
   rate-limit-per-minute: ${BROADCAST_RATE_LIMIT_PER_MINUTE:300}
+  security-mode: ${APP_SECURITY_MODE:}
 
 management:
   endpoints:
@@ -79,7 +80,14 @@ management:
   endpoint:
     health:
       show-details: always
-
   metrics:
     tags:
       application: stream-service
+
+app:
+  security:
+    mode: ${APP_SECURITY_MODE:}
+    oidc:
+      issuer-uri: ${APP_SECURITY_OIDC_ISSUER_URI:}
+      jwk-set-uri: ${APP_SECURITY_OIDC_JWK_SET_URI:}
+      audience: ${APP_SECURITY_OIDC_AUDIENCE:}

@@ -1,27 +1,29 @@
 # Smart Surveillance Platform — реестр тестов
 
-Актуальность реестра: статические исходники, имеющиеся JUnit XML-отчёты и записи в `docs/broadcast-test-progress.md` / `docs/broadcast-integration-tests.md`. Тесты при составлении не запускались; Docker и Gradle не запускались.
+Актуальность реестра: исходники и XML на 2026-11-23, а также исторические результаты в `docs/broadcast-test-progress.md` / `docs/broadcast-integration-tests.md`. Тесты выполнялись только в указанном Phase 3.2A узком объёме; Docker-сервисы не запускались.
 
 ## Метод подсчёта
 
 - Java-реестр содержит один ряд на метод с `@Test`, с полным именем класса и метода. Assertions внутри метода отдельными тестами не считаются. Параметризованные случаи также не разворачиваются в отдельные методы. В найденных Java test sources аннотаций `@ParameterizedTest` нет.
-- Статус `PASSED`, `FAILED` или `SKIPPED` берётся из JUnit XML, кроме 23 старых тестов stream-service: их последний полный отчёт и результат 23/23 PASS записаны в документации, но текущий Gradle запуск заменил набор XML-файлов отчётом только по целевому тесту. Целевой тест подтверждён его текущим XML и записью о запуске.
+- Статус `PASSED`, `FAILED` или `SKIPPED` берётся из JUnit XML либо сохранённых исторических отчётов. 24 исходных stream-service метода получили PASS в ограниченном повторном запуске Phase 3.2A; при последующем узком запуске XML был заменён отчётом только по новому security test class. 22 ранее NOT RUN метода других модулей повторно не запускались.
 - `NOT RUN` означает, что среди доступных отчётов и журналов не найдено надёжного результата для метода. Это не утверждение, что метод никогда не запускался.
 
 ## Сводка Java/JUnit по модулю
 
 | Модуль | Методов в исходниках | PASSED | FAILED | SKIPPED | NOT RUN |
 |---|---:|---:|---:|---:|---:|
-| camera-gateway | 1 | 1 | 0 | 0 | 0 |
+| camera-gateway | 6 | 6 | 0 | 0 | 0 |
 | analytics-service | 24 | 22 | 0 | 0 | 2 |
 | camera-service | 3 | 1 | 0 | 0 | 2 |
 | notification-service | 1 | 0 | 0 | 0 | 1 |
 | recording-service | 24 | 8 | 0 | 0 | 16 |
 | search-service | 1 | 0 | 0 | 0 | 1 |
-| stream-service | 24 | 24 | 0 | 0 | 0 |
-| **Всего** | **78** | **56** | **0** | **0** | **22** |
+| stream-service | 26 | 26 | 0 | 0 | 0 |
+| common-security | 8 | 8 | 0 | 0 | 0 |
+| identity-service | 5 | 5 | 0 | 0 | 0 |
+| **Всего** | **98** | **76** | **0** | **0** | **22** |
 
-В текущих JUnit XML на диске: **33 testcase-записей**, все PASS. Отчёты присутствуют для gateway (1), analytics-service (22), camera-service (1), recording-service (8) и целевого метода stream-service (1). Данные старого набора stream-service (23 PASS) подтверждены исторической записью; поэтому по исходникам stream-service в сумме 24 PASS.
+В текущих JUnit XML на диске: **52 testcase-записи**, все PASS. Отчёты присутствуют для camera-gateway (6), analytics-service (22), camera-service (1), recording-service (8), stream-service (2), common-security (8) и identity-service (5). XML полного случайно повторённого stream-service прогона был заменён последующим точечным отчётом; все 24 прежних метода PASS видны в архивной записи Gradle / результатах прогона Phase 3.2A и перечислены ниже. Остальные 22 исходных метода остаются NOT RUN.
 
 ## Полный список Java/JUnit методов
 
@@ -30,6 +32,11 @@
 | Полное имя теста | Статус |
 |---|---|
 | `com.coltrack.gateway.GatewayApplicationTests.contextLoads` | **PASSED** |
+| `com.coltrack.gateway.security.LegacySecurityConfigurationTest.preservesUnauthenticatedTrustedSurveillanceGatewayAccess` | **PASSED** |
+| `com.coltrack.gateway.security.StreamingSecurityConfigurationTest.requiresAuthenticationForManagementRoutes` | **PASSED** |
+| `com.coltrack.gateway.security.StreamingSecurityConfigurationTest.authenticatedJwtCanReachManagementRoutes` | **PASSED** |
+| `com.coltrack.gateway.security.StreamingSecurityConfigurationTest.deniesLegacyMediaAndWebSocketRoutes` | **PASSED** |
+| `com.coltrack.gateway.security.StreamingSecurityConfigurationTest.permitsPublicPlaybackRoutesToReachBroadcastPolicy` | **PASSED** |
 
 ### analytics-service
 
@@ -137,6 +144,31 @@
 | `com.coltrack.streamservice.worker.IngestAgentStreamWorkerTest.mapsExistingVideoModesToAgentContract` | **PASSED** |
 | `com.coltrack.streamservice.worker.IngestAgentStreamWorkerTest.recreatesMissingPipelineWithTheSameCommandId` | **PASSED** |
 | `com.coltrack.streamservice.worker.IngestAgentStreamWorkerTest.retriesAfterTemporaryAgentCommunicationFailure` | **PASSED** |
+| `com.coltrack.streamservice.security.StreamingResourceSecurityConfigurationTest.requiresAuthenticationForManagementRoutes` | **PASSED** |
+| `com.coltrack.streamservice.security.StreamingResourceSecurityConfigurationTest.permitsPlaybackPolicyRoutesAndRequiresTheirOwnGrant` | **PASSED** |
+
+### common-security
+
+| Полное имя теста | Статус |
+|---|---|
+| `com.coltrack.security.OidcJwtValidatorsTest.acceptsTokenWithExpectedIssuerAudienceAndLifetime` | **PASSED** |
+| `com.coltrack.security.OidcJwtValidatorsTest.rejectsWrongIssuer` | **PASSED** |
+| `com.coltrack.security.OidcJwtValidatorsTest.rejectsMissingAudience` | **PASSED** |
+| `com.coltrack.security.OidcJwtValidatorsTest.rejectsExpiredToken` | **PASSED** |
+| `com.coltrack.security.OidcJwtValidatorsTest.rejectsTokenBeforeNotBeforeTime` | **PASSED** |
+| `com.coltrack.security.OidcJwtSignatureTest.validatesRsaSignatureAndRejectsModifiedSignature` | **PASSED** |
+| `com.coltrack.identity.security.MembershipResolverTest.tenantSelectorDoesNotCreateMembership` | **PASSED** |
+| `com.coltrack.identity.security.MembershipResolverTest.resolvedTenantContextComesFromMembership` | **PASSED** |
+
+### identity-service
+
+| Полное имя теста | Статус |
+|---|---|
+| `com.coltrack.identityservice.controller.IdentityControllerSecurityTest.rejectsAnonymousIdentityDiscovery` | **PASSED** |
+| `com.coltrack.identityservice.controller.IdentityControllerSecurityTest.returnsMembershipsForValidatedJwtPrincipal` | **PASSED** |
+| `com.coltrack.identityservice.controller.IdentityControllerSecurityTest.returnsDiscoveredUserFromAuthenticatedIdentity` | **PASSED** |
+| `com.coltrack.identityservice.service.RolePermissionEvaluatorTest.deniesPermissionWhenTenantMembershipDoesNotExist` | **PASSED** |
+| `com.coltrack.identityservice.service.RolePermissionEvaluatorTest.viewerCanViewPlaybackButCannotManageBroadcasts` | **PASSED** |
 
 ## Python integration tests
 

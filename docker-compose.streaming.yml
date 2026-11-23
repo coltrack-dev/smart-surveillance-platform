@@ -3,6 +3,60 @@ name: surveillance-streaming
 # Private streaming foundation; not a public SaaS ingress until gateway auth
 # and tenant-scoped playback exist. Sample publishers are intentionally absent.
 services:
+  streaming-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: streaming
+      POSTGRES_USER: streaming
+      POSTGRES_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+    volumes:
+      - streaming-db-data:/var/lib/postgresql/data
+      - ./docker/streaming-db-init.sql:/docker-entrypoint-initdb.d/001-streaming-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streaming -d streaming"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set a dedicated Keycloak database password}
+    volumes:
+      - streaming-keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set a dedicated Keycloak database password}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?Set a local Keycloak admin username}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set a local Keycloak admin password}
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: ${STREAMING_OIDC_BASE_URL:?Set the browser-visible Keycloak base URL}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./docker/keycloak/realm-streaming-dev.json:/opt/keycloak/data/import/realm-streaming-dev.json:ro
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-8180}:8080"
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   kafka:
     image: apache/kafka:3.9.1
     environment:
@@ -82,15 +136,15 @@ services:
         MODULE_DIR: services/camera-service
     image: surveillance/camera-service:streaming
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
+      SPRING_DATASOURCE_USERNAME: streaming
+      SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:?Set a base64 encoded 32-byte key}
       JAVA_OPTS: ${CAMERA_JAVA_OPTS:--Xms128m -Xmx384m}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
+      streaming-postgres:
+        condition: service_healthy
       kafka:
         condition: service_started
     restart: unless-stopped
@@ -105,9 +159,13 @@ services:
     image: surveillance/stream-service:streaming
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
+      SPRING_DATASOURCE_USERNAME: streaming
+      SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+      APP_SECURITY_MODE: oidc
+      APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+      APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
+      APP_SECURITY_OIDC_AUDIENCE: streaming-api
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_HLS_PATH: /data/hls
       STREAM_INGEST_AGENT_ENABLED: "true"
@@ -118,18 +176,17 @@ services:
       STREAM_INGEST_AGENT_PUBLIC_HLS_PREFIX: /media-hls
       STREAMING_MEDIA_READ_USER: ${STREAMING_MEDIA_READ_USER:?Set a MediaMTX read username}
       STREAMING_MEDIA_READ_PASSWORD: ${STREAMING_MEDIA_READ_PASSWORD:?Set a long random MediaMTX read password}
-      BROADCAST_MANAGEMENT_TOKEN: ${BROADCAST_MANAGEMENT_TOKEN:?Set a long random management token}
       BROADCAST_PLAYBACK_SECRET: ${BROADCAST_PLAYBACK_SECRET:?Set a long random playback signing secret}
       BROADCAST_PLAYBACK_TTL: ${BROADCAST_PLAYBACK_TTL:-PT10M}
       BROADCAST_PLAYER_BASE_URL: ${BROADCAST_PLAYER_BASE_URL:-http://localhost:5173/watch}
       BROADCAST_RATE_LIMIT_PER_MINUTE: ${BROADCAST_RATE_LIMIT_PER_MINUTE:-300}
       CORS_ALLOWED_ORIGIN: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
       JAVA_OPTS: ${STREAM_JAVA_OPTS:--Xms128m -Xmx384m}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - streaming-hls-data:/data/hls
     depends_on:
+      streaming-postgres:
+        condition: service_healthy
       kafka:
         condition: service_started
       camera-service:
@@ -138,6 +195,31 @@ services:
         condition: service_started
       video-ingest-agent:
         condition: service_healthy
+      keycloak:
+        condition: service_started
+    restart: unless-stopped
+
+  identity-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        GRADLE_MODULE: services:identity-service
+        MODULE_DIR: services/identity-service
+    image: surveillance/identity-service:streaming
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
+      SPRING_DATASOURCE_USERNAME: streaming
+      SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+      APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+      APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
+      APP_SECURITY_OIDC_AUDIENCE: streaming-api
+      JAVA_OPTS: ${IDENTITY_JAVA_OPTS:--Xms96m -Xmx256m}
+    depends_on:
+      streaming-postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
     restart: unless-stopped
 
   websocket-service:
@@ -166,8 +248,13 @@ services:
     image: surveillance/camera-gateway:streaming
     environment:
       JAVA_OPTS: ${GATEWAY_JAVA_OPTS:--Xms96m -Xmx256m}
+      APP_SECURITY_MODE: oidc
+      APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+      APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
+      APP_SECURITY_OIDC_AUDIENCE: streaming-api
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_SERVICE_URL: http://stream-service:8094
+      IDENTITY_SERVICE_URL: http://identity-service:8099
       MEDIAMTX_HLS_URL: http://mediamtx:8888
       WEBSOCKET_SERVICE_URL: ws://websocket-service:8096
       CORS_ALLOWED_ORIGIN: ${BROADCAST_PLAYER_ORIGIN:-http://localhost:5173}
@@ -177,6 +264,8 @@ services:
       - camera-service
       - stream-service
       - websocket-service
+      - identity-service
+      - keycloak
       - mediamtx
     restart: unless-stopped
 
@@ -186,6 +275,11 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${BROADCAST_API_URL:-http://localhost:8081/api}
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
+        VITE_OIDC_CLIENT_ID: streaming-vue
+        VITE_OIDC_REALM: streaming
+        VITE_OIDC_REDIRECT_URI: ${STREAMING_OIDC_REDIRECT_URI:-http://localhost:5173/}
     image: surveillance/broadcast-player:streaming
     ports:
       - "${BROADCAST_PLAYER_BIND_ADDRESS:-127.0.0.1}:${BROADCAST_PLAYER_PORT:-5173}:80"
@@ -194,3 +288,5 @@ services:
 volumes:
   streaming-kafka-data:
   streaming-hls-data:
+  streaming-db-data:
+  streaming-keycloak-db-data:

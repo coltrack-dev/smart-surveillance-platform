@@ -296,6 +296,7 @@ services:
     image: surveillance/stream-service:demo
     container_name: surveillance-stream-service
     environment:
+      APP_SECURITY_MODE: legacy
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-192.168.13.128}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-surveillance_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-surveillance_user}
@@ -432,6 +433,7 @@ services:
     image: surveillance/camera-gateway:demo
     container_name: surveillance-camera-gateway
     environment:
+      APP_SECURITY_MODE: legacy
       JAVA_OPTS: ${GATEWAY_JAVA_OPTS:--Xms96m -Xmx256m}
       CAMERA_SERVICE_URL: http://camera-service:8091
       STREAM_SERVICE_URL: http://stream-service:8094

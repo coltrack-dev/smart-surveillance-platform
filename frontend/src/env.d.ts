@@ -7,3 +7,10 @@ declare module "*.vue" {
 
     export default component;
 }
+interface ImportMetaEnv {
+  readonly VITE_AUTH_MODE?: string
+  readonly VITE_OIDC_ISSUER_URI: string
+  readonly VITE_OIDC_CLIENT_ID: string
+  readonly VITE_OIDC_REALM: string
+  readonly VITE_OIDC_REDIRECT_URI: string
+}

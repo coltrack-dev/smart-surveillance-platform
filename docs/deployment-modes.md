@@ -1,5 +1,13 @@
 # Deployment modes
 
+## Phase 3.2A identity update
+
+Streaming now includes an isolated Keycloak development realm and identity-service. Keycloak is pinned to `quay.io/keycloak/keycloak:26.8.2`, uses its own PostgreSQL database and volume, and publishes its development HTTP/admin UI only on loopback. The Vue client `streaming-vue` uses Authorization Code + PKCE S256; the API audience is `streaming-api`. Set the browser-visible issuer/base URL and SPA redirect/origin consistently. The imported realm is development-only and has no seeded user or password.
+
+Streaming Camera/Stream data now uses a dedicated `streaming-postgres` service and `streaming-db-data` volume; it no longer defaults to the Surveillance database or existing external data. Identity-service owns its additive `identity` schema migration. No existing Camera/Broadcast data is copied and no migration was executed in Phase 3.2A. The initial identity schema has no tenant/member records and there is no membership provisioning endpoint.
+
+In Streaming, gateway and stream-service management APIs require a valid OIDC access token; the identity API is also authenticated. User/tenant role authorization and Camera/Broadcast ownership are not implemented yet. Therefore this is a private development foundation only: keep gateway/player/Keycloak loopback-bound and do not enable public ingress. PUBLIC Broadcast playback remains governed by the existing explicit PUBLIC policy; PRIVATE member playback is not implemented. Surveillance keeps explicit legacy gateway/stream mode and does not include Keycloak or identity-service.
+
 ## Assessment
 
 The supported baseline is `docker-compose.demo.yml`; the root `docker-compose.yml` is an older development stack (different Kafka listeners, no current application services) and is not part of either deployment recipe. The project remains one codebase and shares the same Camera, Stream, ingest-agent, Kafka, and MediaMTX implementation. The streaming Compose file is a smaller deployment assembly, not a second implementation of those capabilities.
@@ -8,7 +16,7 @@ The supported baseline is `docker-compose.demo.yml`; the root `docker-compose.ym
 | --- | --- | --- |
 | Shared platform | `kafka`, `mediamtx`, `video-ingest-agent`, `camera-service`, `stream-service`, `websocket-service`, `camera-gateway` | Metadata and encrypted camera credentials; event transport; RTSP ingest and HLS; Broadcast resource/API is implemented inside `stream-service`; API and socket entry point. Both modes use these same code modules. |
 | Surveillance-only | `recording-service`, `analytics-service`, `inference-worker`, `volume-permissions`, `rtsp-test-publisher`, `rtsp-file-publisher`, `rtsp-file-publisher-2`, `rtsp-i287-publisher` | Recording/export/playback, analytic jobs/inference, storage permissions, and demo/test inputs. |
-| Streaming-specific | `broadcast-player`; optional `rtsp-test-publisher` under `test-publishers` profile | Standalone public player UI and a synthetic input for local smoke tests. No additional business microservice is needed for the MVP. |
+| Streaming-specific | `streaming-postgres`, `keycloak-postgres`, `keycloak`, `identity-service`, `broadcast-player` | Isolated Streaming and identity persistence, OIDC provider/dev realm, identity lookup API and standalone player. No duplicate Camera/Stream/Ingest service is added. |
 
 ### Service dependency matrix
 
@@ -16,18 +24,22 @@ The supported baseline is `docker-compose.demo.yml`; the root `docker-compose.ym
 | --- | --- | --- | --- |
 | Kafka | — | No | No; internal listener only |
 | MediaMTX | — | No | No; `expose`, no host ports, internal auth |
+| streaming-postgres | — | Yes (Streaming camera/identity data) | No; no host port |
+| keycloak-postgres | — | Yes (IdP state) | No; no host port |
+| keycloak | keycloak-postgres | Yes | Development/admin UI bound to loopback only |
 | video-ingest-agent | MediaMTX | No | No; internal network and token protected |
-| camera-service | Kafka | Yes | Via gateway only (gateway currently has no auth) |
-| stream-service | Kafka, camera-service, MediaMTX, ingest-agent | Yes (Broadcast table) | Broadcast management requires Bearer token; playback requires short-lived signed token |
+| camera-service | Kafka | Yes (isolated Streaming database) | Via OIDC-authenticated gateway only; not tenant-scoped yet |
+| stream-service | Kafka, camera-service, MediaMTX, ingest-agent | Yes (isolated Streaming database) | OIDC for management; playback uses existing Broadcast policy |
 | websocket-service | Kafka | No | Via gateway only; add authorization before public use |
-| camera-gateway | Camera, Stream, MediaMTX HLS, WebSocket | No | Loopback port 8081 by default; do not widen before all existing APIs have auth |
+| identity-service | streaming-postgres, Keycloak JWKS | Yes | Via authenticated gateway only |
+| camera-gateway | Camera, Stream, Identity, MediaMTX HLS, WebSocket | No | Loopback port 8081; OIDC in Streaming, legacy trusted access in demo |
 | broadcast-player | camera-gateway playback proxy | No | Loopback port 5173 by default; permanent watch URL obtains renewed short-lived media auth |
 | recording-service | Kafka, Camera, Stream | Yes | Not present |
 | analytics-service | Kafka, Camera | Yes | Not present by default (demo profile `container-analytics`) |
 | inference-worker | Kafka, Recording | No | Not present by default (demo profile `inference`) |
 | RTSP publishers | MediaMTX | No | Not present in streaming mode; demo-only inputs |
 
-PostgreSQL is deliberately external in demo mode; the commented `postgres` service and its named volume stay disabled. Existing DB data and volumes are untouched. Streaming mode uses the same external database host (default `host.docker.internal`) and existing camera schema. Use a database and credentials intended for this deployment; do not point a new environment at production data until migrations and tenant isolation have been reviewed.
+PostgreSQL is deliberately external in demo mode; the commented `postgres` service and its named volume stay disabled. Existing DB data and volumes are untouched. Streaming mode has a dedicated application database and a separate Keycloak database, each with Streaming-only volumes. Do not reuse Surveillance data or volumes.
 
 ## Run modes
 
@@ -53,7 +65,7 @@ docker compose -p surveillance-streaming -f docker-compose.streaming.yml config
 docker compose -p surveillance-streaming -f docker-compose.streaming.yml up -d
 ```
 
-For streaming set the MediaMTX publish/read credentials, `VIDEO_INGEST_AGENT_TOKEN`, `POSTGRES_PASSWORD`, `CAMERA_CREDENTIALS_KEY`, `BROADCAST_MANAGEMENT_TOKEN`, and `BROADCAST_PLAYBACK_SECRET` to deployment secrets. Use URL-safe publish credentials (letters, digits, underscore, hyphen) because they are embedded in the RTSP URL. Generate the camera key using `openssl rand -base64 32`. The gateway is reachable at `http://127.0.0.1:8081` and the player at `http://127.0.0.1:5173` by default. Broadcast management requires its Bearer secret. Permanent `/watch/{publicId}` pages request short-lived HMAC authorization and renew it as HLS requests continue; only explicitly PUBLIC broadcasts permit anonymous viewing. PRIVATE broadcasts have no viewer identity or invite implementation yet. This is a single-operator MVP, not multi-user or tenant authorization. No public production ingress or TLS is configured. Keep both bindings on loopback/private ingress; do not expose MediaMTX, agent, Kafka, or service ports.
+For Streaming create local `.env` values for `STREAMING_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`, `STREAMING_MEDIA_PUBLISH_PASSWORD`, `STREAMING_MEDIA_READ_PASSWORD`, `VIDEO_INGEST_AGENT_TOKEN`, `CAMERA_CREDENTIALS_KEY`, and `BROADCAST_PLAYBACK_SECRET`. Use unique random secrets; the `.env.example` leaves these values empty. Generate the camera key using `openssl rand -base64 32`. Configure `STREAMING_OIDC_BASE_URL`, `STREAMING_OIDC_ISSUER_URI`, `STREAMING_OIDC_REDIRECT_URI` and `BROADCAST_PLAYER_ORIGIN` to the matching browser URLs. Defaults are issuer `http://localhost:8180/realms/streaming`, audience `streaming-api`, client `streaming-vue`, player origin `http://localhost:5173` and callback `http://localhost:5173/`. Keycloak admin UI is loopback-only at `http://localhost:8180`; create a development user through its admin UI. The gateway and player bind to `127.0.0.1` by default. Browser login is not live-validated in Phase 3.2A. Management is authenticated but not yet tenant/role-authorized. The existing playback token flow allows only enabled PUBLIC broadcasts anonymously; PRIVATE viewer membership playback is not available. Do not expose this deployment publicly.
 
 The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, and project name are retained by default for compatibility. `POSTGRES_HOST`, `POSTGRES_PORT`, `KAFKA_ADVERTISED_HOST`, `KAFKA_EXTERNAL_PORT`, `KAFKA_BIND_ADDRESS`, `MEDIAMTX_BIND_ADDRESS`, `MEDIAMTX_RTSP_PORT`, `MEDIAMTX_HLS_PORT`, `GATEWAY_BIND_ADDRESS`, and `ANALYTICS_SERVICE_URL` let operators replace machine-specific addresses/ports. For demo use across a trusted LAN, configure the correct advertised Kafka address and firewall the host ports; the current demo MediaMTX configuration has no auth, so do not expose its RTSP/HLS ports to the public internet.
 
@@ -69,12 +81,12 @@ The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, 
 
 - The demo database host default remains `192.168.13.128`, Kafka's advertised host remains `192.168.13.128`, and existing demo ports remain unchanged. Override the new variables in `.env` for other machines.
 - Camera and Recording application defaults now honor `SPRING_DATASOURCE_URL`, credentials, and host/port/database variables; Camera, Recording, and Stream service URLs and Kafka bootstrap values are also configurable. Existing standalone defaults remain available for local development.
-- Streaming requires an existing compatible PostgreSQL database for Camera metadata. It does not provision or migrate a database automatically beyond the Camera service's existing Flyway migrations. Tenant schema/data migration is not implemented.
+- Streaming provisions its isolated PostgreSQL databases/volumes in Compose. Camera schema bootstrap and service migrations run only against this Streaming database. Identity-service has a separate Flyway history table in the `identity` schema. No existing rows are copied; tenant ownership migration/backfill is not implemented.
 - Avoid renaming or deleting the old Compose volumes. The streaming volume names are intentionally separate; migrating Kafka/HLS/recording data is not part of this phase.
-- The gateway's legacy `/media-hls/**` route proxies MediaMTX content and is not the Broadcast player route. MediaMTX credentials and the Broadcast token proxy protect Broadcast playback; existing camera/stream/recording API routes do not have general user authentication. Keep the gateway private until those routes are secured too.
-- Broadcast persistence adds a `broadcasts` table and `flyway_stream_schema_history` to the existing PostgreSQL database. It does not modify Camera/Recording tables or named Docker volumes. Set stable `BROADCAST_MANAGEMENT_TOKEN` and `BROADCAST_PLAYBACK_SECRET` values; rotating the latter invalidates issued links. Enable/disable also increments a playback generation, so old links stay invalid if a Broadcast is re-enabled. The demo mode has development defaults and should not be exposed as a public service.
+- The gateway's legacy `/media-hls/**` route proxies MediaMTX content and is not the Broadcast player route; Streaming OIDC mode denies `/media-hls/**`, `/hls/**` and `/ws/**` at the gateway. OIDC protects Streaming management ingress, while Surveillance remains trusted-network-only. Neither mode is suitable for public ingress as-is.
+- Broadcast persistence remains inside stream-service. The streaming setup uses a distinct database; Surveillance's DB and named volumes are unchanged. Demo still uses its legacy management secret. Streaming management uses OIDC gateway authentication; `BROADCAST_PLAYBACK_SECRET` remains for short-lived playback grants. Rotating it invalidates issued grants. The demo mode has development defaults and should not be exposed as a public service.
 - Broadcast playback uses `/broadcast-play/{publicId}/{file}?token=...`; the general `/media-hls/**` route remains unsuitable for public playback. The standalone player runs on port 5173, and permanent links default to `http://localhost:5173/watch/{publicId}`. Token query parameters must be redacted from ingress logs; player and iframe use `no-referrer`. Configure `BROADCAST_API_URL` and `BROADCAST_PLAYER_BASE_URL` to match the private browser-accessible endpoints.
-- The streaming Compose file contains an optional synthetic RTSP source under profile `test-publishers`; it is omitted by default.
+- The streaming Compose file does not include a synthetic publisher. Use an isolated local RTSP source for smoke tests; do not add publishers to the default deployment assembly.
 
 ## Streaming SaaS MVP roadmap
 
@@ -87,34 +99,36 @@ The demo's existing RTSP/HLS host ports, Kafka listener, fixed container names, 
 
 ## Broadcast API and local smoke test
 
-Broadcast management is under `POST/GET /api/v1/broadcasts`, `GET /api/v1/broadcasts/{id}`, `PUT /api/v1/broadcasts/{id}/enabled` (`{"enabled":true|false}`), `PUT /api/v1/broadcasts/{id}/visibility`, `DELETE /api/v1/broadcasts/{id}`, and `GET /api/v1/broadcasts/{id}/playback`. Send `Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN` for every management request. Creating for the same camera is idempotent. Playback details contain a permanent player URL and iframe markup. `GET /api/playback/{publicId}/token` returns the current short-lived authorization; the browser player renews it. The media URLs do not contain source RTSP credentials. For isolated integration commands and honest result recording, see [broadcast-integration-tests.md](broadcast-integration-tests.md).
+Broadcast management is under `POST/GET /api/v1/broadcasts`, `GET /api/v1/broadcasts/{id}`, `PUT /api/v1/broadcasts/{id}/enabled` (`{"enabled":true|false}`), `PUT /api/v1/broadcasts/{id}/visibility`, `DELETE /api/v1/broadcasts/{id}`, and `GET /api/v1/broadcasts/{id}/playback`. Send `Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN` in demo mode or a Keycloak access token in Streaming mode. Creating for the same camera is idempotent. Playback details contain a permanent player URL and iframe markup. `GET /api/playback/{publicId}/token` returns the current short-lived authorization; the browser player renews it. The media URLs do not contain source RTSP credentials. For isolated integration commands and honest result recording, see [broadcast-integration-tests.md](broadcast-integration-tests.md).
 
-For a local source smoke test after configuring secrets and the PostgreSQL camera schema:
+For a local source smoke test after configuring secrets and signing in to `streaming-vue`, use a local RTSP source reachable by the ingest-agent. The Streaming Compose file does not define a synthetic publisher.
 
 ```bash
-docker compose -p surveillance-streaming -f docker-compose.streaming.yml --profile test-publishers up -d
+export STREAMING_ACCESS_TOKEN='short-lived access token from the local streaming-vue session'
+curl -sS http://127.0.0.1:8081/api/v1/identity/me \
+  -H "Authorization: Bearer $STREAMING_ACCESS_TOKEN"
 ```
 
-Create a camera through the private gateway using the generated source inside the Compose network (no source credentials):
+Create a camera through the private gateway (replace the sample URL with the reachable source):
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8081/api/v1/cameras \
+  -H "Authorization: Bearer $STREAMING_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Broadcast smoke source","rtspUrl":"rtsp://mediamtx:8554/test-source","rtspUrlFormat":"STANDARD","videoProcessingMode":"AUTO","autoStart":false}'
+  -d '{"name":"Broadcast smoke source","rtspUrl":"rtsp://local-source/live","rtspUrlFormat":"STANDARD","videoProcessingMode":"AUTO","autoStart":false}'
 ```
 
 Use the returned camera `id` for the management flow:
 
 ```bash
-export BROADCAST_MANAGEMENT_TOKEN='your configured management secret'
 curl -sS -X POST http://127.0.0.1:8081/api/v1/broadcasts \
-  -H "Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN" \
+  -H "Authorization: Bearer $STREAMING_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' -d '{"cameraId":"CAMERA_UUID"}'
 curl -sS -X PUT http://127.0.0.1:8081/api/v1/broadcasts/BROADCAST_UUID/enabled \
-  -H "Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN" \
+  -H "Authorization: Bearer $STREAMING_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' -d '{"enabled":true}'
 curl -sS http://127.0.0.1:8081/api/v1/broadcasts/BROADCAST_UUID/playback \
-  -H "Authorization: Bearer $BROADCAST_MANAGEMENT_TOKEN"
+  -H "Authorization: Bearer $STREAMING_ACCESS_TOKEN"
 ```
 
 Open the returned permanent `playerUrl`; use `embedHtml` in an iframe. The player renews the temporary HLS token automatically. Disable or delete the Broadcast to invalidate active playback. StreamManager consumer leases ensure disabling a Broadcast does not stop a stream that Surveillance or another consumer still uses.

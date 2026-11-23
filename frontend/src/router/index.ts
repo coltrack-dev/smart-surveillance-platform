@@ -14,12 +14,14 @@ export default createRouter({
     routes:[
         {
             path:'/',
-            component:Dashboard
+            component:Dashboard,
+            meta: { requiresAuth: true }
         },
         {
             path:'/analytics',
             name: 'analytics',
-            component: () => import('../views/Analytics.vue')
+            component: () => import('../views/Analytics.vue'),
+            meta: { requiresAuth: true }
         },
         {
             path: '/watch/:publicId',

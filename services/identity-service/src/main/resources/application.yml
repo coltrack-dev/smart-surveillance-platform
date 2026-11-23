@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: identity-service
+  datasource:
+    url: jdbc:postgresql://streaming-postgres:5432/streaming
+    username: streaming
+    password: ""
+  flyway:
+    enabled: true
+    schemas: identity
+    default-schema: identity
+    table: flyway_identity_schema_history
+    create-schemas: true
+
+server:
+  port: 8099
+
+app:
+  security:
+    oidc:
+      issuer-uri: ""
+      jwk-set-uri: ""
+      audience: ""

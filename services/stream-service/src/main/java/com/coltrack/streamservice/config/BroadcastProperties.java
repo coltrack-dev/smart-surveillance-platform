@@ -14,6 +14,7 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "broadcast")
 public class BroadcastProperties {
     private String managementToken;
+    private String securityMode = "legacy";
     private String playbackSecret;
     private Duration playbackTtl = Duration.ofMinutes(10);
     private String playerBaseUrl;
@@ -24,7 +25,8 @@ public class BroadcastProperties {
 
     @PostConstruct
     void validate() {
-        if (managementToken == null || managementToken.length() < 32) {
+        if (!"oidc".equalsIgnoreCase(securityMode)
+                && (managementToken == null || managementToken.length() < 32)) {
             throw new IllegalStateException("BROADCAST_MANAGEMENT_TOKEN must be at least 32 characters");
         }
         if (playbackSecret == null || playbackSecret.length() < 32) {
