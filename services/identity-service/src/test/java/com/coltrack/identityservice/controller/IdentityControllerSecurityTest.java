@@ -10,8 +10,11 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.List;
 import java.util.UUID;
 
@@ -28,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.security.oidc.jwk-set-uri=https://issuer.example/realms/streaming/protocol/openid-connect/certs",
         "app.security.oidc.audience=streaming-api"
 })
-@Import(SecurityConfiguration.class)
+@Import({SecurityConfiguration.class, IdentityControllerSecurityTest.TestHealthController.class})
 class IdentityControllerSecurityTest {
     private static final String ISSUER = "https://issuer.example/realms/streaming";
 
@@ -37,6 +40,17 @@ class IdentityControllerSecurityTest {
 
     @MockitoBean
     IdentityDirectory directory;
+
+    @Test
+    void permitsAnonymousHealthAndNestedHealthEndpoints() throws Exception {
+        mvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+
+        mvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
 
     @Test
     void rejectsAnonymousIdentityDiscovery() throws Exception {
@@ -69,5 +83,13 @@ class IdentityControllerSecurityTest {
                 .andExpect(jsonPath("$.id").value(userId.toString()))
                 .andExpect(jsonPath("$.issuer").value(ISSUER))
                 .andExpect(jsonPath("$.subject").value("subject-1"));
+    }
+
+    @RestController
+    static class TestHealthController {
+        @GetMapping({"/actuator/health", "/actuator/health/{component}"})
+        Map<String, String> health() {
+            return Map.of("status", "UP");
+        }
     }
 }
