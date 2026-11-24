@@ -1,0 +1,87 @@
+# Isolated Phase 3.3B.1 browser acceptance dependencies.
+# Run with a unique project name; this file never references Streaming/demo
+# volumes. Application services run as loopback-bound host processes.
+services:
+  dashboard-it-postgres:
+    image: postgres:16.13-alpine
+    environment:
+      POSTGRES_DB: streaming
+      POSTGRES_USER: streaming
+      POSTGRES_PASSWORD: ${DASHBOARD_IT_STREAMING_DB_PASSWORD:?Set an isolated test DB password}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - dashboard-it-streaming-data:/var/lib/postgresql/data
+      - ./docker/streaming-db-init.sql:/docker-entrypoint-initdb.d/001-streaming-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streaming -d streaming"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  dashboard-it-keycloak-postgres:
+    image: postgres:16.13-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${DASHBOARD_IT_KEYCLOAK_DB_PASSWORD:?Set an isolated Keycloak DB password}
+    volumes:
+      - dashboard-it-keycloak-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  dashboard-it-keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://dashboard-it-keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${DASHBOARD_IT_KEYCLOAK_DB_PASSWORD:?Set an isolated Keycloak DB password}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${DASHBOARD_IT_KEYCLOAK_ADMIN_USER:?Set an isolated Keycloak admin username}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${DASHBOARD_IT_KEYCLOAK_ADMIN_PASSWORD:?Set an isolated Keycloak admin password}
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:18180
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./docker/keycloak/realm-streaming-dev.json:/opt/keycloak/data/import/realm-streaming-dev.json:ro
+    ports:
+      - "127.0.0.1:18180:8080"
+    depends_on:
+      dashboard-it-keycloak-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard-it-kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: HOST://:19092,CONTROLLER://:19093
+      KAFKA_ADVERTISED_LISTENERS: HOST://127.0.0.1:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: HOST
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@dashboard-it-kafka:19093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+    ports:
+      - "127.0.0.1:19092:19092"
+    volumes:
+      - dashboard-it-kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+
+volumes:
+  dashboard-it-streaming-data:
+  dashboard-it-keycloak-data:
+  dashboard-it-kafka-data:

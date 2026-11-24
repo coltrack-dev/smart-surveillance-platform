@@ -1,5 +1,11 @@
 # Deployment modes
 
+## Streaming database target
+
+PostgreSQL **16.13** (`postgres:16.13-alpine`) is the pinned database target for Streaming SaaS. Both the Streaming application database and the isolated Keycloak database use this image tag. The isolated Broadcast integration Compose uses the same version. New Flyway migrations must remain compatible with PostgreSQL 16; Identity V1/V2 have been applied and verified on PostgreSQL 16.13.
+
+Changing an image tag does not migrate an existing PostgreSQL data directory. Do not start PostgreSQL 16 against a data volume initialized by PostgreSQL 17 or any other major version. This configuration edit does not alter, remove, convert or migrate existing volumes/databases. Any existing deployment with PostgreSQL 17 data requires a separately planned logical backup/restore or other reviewed version transition before using this target.
+
 ## Phase 3.2A identity update
 
 Streaming now includes an isolated Keycloak development realm and identity-service. Keycloak is pinned to `quay.io/keycloak/keycloak:26.8.2`, uses its own PostgreSQL database and volume, and publishes its development HTTP/admin UI only on loopback. The Vue client `streaming-vue` uses Authorization Code + PKCE S256; the API audience is `streaming-api`. Set the browser-visible issuer/base URL and SPA redirect/origin consistently. The imported realm is development-only and has no seeded user or password.
@@ -64,6 +70,8 @@ Streaming foundation (includes Broadcast management and the player):
 docker compose -p surveillance-streaming -f docker-compose.streaming.yml config
 docker compose -p surveillance-streaming -f docker-compose.streaming.yml up -d
 ```
+
+The Streaming deployment builds the same Vue SPA with `VITE_AUTH_MODE=oidc`; it adds protected `/app` SaaS routes without adding another frontend. Surveillance keeps legacy routing/auth behavior. `/watch/{publicId}` remains anonymous at page level, while the backend grants anonymous playback only to enabled PUBLIC broadcasts. PRIVATE links may carry a tenant UUID as a selector and require a signed-in member; the selector is never authorization proof. Routes and frontend build variables are documented in [SAAS_DASHBOARD.md](saas/SAAS_DASHBOARD.md). Dashboard browser E2E is not yet run; keep Streaming private until acceptance passes.
 
 For Streaming create local `.env` values for `STREAMING_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`, `STREAMING_MEDIA_PUBLISH_PASSWORD`, `STREAMING_MEDIA_READ_PASSWORD`, `VIDEO_INGEST_AGENT_TOKEN`, `CAMERA_CREDENTIALS_KEY`, and `BROADCAST_PLAYBACK_SECRET`. Use unique random secrets; the `.env.example` leaves these values empty. Generate the camera key using `openssl rand -base64 32`. Configure `STREAMING_OIDC_BASE_URL`, `STREAMING_OIDC_ISSUER_URI`, `STREAMING_OIDC_REDIRECT_URI` and `BROADCAST_PLAYER_ORIGIN` to the matching browser URLs. Defaults are issuer `http://localhost:8180/realms/streaming`, audience `streaming-api`, client `streaming-vue`, player origin `http://localhost:5173` and callback `http://localhost:5173/`. Keycloak admin UI is loopback-only at `http://localhost:8180`; create a development user through its admin UI. The gateway and player bind to `127.0.0.1` by default. Browser login is not live-validated in Phase 3.2A. Management is authenticated but not yet tenant/role-authorized. The existing playback token flow allows only enabled PUBLIC broadcasts anonymously; PRIVATE viewer membership playback is not available. Do not expose this deployment publicly.
 

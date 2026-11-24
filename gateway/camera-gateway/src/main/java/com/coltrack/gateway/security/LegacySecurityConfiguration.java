@@ -13,7 +13,10 @@ public class LegacySecurityConfiguration {
     SecurityWebFilterChain legacySecurityFilterChain(ServerHttpSecurity http) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
-                .authorizeExchange(exchange -> exchange.anyExchange().permitAll())
+                .authorizeExchange(exchange -> exchange
+                        .pathMatchers("/api/v1/organizations", "/api/v1/organizations/**",
+                                "/api/v1/invitations/accept").denyAll()
+                        .anyExchange().permitAll())
                 .build();
     }
 }

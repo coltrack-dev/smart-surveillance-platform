@@ -1,5 +1,7 @@
 # Phase 3.2A — OIDC identity foundation
 
+**Streaming database target:** PostgreSQL 16.13 (`postgres:16.13-alpine`) for both application identity data and the separate Keycloak database. Keep Flyway migrations compatible with PostgreSQL 16. Identity V1 and V2 have passed the isolated PostgreSQL 16.13 migration and persistence acceptance; see `ORGANIZATION_MANAGEMENT_API.md` and `../TEST_INVENTORY.md`.
+
 ## Implementation status
 
 The initial OIDC foundation is implemented for Streaming only. `docker-compose.streaming.yml` adds Keycloak `26.8.2` with a dedicated PostgreSQL database and persistent volume, a development realm import, and a public Vue OIDC client using Authorization Code + PKCE (S256). The Keycloak HTTP port is bound to loopback. The browser client is public and contains no client secret. Do not use `start-dev`, the sample realm callback origins, or development credentials in production.
@@ -8,7 +10,9 @@ Streaming gateway, stream-service and identity-service validate access-token sig
 
 Surveillance retains the gateway's legacy permit-all configuration and existing deployment dependencies. Keycloak and identity-service are absent from demo Compose. Streaming uses a dedicated database/volume rather than the prior shared/external database default; no existing Camera, Stream or Broadcast rows are copied or migrated by this change.
 
-Identity tables live in `identity` schema and are migrated only by identity-service Flyway history `flyway_identity_schema_history`. The first authenticated call to `/api/v1/identity/me` upserts a user keyed by `(issuer, subject)`. Membership discovery is application-owned; Keycloak groups are not consulted. `/api/v1/identity/me/memberships` returns active memberships and `/api/v1/identity/tenants/{tenantId}/membership` resolves only a validated active membership, returning 404 otherwise. No tenant or membership provisioning endpoint exists yet; the isolated database therefore starts without organizations until an operator-approved seed/provisioning workflow is added.
+Identity tables live in `identity` schema and are migrated only by identity-service Flyway history `flyway_identity_schema_history`. The first authenticated call to `/api/v1/identity/me` upserts a user keyed by `(issuer, subject)`. Membership discovery is application-owned; Keycloak groups are not consulted. `/api/v1/identity/me/memberships` returns active memberships and `/api/v1/identity/tenants/{tenantId}/membership` resolves only a validated active membership, returning 404 otherwise. Phase 3.3A adds organization and invitation management to this same identity authority; memberships remain application-owned and are checked on each operation.
+
+Organization creation requires an authenticated OIDC principal and creates the tenant plus its active OWNER membership in one transaction. Membership and invitation changes lock the tenant row, so role changes, removal, leave and invitation acceptance serialize per organization. No API accepts a browser-supplied user ID, owner assignment or tenant ownership claim. Invitation acceptance uses the authenticated verified email and issuer+subject-derived internal user; Keycloak groups are not consulted.
 
 `common-security` provides the provider-neutral principal, tenant-context, membership-resolver and permission-evaluator interfaces. The initial role evaluator is a foundation only: Camera, Stream and Broadcast records have no tenant owner yet, and their APIs do not enforce these role checks. Do not describe this release as tenant isolation or public SaaS readiness.
 

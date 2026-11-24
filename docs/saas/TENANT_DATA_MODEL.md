@@ -1,5 +1,7 @@
 # Phase 3.1 — Tenant data model and isolation
 
+**Database target:** Streaming SaaS uses PostgreSQL 16.13 (`postgres:16.13-alpine`). All new tenant and identity Flyway migrations must remain compatible with PostgreSQL 16. The identity V1/V2 migrations and tenant/OWNER/invitation acceptance were verified against isolated PostgreSQL 16.13; previous PostgreSQL 17 runs are historical test evidence, not a version requirement.
+
 ## Phase 3.2B implementation status (2026-11-23)
 
 Camera, Broadcast and stream-consumer lease now have nullable `tenant_id` columns in additive service-owned migrations. Camera CRUD and check-stream operations in Streaming OIDC mode resolve membership and role from validated issuer+subject plus the selected tenant, then use tenant-qualified repository lookup. Broadcast ownership is derived from the authorized Camera and cannot be supplied by the browser. Stream management resolves the Camera through the signed service-to-service tenant delegation before changing a tenant lease. A missing tenant owner is never found by these scoped lookups; there is no default tenant or automatic backfill.
@@ -65,3 +67,9 @@ Keep listeners private. For SaaS use per-path authorization or short-lived/path-
 ## Existing data with no tenant
 
 Current Camera/Broadcast rows have no tenant_id. There must be no automatic default tenant or bulk backfill. First inventory rows and parent integrity read-only, take and restore-test a backup, prepare a reviewed resource-to-tenant mapping, and leave unknown rows quarantined/inaccessible. Backfill only approved rows in a resumable audited operation. Add NOT NULL and composite FKs only after every SaaS-visible row is assigned or an explicit legacy partition exists. Keep Surveillance on its isolated existing DB/schema and preserve all rows.
+
+## Organization-management additions (Phase 3.3A)
+
+Identity V2 adds `identity.tenant_invitations`; it does not alter Camera, Broadcast, Recording or ownership columns. Invitation token hashes are unique 32-byte SHA-256 values, with a partial unique pending invitation per tenant/email and an expiry index. Roles use the existing fixed `identity.roles` table; OWNER may invite any fixed role, while ADMIN is restricted to OPERATOR/VIEWER by application policy. Active membership remains unique by the existing `(tenant_id,user_id)` primary key. New indexes support tenant/status/role member administration.
+
+The V2 deferred constraint triggers enforce at commit that each persisted tenant has at least one ACTIVE OWNER. They allow tenant and initial OWNER membership to be inserted in a single transaction. Organization mutations lock the tenant row before membership rows, providing a stable serialization point for application role changes. Flyway V1/V2 and their PL/pgSQL triggers passed isolated PostgreSQL 16.13 migration and concurrency acceptance. Do not run them against Surveillance or production databases as part of local testing.

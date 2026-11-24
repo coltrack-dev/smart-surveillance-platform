@@ -22,6 +22,17 @@ class LegacySecurityConfigurationTest {
                 .expectStatus().isOk();
     }
 
+    @Test
+    void deniesSaaSOrganizationRoutesInLegacySurveillanceMode() {
+        client.get().uri("/api/v1/organizations")
+                .exchange()
+                .expectStatus().isUnauthorized();
+
+        client.post().uri("/api/v1/invitations/accept")
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
     @RestController
     static class ProbeController {
         @GetMapping("/api/v1/cameras")

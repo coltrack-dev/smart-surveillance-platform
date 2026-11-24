@@ -12,8 +12,27 @@ const keycloak = oidcEnabled
 
 let initialization: Promise<boolean> | null = null
 
+function authenticationRedirectUri(): string {
+  // The public watch route may need to complete OIDC check-sso after an
+  // anonymous playback grant is denied. Keep that callback on the watch page
+  // so the player can retry with the authenticated viewer token.
+  if (window.location.pathname.startsWith('/watch/')) {
+    return `${window.location.origin}${window.location.pathname}${window.location.search}`
+  }
+  return import.meta.env.VITE_OIDC_REDIRECT_URI || `${window.location.origin}/`
+}
+
 export function isOidcEnabled(): boolean {
   return oidcEnabled
+}
+
+export function getCurrentIdentity() {
+  if (!keycloak || !keycloak.authenticated) return null
+  return {
+    username: keycloak.tokenParsed?.preferred_username ?? keycloak.tokenParsed?.name ?? 'Account',
+    email: keycloak.tokenParsed?.email ?? '',
+    emailVerified: keycloak.tokenParsed?.email_verified === true
+  }
 }
 
 export function initializeAuthentication(): Promise<boolean> {
@@ -23,17 +42,25 @@ export function initializeAuthentication(): Promise<boolean> {
       onLoad: 'check-sso',
       pkceMethod: 'S256',
       checkLoginIframe: false,
-      redirectUri: import.meta.env.VITE_OIDC_REDIRECT_URI
+      redirectUri: authenticationRedirectUri()
     })
   }
   return initialization
+}
+
+async function beginLogin(): Promise<void> {
+  if (!keycloak) return
+  const postLoginPath = `${window.location.pathname}${window.location.search}`
+  if (window.location.pathname !== '/') sessionStorage.setItem('streaming.postLoginPath', postLoginPath)
+  const callbackUri = import.meta.env.VITE_OIDC_REDIRECT_URI || `${window.location.origin}/`
+  await keycloak.login({ redirectUri: callbackUri })
 }
 
 export async function requireLogin(): Promise<boolean> {
   if (!keycloak) return true
   const authenticated = await initializeAuthentication()
   if (authenticated) return true
-  await keycloak.login({ redirectUri: window.location.href })
+  await beginLogin()
   return false
 }
 
@@ -43,7 +70,7 @@ export async function getAccessToken(): Promise<string | null> {
     await keycloak.updateToken(30)
     return keycloak.token ?? null
   } catch {
-    await keycloak.login({ redirectUri: window.location.href })
+    await beginLogin()
     return null
   }
 }

@@ -1,5 +1,7 @@
 # Phase 3.2B — Tenant ownership migration status
 
+**Current Streaming database target:** PostgreSQL 16.13 (`postgres:16.13-alpine`) for Streaming application and Keycloak databases. New migrations and acceptance environments must use PostgreSQL 16.13. PostgreSQL 17 references in the historical Phase 3.2 evidence below record the engine used for those completed tests only; they are not a current version requirement.
+
 ## Phase 3.2D isolated Flyway lifecycle and restore evidence (2026-11-24)
 
 **Result: PASS for isolated migration/startup and backup/restore checks.** No production or Surveillance database was accessed.

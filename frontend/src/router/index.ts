@@ -27,6 +27,18 @@ export default createRouter({
             path: '/watch/:publicId',
             name: 'broadcast-watch',
             component: () => import('../views/BroadcastPlayer.vue')
+        },
+        {
+            path: '/app/:section?',
+            name: 'streaming-app',
+            component: () => import('../views/StreamingApp.vue'),
+            meta: { requiresAuth: true, streamingOnly: true }
+        },
+        {
+            path: '/invite',
+            name: 'invitation-acceptance',
+            component: () => import('../views/StreamingApp.vue'),
+            meta: { requiresAuth: true, streamingOnly: true }
         }
     ]
 

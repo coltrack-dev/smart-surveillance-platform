@@ -3,6 +3,8 @@ import Hls, { type HlsConfig, type Loader, type LoaderCallbacks, type LoaderConf
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { API_URL } from '@/config'
+import { getAccessToken } from '@/auth/oidc'
+import { getSelectedTenant } from '@/api/http'
 
 const route = useRoute()
 const video = ref<HTMLVideoElement | null>(null)
@@ -26,7 +28,18 @@ const embedCode = computed(() => {
 async function playbackAuthorization() {
   if (cachedAuthorization && cachedAuthorization.expiresAt > Date.now() + 60_000) return cachedAuthorization
   const apiRoot = API_URL.replace(/\/$/, '')
-  const response = await fetch(`${apiRoot}/playback/${encodeURIComponent(publicId.value)}/token`, { cache: 'no-store' })
+  const tokenUrl = `${apiRoot}/playback/${encodeURIComponent(publicId.value)}/token`
+  let response = await fetch(tokenUrl, { cache: 'no-store' })
+  // PUBLIC playback stays anonymous. Retry a 401 with a user token only when
+  // this browser already has an authenticated Streaming session and tenant.
+  if (response.status === 401) {
+    const [accessToken, storedTenantId] = await Promise.all([getAccessToken(), Promise.resolve(getSelectedTenant())])
+    const tenantId = storedTenantId || (typeof route.query.tenant === 'string' ? route.query.tenant : null)
+    if (accessToken && tenantId) response = await fetch(tokenUrl, {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Tenant-ID': tenantId }
+    })
+  }
   if (!response.ok) throw new Error(response.status === 401 ? 'This broadcast is private.' : 'The broadcast is offline or unavailable.')
   const result = await response.json() as { token: string; expiresAt: string; playlistUrl: string }
   // The API returns a path-only URL. Resolve it against the gateway origin,

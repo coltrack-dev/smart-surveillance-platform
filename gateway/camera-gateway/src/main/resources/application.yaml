@@ -80,6 +80,20 @@ spring:
               filters:
                 - RewritePath=/api/v1/identity(?<segment>/?.*), /api/identity${segment}
 
+            - id: organization-management
+              uri: ${IDENTITY_SERVICE_URL:http://localhost:8099}
+              predicates:
+                - Path=/api/v1/organizations,/api/v1/organizations/**
+              filters:
+                - RewritePath=/api/v1/organizations(?<segment>/?.*), /api/organizations${segment}
+
+            - id: invitation-acceptance
+              uri: ${IDENTITY_SERVICE_URL:http://localhost:8099}
+              predicates:
+                - Path=/api/v1/invitations/accept
+              filters:
+                - RewritePath=/api/v1/invitations/accept, /api/invitations/accept
+
             #
             # Recording Service
             #

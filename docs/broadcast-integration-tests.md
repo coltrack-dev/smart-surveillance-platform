@@ -1,5 +1,7 @@
 # Broadcast MVP integration and load checks
 
+The current isolated integration Compose target uses PostgreSQL 16.13 (`postgres:16.13-alpine`), matching Streaming SaaS. PostgreSQL 17 references in historical results below describe the engine used during those earlier executions and do not set the current target.
+
 ## Status and safety
 
 Validation ran on 2026-11-23 against the isolated `broadcast-it` Compose project. **MediaMTX authentication, browser playback/renewal/revocation, four-viewer load, pre-reboot component recovery and the deterministic 32-slot controller test passed.** The focused controller test held 32 upstream calls, rejected request 33, then admitted another request after slot release. Runtime 32/33/96 batches were nondeterministic and are not the semaphore evidence. Public ingress remains disabled. No existing Surveillance container, volume or database was changed. No images, volumes, containers or build caches were deleted.

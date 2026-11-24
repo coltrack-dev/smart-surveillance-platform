@@ -45,6 +45,9 @@ public class RtspUrlResolver {
     }
 
     private String encode(String value) {
+        if (value == null) {
+            return "";
+        }
         return URLEncoder.encode(value, StandardCharsets.UTF_8)
                 .replace("+", "%20")
                 .replace("_", "%5F");

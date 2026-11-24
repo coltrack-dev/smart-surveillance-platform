@@ -14,9 +14,8 @@ services:
       - ./docker/mediamtx.broadcast-it.yml:/mediamtx.yml:ro
 
   postgres:
-    # Reuse the locally available PostgreSQL image; this test DB is fresh and
-    # uses only portable Flyway/JDBC features.
-    image: postgres:17-alpine
+    # Keep isolated integration coverage on the Streaming PostgreSQL target.
+    image: postgres:16.13-alpine
     environment:
       POSTGRES_DB: broadcast_it
       POSTGRES_USER: broadcast_it

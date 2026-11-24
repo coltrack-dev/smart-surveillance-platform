@@ -2,7 +2,7 @@
 
 ## Phase 3.2D multi-tenant acceptance results (2026-11-24)
 
-**Acceptance: BLOCKED for Phase 3.2D completion / public ingress.** Phase 3.2D.1 verified live encrypted playlist and AES-128 key retrieval through Gateway. A separate hostile external key-URI request returned 401 instead of the expected rewrite rejection, so that guard remains unverified. No prior IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load test was repeated.
+**Phase 3.2D acceptance: PASS. Public ingress: NOT APPROVED.** Phase 3.2D.1 verified live encrypted playlist and AES-128 key retrieval through Gateway. Phase 3.2D.2 used a valid HMAC playback grant to verify absolute external-key URI rejection, redirect blocking, and encoded traversal rejection at the Stream HTTP boundary. No prior IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load test was repeated.
 
 ### Phase 3.2D.1 — Encrypted HLS key HTTP evidence (2026-11-24)
 
@@ -20,16 +20,40 @@ Environment: Compose project `phase32d-accept-20261123`, isolated Streaming Post
 | Key after Tenant A membership revocation | 401 | Membership was restored immediately after this isolated check. |
 | Key after Broadcast disable / delete | 401 / 404 | Disable management request returned 200; delete returned 204. |
 | Malformed encoded key resource path | 400 | Rejected at HTTP boundary. |
-| Authorized playlist whose key URI was changed to an absolute external URL | **BLOCKED** | A valid-grant control playlist returned 200; modified playlist request returned 401, not expected 502. The upstream counter recorded zero fetches to the arbitrary path, but that does not prove the rewrite validator rejected the URI. Historical `BroadcastPlaybackControllerTest.rejectsExternalPlaylistReferences` was not rerun. |
+| Authorized playlist with absolute external `EXT-X-KEY` URI | **PASS** | `BroadcastPlaybackHttpIsolationTest.validHmacGrantReachesValidatorAndRejectsAbsoluteEncryptionKeyUri`: real `PlaybackTokenService` issued an unexpired HMAC grant; real `BroadcastService.authorizePlayback` accepted it; MockMvc HTTP GET fetched only the expected synthetic source playlist and returned 502 from the URI validator for `https://outside.invalid/key`; `MockRestServiceServer.verify()` confirmed no request to that URI. |
 | Captured application/proxy log scan | PASS (bounded) | No access/playback token, key bytes, key Base64 or key SHA-256 match in captured Stream/Gateway/upstream logs. No raw upstream URL appeared in playlist. |
 
-**Decision:** the Phase 3.2D blocker specifically for live encrypted-key retrieval is **RESOLVED**. Phase 3.2D overall remains **BLOCKED** pending a conclusive authorized hostile-URI rejection and independent public-route review. No browser AES decoding was tested. No previously passed tests were repeated.
+**Decision:** the encrypted-key and hostile-URI Phase 3.2D acceptance items are **RESOLVED**. The Phase 3.2D security evidence matrix is **PASS**. Public ingress remains **NOT APPROVED** pending a separate route allowlist/security review and deployment controls. No browser AES decoding was tested. No previously passed IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load tests were repeated.
 
 An auxiliary re-enable request used while sequencing the synthetic disable/delete checks returned HTTP 500 because the minimal isolated stack did not include Camera service for stream reacquisition. The synthetic row was then removed; the two pre-existing synthetic Broadcast enabled flags and their two lease rows were restored from the saved pre-test snapshot. This is an environment limitation observed during fixture handling, not accepted as evidence that the normal full Streaming stack cannot re-enable a Broadcast.
 
+### Phase 3.2D.2 — HLS URI SSRF boundary (2026-11-24)
+
+The prior live request's 401 was produced before the source playlist fetch: `BroadcastPlaybackController.file` calls `BroadcastService.authorizePlayback` first, and only then fetches/re-writes the playlist. The retained live artifacts did not capture the grant expiry, persisted playback version, enabled state and membership snapshot at that instant. Thus the precise authorization subcondition is **UNKNOWN**; possible privacy-preserving 401 causes include invalid/expired signature, revoked membership, disabled Broadcast or stale playback version. This was a test-fixture observability gap, not evidence that URI validation returned 401.
+
+Focused executions, each in a separate invocation with `--no-daemon --no-parallel --max-workers=1`, one `:services:stream-service:test` task and one exact `--tests` filter:
+
+| Full test method | Result | Observed evidence |
+|---|---|---|
+| `com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.validHmacGrantReachesValidatorAndRejectsAbsoluteEncryptionKeyUri` | **PASSED** | Signed, unexpired HMAC grant verified by the real service; request reached the source playlist mock; response was 502 on external key URI; exactly the expected source request was verified and no external request was made. |
+| `com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.encodedTraversalAndUnrecognizedUriAttributesFailClosed` | **PASSED** | Rejected percent/double-percent encoded traversal, encoded separators, query/fragment suffixes, case-variant absolute URI and unquoted URI attribute. |
+| `com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.playbackProxyRejectsUpstreamRedirectWithoutContactingRedirectTarget` | **PASSED** | Local upstream 302 returned 502; local redirect target got zero requests and no Authorization header. |
+| `com.coltrack.streamservice.controller.BroadcastPlaybackControllerTest.rewritesPlaylistSegmentsAndEncryptionKeyToProtectedUrls` | **PASSED** | Existing direct rewrite test rerun because the parser changed; current JUnit XML confirms one test, zero failures/errors/skips. |
+
+Commands (run separately, one method per Gradle invocation):
+
+```bash
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:stream-service:test --tests 'com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.validHmacGrantReachesValidatorAndRejectsAbsoluteEncryptionKeyUri'
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:stream-service:test --tests 'com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.encodedTraversalAndUnrecognizedUriAttributesFailClosed'
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:stream-service:test --tests 'com.coltrack.streamservice.controller.BroadcastPlaybackHttpIsolationTest.playbackProxyRejectsUpstreamRedirectWithoutContactingRedirectTarget'
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:stream-service:test --tests 'com.coltrack.streamservice.controller.BroadcastPlaybackControllerTest.rewritesPlaylistSegmentsAndEncryptionKeyToProtectedUrls'
+```
+
+The `BroadcastPlaybackHttpIsolationTest` XML was replaced by subsequent single-filter Gradle invocations; each run reported `BUILD SUCCESSFUL` and its exact one-method XML was inspected immediately after execution. The current persisted XML is for the final `BroadcastPlaybackControllerTest` invocation. Two initial invocations stopped at Java compilation (incorrect Spring request-factory import and a lambda parameter name collision); those compile errors were corrected before test execution, and no test assertion failed. No Docker, live Gateway, broad regression or load test was run in Phase 3.2D.2; the decisive URI test is a controller-level HTTP integration test with a valid signed grant and an upstream request mock.
+
 ### Source inventory at this snapshot
 
-The current Java source scan finds **150 methods annotated `@Test`**. This is a source count, not the number of tests executed in Phase 3.2D; parameterized invocations and assertions are not expanded.
+The current Java source scan finds **153 methods annotated `@Test`**. This is a source count, not the number of tests executed in Phase 3.2D; parameterized invocations and assertions are not expanded.
 
 | Module | `@Test` methods in current sources |
 |---|---:|
@@ -40,10 +64,10 @@ The current Java source scan finds **150 methods annotated `@Test`**. This is a 
 | notification-service | 1 |
 | recording-service | 24 |
 | search-service | 1 |
-| stream-service | 50 |
+| stream-service | 53 |
 | websocket-service | 9 |
 | common-security | 13 |
-| **Total** | **150** |
+| **Total** | **153** |
 
 The previous Phase 3.2C published snapshot listed 136 methods. The current scan is against the changed Phase 3.2D worktree; it must not be confused with the 15 unique focused methods executed below. The old snapshot was not a baseline for recomputing this changed tree. Earlier per-method historical statuses remain in the following inventory sections.
 
@@ -84,7 +108,7 @@ Environment: Compose project `phase32d-accept-20261123`; isolated PostgreSQL 17,
 | Token expiry and modification | PASS | 15-second grant returned 401 at 17.0 seconds; modified grant returned 401 in the earlier isolated probe. |
 | Membership revocation, disable/delete | PASS | Existing PRIVATE grant and renewal were denied on revocation; fresh grant was denied after disable; renewal returned 410; delete returned 204, playback-info 404 and previous grant 404. |
 | Direct `/media-hls/**` bypass | PASS | Anonymous request 401; authenticated request 403. |
-| Live encryption key fetch | BLOCKED | Synthetic playlist had no `EXT-X-KEY`. Previous `BroadcastPlaybackControllerTest.rewritesPlaylistSegmentsAndEncryptionKeyToProtectedUrls` is unit evidence only. |
+| Live encryption key fetch in original Phase 3.2D run | NOT RUN (historical snapshot) | That synthetic playlist had no `EXT-X-KEY`; superseded by the Phase 3.2D.1 live key retrieval evidence above and the Phase 3.2D.2 valid-grant URI validator test. |
 | Surveillance WebSocket compatibility | PASS (historical unit only) | Reused `WebSocketEventTenantRoutingTest.legacySurveillanceKeepsExistingGlobalDestinations`; no Surveillance stack was started. |
 
 ### Flyway and data restore
@@ -265,6 +289,7 @@ Camera list/update/delete/check-stream controller permutations; Broadcast manage
 | Полное имя теста | Статус |
 |---|---|
 | `com.coltrack.cameraservice.CameraServiceApplicationTests.contextLoads` | **PASSED** |
+| `com.coltrack.cameraservice.service.CameraCredentialsTest.resolvesStandardUrlWhenOptionalUsernameIsMissing` | **PASSED** |
 | `com.coltrack.cameraservice.service.CameraCredentialsTest.encryptsAndDecryptsPassword` | **NOT RUN** |
 | `com.coltrack.cameraservice.service.CameraCredentialsTest.resolvesXmTemplateWithoutPersistingPlaintextPassword` | **NOT RUN** |
 
@@ -394,7 +419,7 @@ Camera list/update/delete/check-stream controller permutations; Broadcast manage
 
 Это арифметика более раннего снимка реестра, а не текущий подсчёт. Тогда в исходниках было **78 Java test methods**, а сохранённый прежний stream-service suite содержал **23 PASS**. Разность `78 − 23 = 55` обозначала все остальные исходные методы, не количество запусков и не число PASS. Затем Phase 3.2A добавила методы и довела снимок до 98; Phase 3.2B добавила ещё 17, поэтому сейчас в исходниках 115 методов.
 
-На снимке после Phase 2.1 весь реестр оценивался как 56 PASS и 22 NOT RUN. После последующих проверок и Phase 3.2B текущая сводка составляет **96 PASSED, 0 FAILED, 0 SKIPPED, 22 NOT RUN**. Из этих 96 PASS 20 относятся к новым Phase 3.2B методам; остальные — исторические результаты, включая тесты, которые не запускались в этой задаче.
+На снимке после Phase 2.1 весь реестр оценивался как 56 PASS и 22 NOT RUN. В историческом Phase 3.2B снимке сводка составляла **96 PASSED, 0 FAILED, 0 SKIPPED, 22 NOT RUN**; это не актуальный сводный пересчёт после Phase 3.3A/3.3B. В текущей Camera module table добавлен один новый подтверждённый метод ниже. Не суммируйте этот старый агрегат с последующими фазовыми таблицами без повторного полного inventory-подсчёта.
 
 ## Источники и ограничения
 
@@ -402,3 +427,210 @@ Camera list/update/delete/check-stream controller permutations; Broadcast manage
 - Текущие XML: `*/build/test-results/test/TEST-*.xml`; точечные запуски Phase 3.2B заменили результаты XML в изменённых модулях, поэтому полный текущий per-test XML снимок недоступен. Статусы из запусков сохранены выше; исторические результаты помечены отдельно.
 - Исторический прогресс и отдельные интеграционные/браузерные/нагрузочные результаты описаны в `docs/broadcast-test-progress.md` и `docs/broadcast-integration-tests.md`. Их утверждения здесь приведены как сохранённые результаты, повторной проверки не было.
 - `NOT RUN` в таблицах отражает только отсутствие надёжного результата в просмотренных артефактах.
+
+## Phase 3.3A — Organization Management focused validation (2026-11-24)
+
+Current source test inventory gains two methods in `OrganizationControllerSecurityTest`, three methods in `OrganizationRolePolicyTest`, one method in `OrganizationManagementServiceTest`, and one method in `LegacySecurityConfigurationTest`. The previously recorded 153-method source snapshot therefore becomes 160 `@Test` methods, without counting parameterized invocations or assertions. These are new/currently affected source methods and are **not** part of historical Phase 3.2 totals above.
+
+| Full test method | Current result | Evidence |
+|---|---|---|
+| `com.coltrack.identityservice.controller.OrganizationControllerSecurityTest.rejectsAnonymousOrganizationCreation` | **PASSED** | Filtered `:services:identity-service:test`; HTTP POST to organization creation returned 401 without JWT. |
+| `com.coltrack.identityservice.controller.OrganizationControllerSecurityTest.createsWithTheValidatedOidcPrincipalAndNoStoreResponse` | **PASSED** | Same filtered test task; verified issuer, subject, email and `email_verified` principal extraction, 201 and `Cache-Control: no-store`. |
+| `com.coltrack.identityservice.service.OrganizationRolePolicyTest.adminCanOnlyManageOperatorAndViewerMemberships` | **PASSED** | Exact filtered `:services:identity-service:test`; verifies ADMIN cannot manage ADMIN/OWNER or assign elevated roles. |
+| `com.coltrack.identityservice.service.OrganizationRolePolicyTest.adminCanInviteOnlyOperatorAndViewer` | **PASSED** | Same exact filtered class; ADMIN cannot invite ADMIN/OWNER. |
+| `com.coltrack.identityservice.service.OrganizationRolePolicyTest.ownerCanManageAndInviteAllSupportedRoles` | **PASSED** | Same exact filtered class; verifies OWNER policy across all fixed roles. |
+| `com.coltrack.identityservice.service.OrganizationManagementServiceTest.lastActiveOwnerCannotBeRemoved` | **PASSED** | Exact filtered service test; mocked persistence returns one active OWNER, service returns 409 and does not revoke membership. This is unit evidence only, not a concurrency or PostgreSQL trigger test. |
+| `com.coltrack.gateway.security.LegacySecurityConfigurationTest.deniesSaaSOrganizationRoutesInLegacySurveillanceMode` | **PASSED** | Filtered `:gateway:camera-gateway:test`; both new SaaS paths returned 401 anonymously, while the same class confirmed existing unauthenticated Camera routing still returns 200. |
+
+Commands were run separately:
+
+```bash
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:identity-service:test --tests 'com.coltrack.identityservice.controller.OrganizationControllerSecurityTest'
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:identity-service:test --tests 'com.coltrack.identityservice.service.OrganizationRolePolicyTest'
+./gradlew --no-daemon --no-parallel --max-workers=1 :services:identity-service:test --tests 'com.coltrack.identityservice.service.OrganizationManagementServiceTest'
+./gradlew --no-daemon --no-parallel --max-workers=1 :gateway:camera-gateway:test --tests 'com.coltrack.gateway.security.LegacySecurityConfigurationTest'
+```
+
+Successful JUnit reports were inspected immediately: controller class had 2 tests, policy class had 3, service class had 1, and legacy Gateway class had 2; each final report had 0 failures/errors/skips. Later filtered invocations replace earlier XML on disk. An initial identity attempt failed during Java compilation on two implementation errors before tests executed; both errors were corrected. The first Gateway assertion expected 403, while Spring Security returned 401 for anonymous `denyAll`; the expectation was corrected and the focused class passed. No unrelated test was repeated. PostgreSQL V2 migration/trigger behavior, concurrent last-OWNER changes, invitation persistence/replay/expiry, and Surveillance runtime containers remain **NOT RUN**; there is no isolated database validation evidence for this phase yet.
+
+## Phase 3.3A.1 — Identity Persistence & Concurrency Acceptance (2026-11-24)
+
+**Overall: PASS on the declared PostgreSQL 16.13 target `identity_test_db`.** Read-only preflight verified database `identity_test_db`, role/owner `identity_test_user`, endpoint `127.0.0.1:5432`, PostgreSQL 16.13, empty `identity` schema and absent Flyway history. Disk/memory before the focused integration run: 19 GiB free and 23 GiB available. Older PostgreSQL 17 runs recorded elsewhere are historical evidence, not a target-version requirement.
+
+The current source inventory is 171 JUnit `@Test` methods at this snapshot: the Phase 3.3A count of 160 plus these 11 database acceptance methods. This is a method count; assertions are not counted as tests.
+
+Migration evidence: Identity Service Flyway startup with target version 1 applied V1; one synthetic V1 tenant/user/active-OWNER fixture was inserted and read back. Normal Identity Service startup then applied V2. Flyway history shows schema creation, V1 and V2 successful, zero failed migrations. The V1 fixture's tenant, user identity/email and active OWNER membership remained unchanged after upgrade. Catalog inspection confirmed invitation table constraints, token-hash and pending-email uniqueness, expiry/list indexes, membership role index and two `DEFERRABLE INITIALLY DEFERRED` OWNER constraint triggers. No ownerless tenants or temporary test helper functions remained after test execution.
+
+Focused execution (one module task, one class filter, one worker):
+
+```bash
+IDENTITY_ACCEPTANCE_TARGET=identity_test_db \
+IDENTITY_ACCEPTANCE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/identity_test_db \
+IDENTITY_ACCEPTANCE_DB_USER=identity_test_user \
+./gradlew --no-daemon --no-parallel --max-workers=1 \
+  :services:identity-service:test \
+  --tests 'com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest'
+```
+
+Final JUnit XML: `IdentityPersistenceAcceptanceTest`, 11 tests, **11 passed, 0 failed, 0 errors, 0 skipped**. The class is opt-in and asserts the exact database, role and PostgreSQL 16.13 version before each test. It is safe only when the test target variables are deliberately set; test-created tenant/user/membership/invitation rows are retained in this dedicated database. Final counts: 28 tenants, 14 users, 38 memberships and 8 invitations. All are test data; the DB was empty before V1 setup except for the fixture inserted by this acceptance.
+
+| Test method | Status | Verification |
+|---|---|---|
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.flywayV1UpgradeToV2PreservesExistingSyntheticTenantAndMembership` | **PASSED** | V1/V2 history and original pre-V2 synthetic membership preserved. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.organizationAndFirstOwnerCommitTogetherAndTenantRenameIsScoped` | **PASSED** | First OWNER committed with tenant; rename and membership resolution work; cross-tenant get is 404. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.databaseRejectsCommittedTenantWithoutActiveOwner` | **PASSED** | Deferred constraint rejected commit with SQLSTATE 23514; tenant absent afterward. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.ownerInsertFailureRollsBackOrganizationCreation` | **PASSED** | Synthetic OWNER insert trigger failed; service transaction rolled back tenant/user creation. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.duplicateSlugReturnsConflictAndDoesNotCreateSecondTenant` | **PASSED** | Duplicate returns 409; one tenant remains for that slug. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.deferredConstraintRejectsRevokingLastOwnerDirectly` | **PASSED** | Direct SQL status revocation failed at commit with SQLSTATE 23514; OWNER remains active. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.concurrentRemovalOfTwoOwnersCannotRemoveBoth` | **PASSED** | Separate concurrent transactions: one removal succeeded, the other was rejected; at least one active OWNER remained. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.concurrentOwnerSelfDemotionCannotRemoveBothOwners` | **PASSED** | Separate concurrent transactions: one self-demotion succeeded, the conflicting operation was rejected; OWNER remained. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.invitationStoresOnlyHashRequiresVerifiedMatchingEmailAndRejectsReplay` | **PASSED** | Stored 32-byte SHA-256 matched raw token hash; missing, unverified and mismatched email denied; valid accept succeeded; replay returned 410. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.concurrentAcceptanceIsSingleUseAndMembershipRevocationIsImmediate` | **PASSED** | Concurrent accepts yielded exactly one success/one 410; cross-tenant invitation list returned 404; revocation removed next membership resolution. |
+| `com.coltrack.identityservice.service.IdentityPersistenceAcceptanceTest.expiredAndRevokedInvitationsAreRejected` | **PASSED** | Expired invitation became EXPIRED and returned 410; revoked token returned 410. |
+
+The first integration attempt recorded 11 test-method context-load errors before the bodies ran because the mock web context omitted `HttpSecurity`; no DB assertions/writes occurred. The next attempt had 8 method failures: invitation inserts exposed a real JDBC bug (PostgreSQL could not infer a type for `Instant` in expiry), and test cleanup conflicted with the deferred OWNER trigger. Expiry binding now uses `Timestamp.from(Instant)`. Test rows are retained instead of disabling or bypassing the invariant for cleanup. After fixes, the exact filtered class passed; it was run once more after adding the missing-email assertion, and the final XML above is authoritative. The original mocked unit, Broadcast, Kafka/STOMP, browser and HLS suites were not repeated.
+
+PostgreSQL 16.13 is the current target and its focused acceptance passed. PostgreSQL 17 is not an acceptance requirement for Phase 3.3A or later.
+
+## Phase 3.3B — Vue Streaming SaaS Dashboard
+
+| Check | Status | Evidence |
+|---|---|---|
+| `frontend` `npm run build` | **PASSED** | Vue `vue-tsc -b` passed and Vite 8.3.8 generated the production bundle after adding SaaS routes, API client, tenant selection handling and PRIVATE player authorization retry. Vite emitted a chunk-size advisory for the main chunk (~630 kB minified); build succeeded. |
+| Dashboard browser E2E (snapshot before Phase 3.3B.1 live run) | **NOT RUN at that time** | Historical status only; superseded by the later isolated browser run below. |
+
+No Java tests, Docker, database migration, Surveillance operations or regression/browser suites were run for this phase. The build is static/type validation only and does not establish live API compatibility or playback behavior. See `docs/saas/SAAS_DASHBOARD.md` for remaining browser scenarios.
+
+## Phase 3.3B.1 — SaaS Dashboard browser acceptance: initial blocked preflight (2026-11-24)
+
+This is a historical preflight record. The later isolated live acceptance below supersedes its blocked status; the outcomes are preserved to show that no service was started before the initial Docker/volume safety review.
+
+**Overall status: BLOCKED. No real Chromium/OIDC/API browser flow was observed.** Exact environment evidence:
+
+- Preflight: 19 GiB free disk; 23 GiB RAM available.
+- `psql --version`: PostgreSQL client 16.13.
+- `pg_isready -h 127.0.0.1 -p 5432`: no response; no database writes/migrations occurred.
+- Read-only Docker inspection (`docker ps -a`, images, volumes, `docker system df`): Docker daemon unavailable/not running. Existing container, image and volume inventories could not be obtained. The daemon was not started.
+- Playwright Chromium: found in `/home/tatarino/.cache/ms-playwright/chromium-1255/chrome-linux64/chrome`; launched successfully for a local legacy frontend routing smoke check. No browser was installed.
+- Static validation: `docker compose -p surveillance-demo -f docker-compose.demo.yml config -q` **PASS**. Streaming `docker compose -p dashboard-it -f docker-compose.streaming.yml config -q` **PASS** with dummy validation-only values for required variables. These commands did not start services and do not verify runtime DB-volume isolation.
+
+| Scenario | Status | Evidence |
+|---|---|---|
+| Verify existing Docker resources and PostgreSQL volume major versions | **BLOCKED** | Daemon unavailable; no container/volume inspection possible. No PostgreSQL volume was mounted. |
+| Isolated PostgreSQL 16.13 startup and tenant fixture | **BLOCKED** | No local server response; no database created or modified. |
+| OIDC PKCE login, callback, app return, reload, logout, expiry, anonymous route denial | **BLOCKED** | No live Keycloak/Gateway; browser cannot complete OIDC without those services. |
+| Organization create/OWNER, switching, rename, multiple organizations and state isolation | **BLOCKED** | No isolated Identity API/DB or browser. |
+| Invitation issue/copy, matching/mismatched verified email, role change/removal, last OWNER, revoke/expiry | **BLOCKED** | No synthetic users or membership records created. |
+| Camera create/list/edit and credential non-disclosure | **BLOCKED** | No Camera API or browser session. |
+| Broadcast create, visibility, enable/disable, watch URL and iframe | **BLOCKED** | No Stream API or browser session. |
+| PRIVATE anon denial, authorized playback, cross-tenant denial and revocation renewal | **BLOCKED** | No playback API or synthetic HLS upstream invoked. |
+| PUBLIC anonymous playback in the new UI | **BLOCKED** | Prior public-player result is historical and not evidence for this integration. Not repeated. |
+| Legacy frontend route smoke (`VITE_AUTH_MODE=legacy`) | **PASSED (frontend only)** | Local build + loopback Vite preview in Chromium: `/app` redirected to `/`, SaaS shell absent, `/watch/{syntheticId}` remained accessible and rendered one video element. API calls were blocked by the test; playback was not asserted. |
+| Full Surveillance deployment compatibility | **BLOCKED (runtime)** | Demo Compose config passed, but daemon unavailable; no deployment container was started. |
+
+No screenshot was saved during this preflight. Unrelated Broadcast E2E, Gradle regression, Kafka/STOMP and load tests were deliberately not run.
+
+## Phase 3.3B.1 — SaaS Dashboard browser acceptance: isolated live run (2026-11-24)
+
+**Status: PARTIAL PASS; Phase 3.3B.1 remains open.** Environment: Compose project `phase33b1-saas-acceptance`; isolated PostgreSQL 16.13, Keycloak 26.8.2 and Kafka 3.9.1 containers with fresh project-scoped volumes; Identity/Camera/Stream/Gateway JARs, Vite and synthetic HLS server on loopback. Only four containers in that project were running. No Surveillance, `broadcast-it` or `phase32d` data/containers/volumes were modified. Disk/RAM preflight was 18 GiB free and 20 GiB available at resume. See `docs/saas/SAAS_DASHBOARD.md` for ports, exact evidence and limitations. Current Java source inventory at this snapshot contains 172 test methods; browser scenarios and assertions are reported separately below.
+
+| Scenario (browser scenario count; not JUnit method count) | Status | Evidence |
+|---|---|---|
+| Authorization Code + PKCE, callback, protected routes, reload persistence, logout | **PASSED** | Chromium completed synthetic OWNER/VIEWER login; `/app` callback and reload remained authenticated; no access token in localStorage; logout returned outside `/app`. Session expiry was not tested. |
+| Organization create/OWNER, rename, second organization/switch and clearing tenant state | **PASSED** | Synthetic OWNER managed two organizations; switching did not retain previous tenant Camera/Broadcast collections. |
+| Invitations, verified email, expiration, revocation, single use | **PASSED** | Matching verified email accepted (200); mismatch (403); expired/revoked (410); valid link was single-use. |
+| Role changes, member removal, last OWNER invariant | **PASSED** | VIEWER↔OPERATOR, removal; last OWNER demotion/leave returned 409. |
+| Camera create/edit and credential secrecy | **PASSED** | Synthetic Camera UI/API did not reveal RTSP credentials. Related focused `CameraCredentialsTest.resolvesStandardUrlWhenOptionalUsernameIsMissing()` was 1/1 PASS; JUnit XML had 0 failures/errors/skips. |
+| Broadcast create/state/visibility/permanent watch and iframe | **PASSED** | Create and enable/disable/re-enable worked; PUBLIC/PRIVATE changes worked; stable URL had no playback grant, iframe HTML was copied and contained no grant. Plain watch URL clipboard copy was not checked. |
+| PUBLIC anonymous HLS and iframe | **PASSED** | Chromium decoded synthetic H.264 from anonymous PUBLIC playback and from the PUBLIC iframe. |
+| PRIVATE anonymous denial, authenticated playback and iframe | **PASSED** | Anonymous token request 401; active member's HLS decoded synthetic H.264; authorized PRIVATE iframe decoded. |
+| Cross-tenant Camera/Broadcast/playback | **PASSED (denied)** | Camera 403; Broadcast 404; PRIVATE grant for the other selected tenant 401. Detailed comparison of Camera response body with a random unknown UUID was not separately asserted. |
+| Membership revocation during playback | **PASSED** | Subsequent grant renewal 401; fresh player request rendered private/unavailable status. Existing already-downloaded segments are not retroactively revoked. |
+| Responsive viewport, OIDC session expiry, long-duration playback-token renewal | **NOT RUN** | No viewport/device matrix or timed expiry test in this run. |
+| Direct PRIVATE watch before prior OIDC sign-in | **NOT RUN** | Tested flow signs into `/app` then opens the permanent player URL; fresh anonymous in-player login prompting remains unverified. |
+| Invitation URL clipboard copy and plain watch URL clipboard copy | **NOT RUN** | The invitation acceptance used a one-time URL from the OWNER creation response/status; permanent URL was inspected and iframe HTML copied, but these two plain-link clipboard actions were not separately clicked/asserted. |
+| Full Surveillance runtime compatibility | **NOT RUN** | Existing Surveillance resources were deliberately left untouched; only previous static/legacy route smoke is historical evidence. |
+
+**Relevant defect/fix:** During private playback, anonymous grant returned 401 and Keycloak `check-sso` callback redirected from the player to `/`, where router navigation moved to `/app`. `frontend/src/auth/oidc.ts` now preserves `/watch/{publicId}` plus its tenant selector as the initialization callback only on watch routes. Chromium then completed authorized PRIVATE grant and video decoding without leaving the player.
+
+**Executed current browser command:** from `frontend/`, with synthetic environment loaded from the permission-restricted `/tmp/phase33b1.env`:
+
+```bash
+DASHBOARD_RESUME_FROM_BROADCAST=true \
+DASHBOARD_RESUME_FROM_PRIVATE=true \
+DASHBOARD_RESUME_AFTER_PRIVATE_GRANT=true \
+node tests/saas-dashboard-browser-acceptance-resume.mjs
+```
+
+It reported 5 resumed scenario passes: reusing recorded authorized HLS/cross-tenant evidence, anonymous PRIVATE denial, PRIVATE iframe decoding, member role/removal/revocation and logout. A preceding targeted run actually decoded PRIVATE HLS and issued the cross-tenant calls; it stopped because the harness expected Camera 404 while the API returned 403. The harness expectation was changed to accept the API's 403 or 404 denial. The already successful private HLS decode and preceding cross-tenant calls were not repeated after that correction. The failed check was a test expectation mismatch, not an authorization allow.
+
+`npm run build` passed after the watch callback correction (Vue typecheck + Vite production build; main chunk warning ~630 kB). `node --check` and `git diff --check` passed. No Java regression, full Broadcast E2E, Kafka/STOMP, load test, full RTSP/MediaMTX suite or Surveillance operation was run. Historical PASS tests in other phases were not repeated.
+
+Source inventory, executed browser scenarios and assertions are separate counts: the frontend acceptance script is not a JUnit test method, and the video-width/progress assertions are not additional tests. No screenshots were saved. This was the Phase 3.3B.1 checkpoint; the remaining checks and final decision are recorded below.
+
+## Phase 3.3B.2 — Final SaaS Dashboard acceptance (2026-11-24)
+
+**Status: PASS; Phase 3.3B is closed for the agreed MVP browser acceptance scope.** The existing `phase33b1-saas-acceptance` project was checked read-only and reused. Its two PostgreSQL servers reported 16.13; Keycloak reported 26.8.2. Four project containers were already Up, all published ports were loopback-only. No Docker lifecycle operation, image build, Surveillance/broadcast-it/phase32d operation, or production database operation was performed. Disk/RAM preflight: 18 GiB free, 20 GiB available. Host application services were reused on loopback.
+
+### OIDC access-token expiry/session cases
+
+| Scenario | Status | Exact observed result |
+|---|---|---|
+| Valid session refresh after actual access-token expiry | **PASSED** | Isolated Keycloak realm lifespan temporarily 45 seconds; captured token lifetime was <=47s. After `exp`, Camera refresh returned 200 with a changed bearer token. |
+| Logout and `/app` protection | **PASSED** | Logout invalidated the browser session; `/app` showed one Keycloak login prompt and no SaaS shell, without redirect loop. |
+| Expired token with server-side session revoked | **PASSED** | Synthetic user session revoked using isolated Keycloak admin API; after token expiry, management requests were rejected/aborted, no replacement token appeared, and browser stayed at one login prompt. No management success response was observed. |
+| Isolated Keycloak test setting restoration | **PASSED (verified separately)** | First run's admin token expired before cleanup, so the runner exited nonzero after scenario assertions. Fresh admin authentication restored lifespan to 300s; a follow-up realm GET confirmed 300s. The test helper now refreshes its admin token in cleanup; assertions were not repeated. |
+
+### Playback authorization renewal
+
+| Scenario | Status | Exact observed result |
+|---|---|---|
+| PRIVATE HLS continues across grant renewal | **PASSED** | Synthetic HLS: 70 segments / 140s, 320×180 H.264; grant configuration PT90S. Chromium progressed past 40s with two distinct grants; observed protected media responses were HTTP 200. |
+| Old grant rejected after actual expiration | **PASSED** | At the first grant's actual expiry, Gateway request to its protected playlist URL returned HTTP 401. Current playback continued beyond 80s. |
+| Permanent watch/iframe URLs contain no playback grant | **PASSED (reused)** | Prior browser clipboard evidence already checked the stable watch URL and iframe. No grant/credential was present; not repeated. |
+
+The short VOD was generated with one FFmpeg thread in `/tmp`; the original synthetic HTTP fixture playlist was restored and verified by the test's `finally`. This was not an RTSP ingest, MediaMTX suite or load test. Tokens were held in memory and never printed.
+
+### Responsive layouts and clipboard
+
+| Viewport/scenario | Status | Evidence |
+|---|---|---|
+| 1440×900 desktop: Overview, Cameras, Broadcasts, Members, playback | **PASSED** | No document horizontal overflow; organization switcher visible. |
+| 768×1024 tablet: Overview, Cameras, Broadcasts, Members, playback | **PASSED** | No document horizontal overflow; organization switcher visible. |
+| 390×844 mobile: Overview, Cameras, Broadcasts, Members, playback | **PASSED** | No document horizontal overflow; tables scroll within their wrappers. |
+| Copy permanent PRIVATE watch URL | **PASSED** | Actual browser clipboard held stable path plus tenant selector, no JWT/grant/RTSP credential. |
+| Copy invitation link | **PASSED** | Actual clipboard held one-time synthetic invite URL with no JWT/media grant/internal credential; invitation was revoked after checking. |
+| Copy iframe HTML | **PASSED (reused)** | Actual clipboard and no-grant/referrer-policy assertion passed during Phase 3.3B.1; deliberately not repeated. |
+
+The test initially found mobile overflow: workspace selector intrinsic width expanded the sidebar and Camera form grid expanded the page. `StreamingApp.vue` now constrains the mobile sidebar and selector, and the shared stack grid uses a shrinkable single column. Post-fix targeted viewport runs passed; desktop sections affected by the shared grid and tablet breakpoint sections were rechecked. Mobile tables retain an internal horizontal scroller. Members uses inline role selection and native browser `window.confirm`, not a custom dashboard modal.
+
+### Legacy Surveillance frontend configuration
+
+**PASS (frontend routes only).** A separate Vite instance on `127.0.0.1:5175` was launched with `VITE_AUTH_MODE=legacy`. Chromium verified the root Surveillance shell, `/app` redirect to `/` without SaaS shell, zero Keycloak requests, and public `/watch/{syntheticId}` route with a video element. Gateway requests were blocked by the test; this is not backend or media playback evidence. No Surveillance container was started.
+
+### Commands and reporting boundaries
+
+Focused browser commands, from `frontend/` with synthetic variables sourced from the protected `/tmp/phase33b1.env`:
+
+```bash
+node tests/saas-dashboard-session-acceptance.mjs
+node tests/saas-dashboard-playback-renewal.mjs
+node tests/saas-dashboard-final-acceptance.mjs
+DASHBOARD_LAYOUT_ONLY=true DASHBOARD_VIEWPORT=mobile DASHBOARD_SECTION_ONLY=cameras node tests/saas-dashboard-final-acceptance.mjs
+DASHBOARD_LAYOUT_ONLY=true DASHBOARD_VIEWPORT=mobile DASHBOARD_SECTION_ONLY=broadcasts,members node tests/saas-dashboard-final-acceptance.mjs
+DASHBOARD_LAYOUT_ONLY=true DASHBOARD_VIEWPORT=desktop,tablet DASHBOARD_SECTION_ONLY=cameras,broadcasts,members node tests/saas-dashboard-final-acceptance.mjs
+DASHBOARD_LAYOUT_ONLY=true DASHBOARD_VIEWPORT=tablet DASHBOARD_SECTION_ONLY=overview node tests/saas-dashboard-final-acceptance.mjs
+node tests/saas-dashboard-legacy-compat.mjs
+```
+
+Some targeted layout runs were split to avoid repeating already passed viewport sections after the CSS correction. One earlier clipboard run failed because the harness read clipboard before async copy completed; it was corrected to wait for UI confirmation and then passed. One early legacy harness run accidentally aborted `/src/api/*.ts` through an overly broad route glob; the glob was removed and the final legacy smoke passed. These were harness defects, not product test failures.
+
+The first playback-renewal attempts also stopped before acceptance assertions: one login helper checked for the OIDC redirect too early, and one `waitForFunction` timeout was passed in Playwright's argument position instead of its options position. The helper and timeout signature were corrected; the final run reached playback, observed renewed grants and verified expired-grant rejection. The synthetic fixture playlist was restored in every run's `finally`.
+
+`npm run build` passed after UI/CSS changes (Vue typecheck + Vite; ~630 kB main-chunk advisory remains). `node --check` for the focused browser scripts and `git diff --check` passed. The OIDC session scenario itself passed, but its first runner exit status was nonzero only because the 300-second admin token expired before realm restoration; the isolated setting was then independently restored and verified. The helper was fixed to reacquire an admin token during cleanup. This cleanup-only correction did not change scenario behavior and the PASS cases were not repeated.
+
+Tests deliberately not repeated: existing Java regression, Broadcast E2E, MediaMTX authentication, Kafka/STOMP, Flyway, full RTSP/ingest integration, load/stress tests, and previously passed Phase 3.3B.1 OIDC/org/membership/Camera/Broadcast/PUBLIC/PRIVATE iframe scenarios. Browser scenario counts are separate from source JUnit methods and assertions; no screenshots were saved.
+
+### Closure and known limits
+
+All five Phase 3.3B.2 scenario groups passed. The signed-out direct PRIVATE watch route does not show an in-player login control; viewers sign in through `/app` before reopening that permanent link. This is deferred UX and remains fail-closed. Full Surveillance backend/media runtime was not started; only its frontend configuration/routing was verified. Public ingress remains disabled. Phase 3.3C has not started.

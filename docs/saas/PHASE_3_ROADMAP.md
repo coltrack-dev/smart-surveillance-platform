@@ -2,20 +2,20 @@
 
 ## Phase 3.2D — Multi-tenant security acceptance (2026-11-24)
 
-**Status: BLOCKED for phase completion and public ingress.** In an isolated two-tenant setup, the controller IDOR matrix passed; live Gateway-routed STOMP/Kafka checks passed, including anonymous rejection, tenant destination enforcement, persisted Camera owner routing despite a forged event tenant claim, redaction and active membership revocation. Live HLS playlists/segments passed PUBLIC/PRIVATE, cross-tenant, expiry, tampering, revocation, disable/delete and direct `/media-hls` denial checks. Fresh and legacy Flyway startup plus pre/post ownership backup/restore passed. No Surveillance containers or data were targeted.
+**Phase 3.2D acceptance: PASS. Public ingress: NOT APPROVED.** In an isolated two-tenant setup, the controller IDOR matrix passed; live Gateway-routed STOMP/Kafka checks passed, including anonymous rejection, tenant destination enforcement, persisted Camera owner routing despite a forged event tenant claim, redaction and active membership revocation. Live HLS playlists/segments passed PUBLIC/PRIVATE, cross-tenant, expiry, tampering, revocation, disable/delete and direct `/media-hls` denial checks. Fresh and legacy Flyway startup plus pre/post ownership backup/restore passed. The final encrypted-key URI guard also passed focused HTTP-boundary tests. No Surveillance containers or data were targeted.
 
-Phase 3.2D.1 closed the missing encrypted-key retrieval evidence using an isolated AES-128 HLS source: Gateway playback grant, playlist and authorized 16-byte key returned 200; missing, forged, expired, cross-tenant, revoked, disabled and deleted access were rejected. The separate hostile external key-URI check remains **BLOCKED**: its control playlist returned 200, but the modified playlist request returned 401 (with zero arbitrary upstream requests), rather than a conclusive rewrite rejection. Browser decryption was NOT TESTED. No prior IDOR, Kafka/STOMP, Flyway, backup/restore, browser or load tests were repeated. Keep Streaming loopback/private.
+Phase 3.2D.1 verified encrypted playlist and key retrieval. Phase 3.2D.2 used a valid HMAC playback grant and confirmed that an absolute external `EXT-X-KEY` URI is rejected with HTTP 502 after exactly one source-playlist request and no request to the referenced URI. Encoded traversal and upstream redirect tests also passed. The previous live 401 occurred before the upstream fetch/playlist rewrite in `authorizePlayback`; retained artifacts do not identify whether the generic authorization denial was expiry, playback-version/state mismatch or membership revocation. Browser decryption was NOT TESTED. Previously passing IDOR, Kafka/STOMP, Flyway, backup/restore, browser and load tests were not repeated. Keep Streaming loopback/private.
 
 | Acceptance area | Current status | Next action |
 |---|---|---|
 | Camera/Stream/Broadcast route authorization, membership and unassigned rows | PASS (focused controller methods) | Before rollout, add full HTTP binding tests where request conversion/exception mapping is part of the risk. |
 | Shared stream consumer lease acquire/release | PASS (tenant-bound controller delegation plus historical manager tests) | No separate viewer lease API exists; preserve one StreamManager session per Camera. |
 | Gateway/STOMP/Kafka tenant isolation and revocation | PASS (live isolated) | Reuse prior Surveillance destination unit evidence; keep WebSocket service private. |
-| Protected encrypted HLS authorization | PASS for playlist and exact key retrieval; hostile external URI guard BLOCKED | Diagnose the modified-playlist 401 and capture an authorized rejection (expected 502) with zero arbitrary upstream requests; browser AES-128 decode remains untested. |
+| Protected encrypted HLS authorization and SSRF controls | PASS (encrypted playlist/key, valid-grant external URI rejection, traversal and redirect tests) | Preserve focused regression coverage; browser AES-128 decode remains untested. |
 | Flyway lifecycle and synthetic backup/restore | PASS (isolated) | Rehearse against supported schema snapshots, measure locks, and establish release migration/restore procedure before production. |
 | Public ingress | NOT APPROVED | Independent security review, encrypted-key decision, TLS/host policy, rate limits and route allowlist remain prerequisites. |
 
-Phase 3.2D is not complete while the hostile external key-URI check and independent public-route review remain unresolved. The encrypted key retrieval gap itself is closed. No public ingress is approved.
+Phase 3.2D security acceptance is complete. Public ingress remains NOT APPROVED until the separate route allowlist/security review, TLS/host policy and deployment rate-limit controls are completed. Recording, Analytics and other non-tenant-scoped consumers remain excluded from public SaaS access.
 
 ## Phase 3.2A result — OIDC foundation (historical; Phase 3.2B status follows)
 
@@ -48,9 +48,8 @@ Identity precedes tenant-scoped API authorization. Ownership columns precede sco
 
 Implemented: Keycloak/OIDC JWT validation; application-owned memberships and role checks; nullable tenant ownership for Camera/Broadcast/Stream consumer leases; scoped management operations; workload-authenticated internal Camera lookup; tenant-bound stream leases; persisted-owner Kafka routing; STOMP tenant subscriptions; short-lived Broadcast playback grants and protected HLS proxy. Isolated service Flyway startup, legacy unassigned rows, two-tenant Gateway/STOMP/Kafka behavior and synthetic backup/restore have been exercised.
 
-Remaining before Phase 3.2 acceptance or any public ingress:
+Remaining before public ingress (Phase 3.2 acceptance evidence is complete):
 
-- Resolve the live encrypted HLS key scenario if encrypted playlists are enabled; the current synthetic HLS source had no key URI.
 - Add full HTTP binding/controller-slice assertions for the management IDOR matrix where serialization and framework exception mapping matter; current new negative tests call controller methods directly.
 - Add tenant provisioning, membership lifecycle administration and audit trails; the identity API discovers and resolves memberships but does not provision them.
 - Separate runtime and migration database credentials; define supported schema-upgrade order, lock/latency limits, restore rehearsal and a post-assignment forward-repair procedure.
@@ -77,7 +76,7 @@ Remaining before Phase 3.2 acceptance or any public ingress:
 ## Phase 3.5 — Playback and WebSocket production hardening
 
 - Preserve explicit PUBLIC consent and PRIVATE membership policy; tested token issuance and HLS media fetch recheck current grant/membership.
-- Verify encrypted key fetch live when enabled; ensure all reverse proxies redact token query parameters.
+- Extend the focused encrypted-key validator check through each supported edge/reverse-proxy configuration and verify token query redaction in those edge logs.
 - Add distributed rate limits, audit events and operational log redaction beyond the current in-process limits.
 - Keep direct `/media-hls/**` private; allow only reviewed public Broadcast token/media routes behind TLS.
 - Gate: completed key-path review, renewal/revocation telemetry, abuse controls and public-route security review.
@@ -89,6 +88,44 @@ Only enable these services for SaaS after tenant ownership covers parent/child r
 ## Phase 3.7 — Production readiness
 
 TLS and cookie/domain policy; secrets/key rotation; rate/abuse limits; audit retention; quotas; tenant suspension, deletion/export; backup/restore; observability, SLOs and incident response. Public ingress is an explicit release gate.
+
+## Phase 3.3A — Organization and membership management
+
+Identity-service now provides authenticated organization CRUD/read, member listing, role change, removal, leave, invitation create/list/revoke and invitation acceptance. Tenant creation atomically assigns the creator OWNER. Invitation tokens are one-time random values with only their SHA-256 hashes persisted; verified JWT email must match. V2 adds invitation constraints/indexes and deferred active-OWNER guards. Gateway routes are on the Streaming path; Surveillance composition is unchanged.
+
+**Implementation status:** code and focused controller, role-policy and PostgreSQL persistence tests are present. Phase 3.3A.1 persistence acceptance passed against the isolated PostgreSQL 16.13 target; see the follow-up section. Dashboard development can integrate the current contracts. Production onboarding/security gates remain.
+
+### Phase 3.3A.1 — Identity persistence and concurrency acceptance
+
+**PASS for PostgreSQL 16.13 (2026-11-24).** Flyway V1 and V2, V1 fixture upgrade preservation, owner integrity triggers, organization transactions, and invitation lifecycle passed in the explicitly selected `identity_test_db`. Two concurrent OWNER removals and two concurrent self-demotions each yielded one success and one rejection while retaining an active OWNER; concurrent acceptance was single-use. See `IdentityPersistenceAcceptanceTest` and the evidence matrix in `docs/TEST_INVENTORY.md`.
+
+**Database gate:** PostgreSQL 16.13 is the declared Streaming target, and the guarded acceptance passed on it. Phase 3.3B frontend development can proceed against the API; production rollout still needs ordinary release/security gates. Do not change an existing database image/version without a separately reviewed data transition plan.
+
+### Phase 3.3B — Vue Streaming SaaS Dashboard
+
+The existing Vue SPA now includes OIDC-only `/app` routes for organization overview, Cameras, Broadcasts, members/invitations and invitation acceptance. It reuses Keycloak PKCE and the shared Axios client; selected tenant is a request selector and server membership remains authoritative. Surveillance routes and anonymous PUBLIC `/watch/{publicId}` are preserved. PRIVATE watch authorization can retry with an authenticated token and tenant selector.
+
+**Implementation status:** `frontend/npm run build` and the principal isolated OIDC, organization, invitation, Camera/Broadcast and PUBLIC/PRIVATE flows passed. Final remaining browser checks and acceptance decision are recorded in Phase 3.3B.2 below. Public ingress remains disabled.
+
+### Phase 3.3B.1 — SaaS Dashboard browser acceptance: historical preflight
+
+The initial blocked preflight is retained as a historical record in `SAAS_DASHBOARD.md`; it was superseded by a later isolated live run. No Surveillance resources were changed.
+
+### Phase 3.3B.1 — SaaS Dashboard browser acceptance: checkpoint before 3.3B.2
+
+**Status: PARTIAL PASS; Phase 3.3B.1 remains open (2026-11-24).** Browser acceptance used project `phase33b1-saas-acceptance`, isolated PostgreSQL 16.13, Keycloak 26.8.2 and loopback-only host services. Chromium verified PKCE login, organization and invitation flows, Camera/Broadcast management, anonymous PUBLIC and authorized PRIVATE HLS decoding, iframe playback, cross-tenant denials, member revocation, and logout. A callback return-path defect on PRIVATE watch URLs was fixed and checked by the live private flow. Exact outcomes and evidence are listed in `SAAS_DASHBOARD.md` and `../TEST_INVENTORY.md`.
+
+Those remaining checks were completed or classified during Phase 3.3B.2 below. The full Surveillance deployment was not started; its existing containers and volumes were untouched.
+
+### Phase 3.3B.2 — Final SaaS Dashboard acceptance
+
+**Status: PASS; Phase 3.3B is closed for the agreed MVP scope (2026-11-24).** Chromium verified expired-access-token renewal, logout and server-side OIDC session invalidation without redirect loops; private HLS continued across distinct playback grants and expired grants returned HTTP 401; permanent watch and invitation links copied without credentials; Dashboard/player layouts fit desktop, tablet and mobile viewports; and legacy frontend routes worked with `VITE_AUTH_MODE=legacy` without Keycloak. Detailed evidence and exact limitations are in `SAAS_DASHBOARD.md` and `../TEST_INVENTORY.md`.
+
+Direct PRIVATE watch access before sign-in has no in-player login prompt and is deferred UX: viewers authenticate through `/app` before using the permanent PRIVATE link. Full Surveillance backend/media runtime was not started by design; the legacy frontend route check is isolated and does not claim deployment playback. Public ingress remains disabled; Phase 3.3C has not started.
+
+### Phase 3.3C — Usage & Quotas
+
+Define authoritative metering dimensions and events (tenant, cameras, enabled broadcasts, concurrent viewers and any retention limits), aggregation windows, idempotency and corrections. Implement usage persistence and race-safe quota enforcement in backend services at creation/start/playback boundaries; dashboard checks are presentation only. Add OWNER/ADMIN usage views, warning/limit policy, tenant suspension behavior, audit trail, retention/export, and tests for concurrent quota boundaries and meter outages. Billing remains out of scope until pricing and legal/tax operations are defined.
 
 ## New focused test plan
 

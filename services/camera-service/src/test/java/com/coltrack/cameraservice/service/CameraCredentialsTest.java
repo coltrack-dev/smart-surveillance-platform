@@ -41,4 +41,18 @@ class CameraCredentialsTest {
                 resolved
         );
     }
+
+    @Test
+    void resolvesStandardUrlWhenOptionalUsernameIsMissing() {
+        CameraEntity camera = CameraEntity.builder()
+                .rtspUrl("rtsp://camera.example.test:554/live")
+                .rtspUsername(null)
+                .rtspPasswordEncrypted(cipher.encrypt("test-password"))
+                .rtspUrlFormat(RtspUrlFormat.STANDARD)
+                .build();
+
+        String resolved = new RtspUrlResolver(cipher).resolve(camera);
+
+        assertEquals("rtsp://:test-password@camera.example.test:554/live", resolved);
+    }
 }

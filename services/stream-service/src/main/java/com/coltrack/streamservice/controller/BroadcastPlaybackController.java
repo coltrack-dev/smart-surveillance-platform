@@ -6,7 +6,8 @@ import com.coltrack.streamservice.service.BroadcastService;
 import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantContext;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -26,15 +27,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @RestController
-@RequiredArgsConstructor
 public class BroadcastPlaybackController {
-    private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]+)\"");
+    private static final Pattern URI_ATTRIBUTE = Pattern.compile("(?i)(?<![A-Za-z0-9_-])URI\\s*=\\s*\"([^\"]*)\"");
+    private static final Pattern URI_ATTRIBUTE_MARKER = Pattern.compile("(?i)(?<![A-Za-z0-9_-])URI\\s*=");
+    private static final Pattern SAFE_REFERENCE = Pattern.compile("[A-Za-z0-9_-][A-Za-z0-9._-]{0,179}");
     private final Semaphore playbackSlots = new Semaphore(32);
     private final BroadcastService broadcastService;
     private final BroadcastProperties properties;
     private final BroadcastRateLimiter rateLimiter;
     private final RestClient.Builder restClientBuilder;
     private final TenantAuthorization tenantAuthorization;
+
+    public BroadcastPlaybackController(BroadcastService broadcastService, BroadcastProperties properties,
+                                       BroadcastRateLimiter rateLimiter,
+                                       @Qualifier("broadcastPlaybackRestClientBuilder") RestClient.Builder restClientBuilder,
+                                       TenantAuthorization tenantAuthorization) {
+        this.broadcastService = broadcastService;
+        this.properties = properties;
+        this.rateLimiter = rateLimiter;
+        this.restClientBuilder = restClientBuilder;
+        this.tenantAuthorization = tenantAuthorization;
+    }
 
     @GetMapping("/api/playback/{publicId}/token")
     public BroadcastService.PlaybackToken issueToken(@PathVariable UUID publicId, HttpServletRequest request,
@@ -67,7 +80,13 @@ public class BroadcastPlaybackController {
                     .uri("/{cameraId}/{fileName}", broadcast.cameraId(), fileName)
                     .headers(headers -> headers.setBasicAuth(properties.getMediaReadUsername(), properties.getMediaReadPassword()))
                     .retrieve()
+                    .onStatus(HttpStatusCode::is3xxRedirection, (upstreamRequest, response) -> {
+                        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                                "HLS upstream redirects are not allowed");
+                    })
                     .body(byte[].class);
+        } catch (ResponseStatusException error) {
+            throw error;
         } catch (Exception error) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Live media is temporarily unavailable");
         } finally {
@@ -104,15 +123,20 @@ public class BroadcastPlaybackController {
             String trimmed = line.trim();
             if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {
                 line = playbackPath(publicId, safeReference(trimmed), token);
-            } else if (line.contains("URI=")) {
+            } else if (line.startsWith("#") && URI_ATTRIBUTE_MARKER.matcher(line).find()) {
                 Matcher matcher = URI_ATTRIBUTE.matcher(line);
                 StringBuffer rewritten = new StringBuffer();
-                boolean foundUri = false;
+                int rewrittenReferences = 0;
                 while (matcher.find()) {
-                    foundUri = true;
+                    rewrittenReferences++;
                     matcher.appendReplacement(rewritten, Matcher.quoteReplacement("URI=\"" + playbackPath(publicId, safeReference(matcher.group(1)), token) + "\""));
                 }
-                if (!foundUri) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid HLS URI attribute");
+                Matcher markers = URI_ATTRIBUTE_MARKER.matcher(line);
+                int declaredReferences = 0;
+                while (markers.find()) declaredReferences++;
+                if (rewrittenReferences == 0 || rewrittenReferences != declaredReferences) {
+                    throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid HLS URI attribute");
+                }
                 matcher.appendTail(rewritten);
                 line = rewritten.toString();
             }
@@ -122,7 +146,7 @@ public class BroadcastPlaybackController {
     }
 
     private static String safeReference(String value) {
-        if (value.isBlank() || value.contains(":") || value.contains("/") || value.contains("\\") || value.contains("..") || value.contains("?")) {
+        if (value == null || !SAFE_REFERENCE.matcher(value).matches() || value.contains("..")) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid HLS reference");
         }
         return value;
@@ -133,7 +157,7 @@ public class BroadcastPlaybackController {
     }
 
     private static boolean safeFileName(String value) {
-        return value.matches("[A-Za-z0-9._-]{1,180}") && !value.contains("..") && !value.equals(".");
+        return SAFE_REFERENCE.matcher(value).matches() && !value.contains("..") && !value.equals(".");
     }
 
     private static String trimSlash(String value) {
