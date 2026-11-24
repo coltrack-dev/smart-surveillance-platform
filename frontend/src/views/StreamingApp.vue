@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getCurrentIdentity, logout, requireLogin } from '@/auth/oidc'
 import { getSelectedTenant, setSelectedTenant } from '@/api/http'
-import { saasApi, type Broadcast, type Camera, type Invitation, type Member, type Membership, type Organization, type Role } from '@/api/saas'
+import { saasApi, type Broadcast, type Camera, type Invitation, type Member, type Membership, type Organization, type ResourceUsage, type Role } from '@/api/saas'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +15,8 @@ const members = ref<Member[]>([])
 const invitations = ref<Invitation[]>([])
 const cameras = ref<Camera[]>([])
 const broadcasts = ref<Broadcast[]>([])
+const cameraUsage = ref<ResourceUsage | null>(null)
+const broadcastUsage = ref<ResourceUsage | null>(null)
 const selectedTenant = ref(getSelectedTenant() ?? '')
 const loading = ref(true)
 const busy = ref(false)
@@ -23,6 +25,7 @@ const notice = ref('')
 const invitationUrl = ref('')
 const newOrgName = ref('')
 const cameraForm = ref({ name: '', rtspUrl: '', rtspUsername: '', rtspPassword: '' })
+const cameraIdempotencyKey = ref('')
 const editCameraId = ref('')
 const editCameraForm = ref({ name: '', rtspUrl: '', rtspUsername: '', rtspPassword: '' })
 const inviteForm = ref({ email: '', role: 'VIEWER' as Role })
@@ -46,7 +49,13 @@ const navigation = [
 
 function messageFor(err: unknown): string {
   const status = typeof err === 'object' && err !== null && 'response' in err
-    ? (err as { response?: { status?: number } }).response?.status : undefined
+    ? (err as { response?: { status?: number; data?: { code?: string } } }).response?.status : undefined
+  const code = typeof err === 'object' && err !== null && 'response' in err
+    ? (err as { response?: { data?: { code?: string } } }).response?.data?.code : undefined
+  if (code === 'CAMERA_QUOTA_EXCEEDED') return 'Camera limit reached. Delete a camera or change the organization plan.'
+  if (code === 'ACTIVE_BROADCAST_QUOTA_EXCEEDED') return 'Active broadcast limit reached. Disable a broadcast or change the organization plan.'
+  if (code === 'QUOTA_AUTHORITY_UNAVAILABLE') return 'Quota information is temporarily unavailable. Try again shortly.'
+  if (code === 'IDEMPOTENCY_KEY_REUSED') return 'This camera request key was already used with different details. Submit the request again.'
   if (status === 401) return 'Your session expired. Sign in again to continue.'
   if (status === 403) return 'Your organization role does not allow this action.'
   if (status === 404) return 'This organization or resource is no longer available.'
@@ -71,7 +80,7 @@ async function loadBase() {
 
 async function loadTenantData() {
   const generation = ++tenantLoadGeneration
-  if (!selectedTenant.value) { organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; return }
+  if (!selectedTenant.value) { organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null; return }
   error.value = ''
   try {
     const currentRole = memberships.value.find(m => m.tenantId === selectedTenant.value)?.role
@@ -79,18 +88,20 @@ async function loadTenantData() {
       saasApi.organization(selectedTenant.value),
       saasApi.cameras(),
       saasApi.broadcasts(),
+      saasApi.cameraUsage(),
+      saasApi.broadcastUsage(),
       saasApi.members(selectedTenant.value),
       currentRole === 'OWNER' || currentRole === 'ADMIN' ? saasApi.invitations(selectedTenant.value) : Promise.resolve([])
     ])
     if (generation !== tenantLoadGeneration) return
-    organization.value = results[0]; cameras.value = results[1]; broadcasts.value = results[2]; members.value = results[3]; invitations.value = results[4]
+    organization.value = results[0]; cameras.value = results[1]; broadcasts.value = results[2]; cameraUsage.value = results[3]; broadcastUsage.value = results[4]; members.value = results[5]; invitations.value = results[6]
   } catch (e) { if (generation === tenantLoadGeneration) error.value = messageFor(e) }
 }
 
 async function selectOrganization(id: string) {
   selectedTenant.value = id; setSelectedTenant(id || null)
   // Remove all organization-scoped data before requesting the new tenant.
-  organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []
+  organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null
   invitationUrl.value = ''
   await loadTenantData()
 }
@@ -124,9 +135,10 @@ async function renameOrganization() {
 }
 
 async function createCamera() {
+  if (!cameraIdempotencyKey.value) cameraIdempotencyKey.value = crypto.randomUUID()
   await perform(async () => {
-    const camera = await saasApi.createCamera({ name: cameraForm.value.name, rtspUrl: cameraForm.value.rtspUrl, rtspUsername: cameraForm.value.rtspUsername || null, rtspPassword: cameraForm.value.rtspPassword || null, autoStart: false })
-    cameras.value = [camera, ...cameras.value]; cameraForm.value = { name: '', rtspUrl: '', rtspUsername: '', rtspPassword: '' }; notice.value = 'Camera added.'
+    const camera = await saasApi.createCamera({ name: cameraForm.value.name, rtspUrl: cameraForm.value.rtspUrl, rtspUsername: cameraForm.value.rtspUsername || null, rtspPassword: cameraForm.value.rtspPassword || null, autoStart: false }, cameraIdempotencyKey.value)
+    cameraIdempotencyKey.value = ''; cameras.value = [camera, ...cameras.value]; cameraUsage.value = await saasApi.cameraUsage(); cameraForm.value = { name: '', rtspUrl: '', rtspUsername: '', rtspPassword: '' }; notice.value = 'Camera added.'
   })
 }
 
@@ -146,11 +158,11 @@ async function saveCameraEdit() {
 
 async function createBroadcast() {
   if (!broadcastCamera.value) return
-  await perform(async () => { const b = await saasApi.createBroadcast(broadcastCamera.value, broadcastVisibility.value); broadcasts.value = [b, ...broadcasts.value.filter(item => item.id !== b.id)]; notice.value = 'Broadcast saved.' })
+  await perform(async () => { const b = await saasApi.createBroadcast(broadcastCamera.value, broadcastVisibility.value); broadcasts.value = [b, ...broadcasts.value.filter(item => item.id !== b.id)]; broadcastUsage.value = await saasApi.broadcastUsage(); notice.value = 'Broadcast saved.' })
 }
 
 async function toggleBroadcast(b: Broadcast) {
-  await perform(async () => { const updated = await saasApi.setBroadcastEnabled(b.id, !b.enabled); broadcasts.value = broadcasts.value.map(x => x.id === b.id ? updated : x); notice.value = updated.enabled ? 'Broadcast enabled.' : 'Broadcast disabled.' })
+  await perform(async () => { const updated = await saasApi.setBroadcastEnabled(b.id, !b.enabled); broadcasts.value = broadcasts.value.map(x => x.id === b.id ? updated : x); broadcastUsage.value = await saasApi.broadcastUsage(); notice.value = updated.enabled ? 'Broadcast enabled.' : 'Broadcast disabled.' })
 }
 
 async function changeVisibility(b: Broadcast, value: 'PUBLIC' | 'PRIVATE') {
@@ -252,15 +264,15 @@ onUnmounted(() => { window.removeEventListener('streaming:access-changed', clear
         <template v-else>
           <section v-if="section === 'overview'" class="content-grid">
             <div class="welcome panel"><div><span class="eyebrow">WORKSPACE OVERVIEW</span><h2>Good to see you, {{ identity?.username ?? 'there' }}.</h2><p>Manage your live camera sources and share broadcasts from {{ organization?.name }}.</p><button v-if="role === 'OWNER'" class="link-button rename-action" @click="renameOrganization">Rename organization</button></div><RouterLink class="primary-link" to="/app/cameras">Add a camera <span>→</span></RouterLink></div>
-            <div class="stat-card panel"><span>CAMERAS</span><strong>{{ cameras.length }}</strong><small>Registered in this organization</small></div><div class="stat-card panel"><span>LIVE BROADCASTS</span><strong>{{ broadcasts.filter(b => b.enabled).length }}</strong><small>{{ broadcasts.length }} total broadcasts</small></div><div class="stat-card panel"><span>MEMBERS</span><strong>{{ members.length }}</strong><small>{{ role }} access</small></div>
+            <div class="stat-card panel"><span>CAMERAS</span><strong>{{ cameraUsage ? `${cameraUsage.used} / ${cameraUsage.limit}` : cameras.length }}</strong><small>{{ cameraUsage?.used != null && cameraUsage.used >= cameraUsage.limit ? 'Camera limit reached' : 'Registered cameras' }}</small></div><div class="stat-card panel"><span>ACTIVE BROADCASTS</span><strong>{{ broadcastUsage ? `${broadcastUsage.used} / ${broadcastUsage.limit}` : broadcasts.filter(b => b.enabled).length }}</strong><small>{{ broadcastUsage?.used != null && broadcastUsage.used >= broadcastUsage.limit ? 'Active broadcast limit reached' : 'Enabled broadcasts' }}</small></div><div class="stat-card panel"><span>MEMBERS</span><strong>{{ members.length }}</strong><small>{{ role }} access</small></div>
             <div class="panel wide"><div class="panel-heading"><div><h3>Recent broadcasts</h3><p>Share stable watch links; media authorization renews separately.</p></div><RouterLink to="/app/broadcasts">View all</RouterLink></div><p v-if="!broadcasts.length" class="empty-copy">No broadcasts yet. Create one from an owned camera.</p><div v-else class="compact-list"><div v-for="b in broadcasts.slice(0, 4)" :key="b.id"><span class="live-indicator" :class="{ muted: !b.enabled }"></span><strong>{{ cameras.find(c => c.id === b.cameraId)?.name ?? 'Camera' }}</strong><span>{{ b.enabled ? 'Enabled' : 'Offline' }} · {{ b.visibility }}</span><RouterLink :to="`/app/broadcasts`">Manage</RouterLink></div></div></div>
           </section>
           <section v-else-if="section === 'cameras'" class="stack">
             <div v-if="canOperate" class="panel"><div class="panel-heading"><div><h3>Add camera</h3><p>Connection details are sent securely and never shown in camera listings.</p></div></div><form class="form-grid" @submit.prevent="createCamera"><label>Camera name<input v-model="cameraForm.name" required maxlength="120" placeholder="Front entrance"></label><label class="span-2">RTSP URL<input v-model="cameraForm.rtspUrl" required type="password" placeholder="rtsp://host:554/path" autocomplete="off"></label><label>RTSP username<input v-model="cameraForm.rtspUsername" autocomplete="off"></label><label>RTSP password<input v-model="cameraForm.rtspPassword" type="password" autocomplete="new-password"></label><div class="span-2 form-actions"><button :disabled="busy">Add camera</button></div></form></div>
-            <div class="panel"><div class="panel-heading"><div><h3>Your cameras</h3><p>Camera state is refreshed from the selected organization.</p></div><button class="secondary" @click="loadTenantData">Refresh</button></div><p v-if="!cameras.length" class="empty-copy">No cameras in this workspace yet.</p><div v-else class="table-wrap"><table><thead><tr><th>Camera</th><th>Status</th><th>Last seen</th><th>Broadcast</th><th></th></tr></thead><tbody><tr v-for="camera in cameras" :key="camera.id"><td><strong>{{ camera.name }}</strong><small>#{{ camera.cameraNumber ?? camera.id.slice(0, 8) }}</small></td><td><span class="status-tag" :class="String(camera.status).toLowerCase()">{{ camera.status }}</span></td><td>{{ camera.lastHeartbeat ? new Date(camera.lastHeartbeat).toLocaleString() : '—' }}</td><td>{{ broadcasts.some(b => b.cameraId === camera.id) ? 'Configured' : '—' }}</td><td><button v-if="canOperate && editCameraId !== camera.id" class="link-button" @click="beginCameraEdit(camera)">Edit</button></td></tr></tbody></table></div><form v-if="editCameraId" class="form-grid camera-edit" @submit.prevent="saveCameraEdit"><p class="span-2 empty-copy">For security, the saved RTSP URL and credentials are not shown. Re-enter the source URL to update this camera.</p><label>Camera name<input v-model="editCameraForm.name" required></label><label>New RTSP URL<input v-model="editCameraForm.rtspUrl" type="password" required autocomplete="off"></label><label>RTSP username<input v-model="editCameraForm.rtspUsername" autocomplete="off"></label><label>RTSP password<input v-model="editCameraForm.rtspPassword" type="password" autocomplete="new-password"></label><div class="span-2 form-actions"><button :disabled="busy">Save camera</button><button type="button" class="secondary" @click="editCameraId = ''">Cancel</button></div></form></div>
+            <div class="panel"><div class="panel-heading"><div><h3>Your cameras</h3><p>Usage: {{ cameraUsage ? `${cameraUsage.used} of ${cameraUsage.limit}` : 'unavailable' }} cameras. Limits are enforced by the server.</p></div><button class="secondary" @click="loadTenantData">Refresh</button></div><p v-if="cameraUsage && cameraUsage.remaining === 0" class="alert error">Camera limit reached. Delete a camera or change the organization plan to add another.</p><p v-if="!cameras.length" class="empty-copy">No cameras in this workspace yet.</p><div v-else class="table-wrap"><table><thead><tr><th>Camera</th><th>Status</th><th>Last seen</th><th>Broadcast</th><th></th></tr></thead><tbody><tr v-for="camera in cameras" :key="camera.id"><td><strong>{{ camera.name }}</strong><small>#{{ camera.cameraNumber ?? camera.id.slice(0, 8) }}</small></td><td><span class="status-tag" :class="String(camera.status).toLowerCase()">{{ camera.status }}</span></td><td>{{ camera.lastHeartbeat ? new Date(camera.lastHeartbeat).toLocaleString() : '—' }}</td><td>{{ broadcasts.some(b => b.cameraId === camera.id) ? 'Configured' : '—' }}</td><td><button v-if="canOperate && editCameraId !== camera.id" class="link-button" @click="beginCameraEdit(camera)">Edit</button></td></tr></tbody></table></div><form v-if="editCameraId" class="form-grid camera-edit" @submit.prevent="saveCameraEdit"><p class="span-2 empty-copy">For security, the saved RTSP URL and credentials are not shown. Re-enter the source URL to update this camera.</p><label>Camera name<input v-model="editCameraForm.name" required></label><label>New RTSP URL<input v-model="editCameraForm.rtspUrl" type="password" required autocomplete="off"></label><label>RTSP username<input v-model="editCameraForm.rtspUsername" autocomplete="off"></label><label>RTSP password<input v-model="editCameraForm.rtspPassword" type="password" autocomplete="new-password"></label><div class="span-2 form-actions"><button :disabled="busy">Save camera</button><button type="button" class="secondary" @click="editCameraId = ''">Cancel</button></div></form></div>
           </section>
           <section v-else-if="section === 'broadcasts'" class="stack"><div v-if="canOperate" class="panel"><div class="panel-heading"><div><h3>Create broadcast</h3><p>Broadcasts reuse the organization camera stream.</p></div></div><form class="form-grid" @submit.prevent="createBroadcast"><label>Camera<select v-model="broadcastCamera" required><option value="" disabled>Select camera</option><option v-for="camera in cameras" :key="camera.id" :value="camera.id">{{ camera.name }}</option></select></label><label>Visibility<select v-model="broadcastVisibility"><option value="PRIVATE">Private</option><option value="PUBLIC">Public</option></select></label><div class="form-actions"><button :disabled="busy || !cameras.length">Create broadcast</button></div></form></div>
-            <div class="panel"><div class="panel-heading"><div><h3>Broadcasts</h3><p>Permanent URLs contain no playback grants. PRIVATE links include only the tenant selector.</p></div><button class="secondary" @click="loadTenantData">Refresh</button></div><p v-if="!broadcasts.length" class="empty-copy">No broadcasts yet. Select an owned camera to get started.</p><div v-else class="broadcast-list"><article v-for="b in broadcasts" :key="b.id" class="broadcast-card"><div class="broadcast-top"><div><span class="status-tag" :class="b.enabled ? 'online' : 'offline'">{{ b.enabled ? 'LIVE' : 'DISABLED' }}</span><h3>{{ cameras.find(c => c.id === b.cameraId)?.name ?? 'Camera' }}</h3><small>{{ b.publicId }}</small></div><label class="visibility-select">Visibility<select :value="b.visibility" :disabled="!canOperate" @change="changeVisibility(b, ($event.target as HTMLSelectElement).value as 'PUBLIC'|'PRIVATE')"><option>PRIVATE</option><option>PUBLIC</option></select></label></div><div class="broadcast-actions"><button v-if="canOperate" :class="b.enabled ? 'danger' : ''" @click="toggleBroadcast(b)">{{ b.enabled ? 'Disable' : 'Enable' }}</button><a class="secondary-button" :href="`/watch/${b.publicId}${b.visibility === 'PRIVATE' ? `?tenant=${selectedTenant}` : ''}`" target="_blank" rel="noopener noreferrer">Open watch page</a><button class="secondary" @click="copyBroadcast(b)">Copy watch URL</button><button class="secondary" @click="copyBroadcast(b, true)">Copy iframe HTML</button></div></article></div></div></section>
+            <div class="panel"><div class="panel-heading"><div><h3>Broadcasts</h3><p>Active usage: {{ broadcastUsage ? `${broadcastUsage.used} of ${broadcastUsage.limit}` : 'unavailable' }}. Permanent URLs contain no playback grants.</p></div><button class="secondary" @click="loadTenantData">Refresh</button></div><p v-if="broadcastUsage && broadcastUsage.remaining === 0" class="alert error">Active broadcast limit reached. Disable a broadcast or change the organization plan to enable another.</p><p v-if="!broadcasts.length" class="empty-copy">No broadcasts yet. Select an owned camera to get started.</p><div v-else class="broadcast-list"><article v-for="b in broadcasts" :key="b.id" class="broadcast-card"><div class="broadcast-top"><div><span class="status-tag" :class="b.enabled ? 'online' : 'offline'">{{ b.enabled ? 'LIVE' : 'DISABLED' }}</span><h3>{{ cameras.find(c => c.id === b.cameraId)?.name ?? 'Camera' }}</h3><small>{{ b.publicId }}</small></div><label class="visibility-select">Visibility<select :value="b.visibility" :disabled="!canOperate" @change="changeVisibility(b, ($event.target as HTMLSelectElement).value as 'PUBLIC'|'PRIVATE')"><option>PRIVATE</option><option>PUBLIC</option></select></label></div><div class="broadcast-actions"><button v-if="canOperate" :class="b.enabled ? 'danger' : ''" @click="toggleBroadcast(b)">{{ b.enabled ? 'Disable' : 'Enable' }}</button><a class="secondary-button" :href="`/watch/${b.publicId}${b.visibility === 'PRIVATE' ? `?tenant=${selectedTenant}` : ''}`" target="_blank" rel="noopener noreferrer">Open watch page</a><button class="secondary" @click="copyBroadcast(b)">Copy watch URL</button><button class="secondary" @click="copyBroadcast(b, true)">Copy iframe HTML</button></div></article></div></div></section>
           <section v-else-if="section === 'members'" class="stack">
             <div v-if="canManage" class="panel"><div class="panel-heading"><div><h3>Invite a member</h3><p>No email is sent yet; development invite links are shown once.</p></div></div><form class="inline-form" @submit.prevent="invite"><input v-model="inviteForm.email" type="email" required placeholder="name@example.com"><select v-model="inviteForm.role"><option value="VIEWER">VIEWER</option><option value="OPERATOR">OPERATOR</option><option v-if="role === 'OWNER'" value="ADMIN">ADMIN</option><option v-if="role === 'OWNER'" value="OWNER">OWNER</option></select><button :disabled="busy">Create invitation</button></form></div>
             <div class="panel"><div class="panel-heading"><div><h3>Members</h3><p>Organization roles determine the available actions.</p></div></div><div class="table-wrap"><table><thead><tr><th>Member</th><th>Role</th><th>Joined</th><th></th></tr></thead><tbody><tr v-for="member in members" :key="member.userId"><td><strong>{{ member.displayName || member.email || 'Member' }}</strong><small>{{ member.email }}</small></td><td><select v-if="canManage && (role === 'OWNER' || ['OPERATOR','VIEWER'].includes(member.role))" :value="member.role" @change="changeMemberRole(member, $event)"><option value="VIEWER">VIEWER</option><option value="OPERATOR">OPERATOR</option><option v-if="role === 'OWNER'" value="ADMIN">ADMIN</option><option v-if="role === 'OWNER'" value="OWNER">OWNER</option></select><span v-else class="role-pill">{{ member.role }}</span></td><td>{{ new Date(member.joinedAt).toLocaleDateString() }}</td><td><button v-if="canManage && member.userId !== identityUser?.id && (role === 'OWNER' || ['OPERATOR','VIEWER'].includes(member.role))" class="link-button danger-text" @click="removeMember(member)">Remove</button></td></tr></tbody></table></div><p v-if="!members.length" class="empty-copy">No members found.</p></div>

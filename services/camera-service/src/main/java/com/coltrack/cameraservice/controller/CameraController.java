@@ -8,6 +8,7 @@ import com.coltrack.cameraservice.service.CameraService;
 import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantContext;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -37,11 +38,14 @@ public class CameraController {
     @PostMapping
     public ResponseEntity<?> create(@RequestBody CreateCameraRequest request,
                                     @AuthenticationPrincipal Jwt jwt,
-                                    @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant) {
+                                    @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant,
+                                    @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         UUID tenantId = authorize(jwt, selectedTenant, "camera.manage");
+        if (tenantId != null && (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key is required for Streaming camera creation");
         CameraEntity camera = service.create(request.name(), request.lbsLocationId(), request.rtspUrl(),
                 request.rtspUsername(), request.rtspPassword(), request.rtspUrlFormat(),
-                request.videoProcessingMode(), request.autoStart(), tenantId);
+                request.videoProcessingMode(), request.autoStart(), tenantId, idempotencyKey);
         return ResponseEntity.created(URI.create("/api/cameras/" + camera.getId())).body(present(camera));
     }
 
@@ -52,6 +56,14 @@ public class CameraController {
         UUID tenantId = authorize(jwt, selectedTenant, "camera.read");
         Page<CameraEntity> page = tenantId == null ? service.findAll(pageable) : service.findAll(tenantId, pageable);
         return "oidc".equalsIgnoreCase(securityMode) ? page.map(CameraResourceResponse::from) : page;
+    }
+
+    @GetMapping("/usage")
+    public ResponseEntity<?> usage(@AuthenticationPrincipal Jwt jwt,
+                                   @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant) {
+        UUID tenantId = authorize(jwt, selectedTenant, "camera.read");
+        if (tenantId == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(service.usage(tenantId));
     }
 
     @GetMapping("/{id}")
@@ -110,6 +122,23 @@ public class CameraController {
     private Object present(CameraEntity camera) {
         return "oidc".equalsIgnoreCase(securityMode) ? CameraResourceResponse.from(camera) : camera;
     }
+
+    @ExceptionHandler(TenantQuotaGuard.QuotaExceededException.class)
+    public ResponseEntity<QuotaError> quotaExceeded(TenantQuotaGuard.QuotaExceededException error) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new QuotaError(error.code(), "MAX_CAMERAS", error.used(), error.limit()));
+    }
+
+    @ExceptionHandler(TenantQuotaGuard.QuotaAuthorityUnavailableException.class)
+    public ResponseEntity<QuotaError> quotaUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(new QuotaError("QUOTA_AUTHORITY_UNAVAILABLE", null, null, null));
+    }
+
+    @ExceptionHandler(CameraService.IdempotencyConflictException.class)
+    public ResponseEntity<QuotaError> idempotencyConflict() {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new QuotaError("IDEMPOTENCY_KEY_REUSED", null, null, null));
+    }
+
+    public record QuotaError(String code, String resource, Long currentUsage, Integer limit) {}
 
     private static AuthenticatedPrincipal principal(Jwt jwt) {
         return new AuthenticatedPrincipal(jwt.getIssuer().toString(), jwt.getSubject(),

@@ -17,6 +17,8 @@ import com.coltrack.events.CameraRegisteredEvent;
 import com.coltrack.events.CameraUpdatedEvent;
 
 import com.coltrack.kafka.KafkaTopics;
+import com.coltrack.identity.quota.TenantQuotaGuard;
+import com.coltrack.cameraservice.repository.CameraCreateIdempotencyRepository;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -25,6 +27,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.http.HttpStatus;
@@ -32,6 +35,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 
 @Service
@@ -47,6 +54,13 @@ public class CameraService {
     @Autowired(required = false)
     private CameraDeletionTombstoneRepository deletionTombstones;
 
+    @Autowired(required = false)
+    private TenantQuotaGuard quotaGuard;
+
+    @Autowired(required = false)
+    private CameraCreateIdempotencyRepository idempotencyRepository;
+
+    @Transactional
     public CameraEntity create(
             String name,
             UUID lbsLocationId,
@@ -62,6 +76,7 @@ public class CameraService {
                 rtspUrlFormat, videoProcessingMode, autoStart, null);
     }
 
+    @Transactional
     public CameraEntity create(
             String name,
             UUID lbsLocationId,
@@ -73,6 +88,43 @@ public class CameraService {
             boolean autoStart,
             UUID tenantId
     ) {
+
+        return create(name, lbsLocationId, rtspUrl, rtspUsername, rtspPassword, rtspUrlFormat,
+                videoProcessingMode, autoStart, tenantId, null);
+    }
+
+    @Transactional
+    public CameraEntity create(
+            String name, UUID lbsLocationId, String rtspUrl, String rtspUsername, String rtspPassword,
+            RtspUrlFormat rtspUrlFormat, VideoProcessingMode videoProcessingMode, boolean autoStart,
+            UUID tenantId, String idempotencyKey
+    ) {
+
+        if (tenantId != null && (quotaGuard == null || idempotencyRepository == null))
+            throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(new IllegalStateException("Streaming quota services are not configured"));
+        String canonicalRequest = canonicalRequest(name, lbsLocationId, rtspUrl, rtspUsername, rtspPassword,
+                rtspUrlFormat, videoProcessingMode, autoStart);
+        String fingerprint;
+        try {
+            fingerprint = tenantId == null ? sha256(canonicalRequest) : credentialsCipher.fingerprint(canonicalRequest);
+        } catch (IllegalStateException configurationError) {
+            if (tenantId != null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(configurationError);
+            throw configurationError;
+        }
+        String keyHash = idempotencyKey == null ? null : sha256(idempotencyKey);
+        if (tenantId != null && quotaGuard != null) quotaGuard.lock(tenantId);
+        if (tenantId != null && idempotencyRepository != null && keyHash != null) {
+            var previous = idempotencyRepository.find(tenantId, keyHash);
+            if (previous.isPresent()) {
+                if (!MessageDigest.isEqual(previous.get().fingerprint().getBytes(StandardCharsets.US_ASCII), fingerprint.getBytes(StandardCharsets.US_ASCII)))
+                    throw new IdempotencyConflictException();
+                if (previous.get().cameraId() == null) throw new IdempotencyConflictException();
+                return repository.findByIdAndTenantId(previous.get().cameraId(), tenantId)
+                        .orElseThrow(IdempotencyConflictException::new);
+            }
+        }
+
+        if (tenantId != null && quotaGuard != null) quotaGuard.requireCapacity(tenantId, TenantQuotaGuard.Resource.CAMERA);
 
         LbsLocationEntity lbsLocation = null;
 
@@ -111,22 +163,35 @@ public class CameraService {
 
 
         repository.save(camera);
+        repository.flush();
+        if (tenantId != null && idempotencyRepository != null && keyHash != null)
+            idempotencyRepository.save(tenantId, keyHash, fingerprint, camera.getId());
 
-        kafkaTemplate.send(
-                KafkaTopics.CAMERA_EVENTS,
-                camera.getId().toString(),
-                new CameraRegisteredEvent(
-                        camera.getId(),
-                        camera.getName(),
-                        "",//camera.getLocation(),
-                        camera.getRtspUrl(),
-                        camera.isAutoStart(),
-                        camera.getCreatedAt(),
-                        camera.getTenantId()
-                )
-        );
+        Runnable publish = () -> kafkaTemplate.send(KafkaTopics.CAMERA_EVENTS,
+                camera.getId().toString(), new CameraRegisteredEvent(camera.getId(), camera.getName(), "",
+                        camera.getRtspUrl(), camera.isAutoStart(), camera.getCreatedAt(), camera.getTenantId()));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { publish.run(); }
+            });
+        } else publish.run();
 
         return camera;
+    }
+
+    private static String canonicalRequest(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) canonical.append(value == null ? "-" : value.toString()).append('\0');
+        return canonical.toString();
+    }
+
+    private static String sha256(String value) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    public static class IdempotencyConflictException extends RuntimeException {
+        public IdempotencyConflictException() { super("Idempotency key cannot be reused for this request"); }
     }
 
 
@@ -137,6 +202,13 @@ public class CameraService {
 
     public Page<CameraEntity> findAll(UUID tenantId, Pageable pageable) {
         return repository.findAllByTenantId(tenantId, pageable);
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public TenantQuotaGuard.Usage usage(UUID tenantId) {
+        if (quotaGuard == null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(
+                new IllegalStateException("Quota authority is not configured"));
+        return quotaGuard.usage(tenantId, TenantQuotaGuard.Resource.CAMERA);
     }
 
     public CameraEntity findById(
@@ -265,6 +337,7 @@ public class CameraService {
 
     @Transactional
     public void delete(UUID id, UUID tenantId) {
+        if (tenantId != null && quotaGuard != null) quotaGuard.lock(tenantId);
         deleteAndPublish(findById(id, tenantId));
     }
 

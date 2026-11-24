@@ -10,6 +10,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.util.Base64;
 
 @Component
@@ -78,6 +80,21 @@ public class CameraCredentialsCipher {
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException | IllegalArgumentException e) {
             throw new IllegalStateException("Cannot decrypt camera credentials", e);
+        }
+    }
+
+    /** Keyed request fingerprint for idempotency; raw RTSP credentials are never persisted in this table. */
+    public String fingerprint(String canonicalRequest) {
+        requireKey();
+        try {
+            Mac derivation = Mac.getInstance("HmacSHA256");
+            derivation.init(new SecretKeySpec(key, "HmacSHA256"));
+            byte[] fingerprintKey = derivation.doFinal("camera-create-idempotency-v1".getBytes(StandardCharsets.UTF_8));
+            Mac fingerprint = Mac.getInstance("HmacSHA256");
+            fingerprint.init(new SecretKeySpec(fingerprintKey, "HmacSHA256"));
+            return java.util.HexFormat.of().formatHex(fingerprint.doFinal(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Cannot fingerprint camera request", e);
         }
     }
 

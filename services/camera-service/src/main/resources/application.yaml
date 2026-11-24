@@ -47,6 +47,10 @@ app:
     internal:
       workload-secret: ${STREAMING_INTERNAL_JWT_SECRET:}
 
+identity:
+  quotas:
+    default-plan: ${IDENTITY_QUOTAS_DEFAULT_PLAN:FREE}
+
 camera:
   credentials:
     key: ${CAMERA_CREDENTIALS_KEY:}

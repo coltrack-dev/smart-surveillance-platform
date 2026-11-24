@@ -3,6 +3,7 @@ package com.coltrack.streamservice.controller;
 import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantContext;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.model.Broadcast;
 import com.coltrack.streamservice.model.BroadcastVisibility;
@@ -57,6 +58,15 @@ public class BroadcastController {
                                 @AuthenticationPrincipal Jwt jwt) {
         TenantContext context = authorize(authorization, jwt, selectedTenant, "broadcast.read");
         return context == null ? service.list() : service.list(context.tenantId());
+    }
+
+    @GetMapping("/usage")
+    public ResponseEntity<?> usage(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                   @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant,
+                                   @AuthenticationPrincipal Jwt jwt) {
+        TenantContext context = authorize(authorization, jwt, selectedTenant, "broadcast.read");
+        if (context == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(service.usage(context.tenantId()));
     }
 
     @GetMapping("/{id}")
@@ -162,4 +172,13 @@ public class BroadcastController {
     public ResponseEntity<ErrorResponse> limited() {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new ErrorResponse("Too many requests"));
     }
+    @ExceptionHandler(TenantQuotaGuard.QuotaExceededException.class)
+    public ResponseEntity<QuotaError> quotaExceeded(TenantQuotaGuard.QuotaExceededException error) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new QuotaError(error.code(), "MAX_ACTIVE_BROADCASTS", error.used(), error.limit()));
+    }
+    @ExceptionHandler(TenantQuotaGuard.QuotaAuthorityUnavailableException.class)
+    public ResponseEntity<QuotaError> quotaUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(new QuotaError("QUOTA_AUTHORITY_UNAVAILABLE", null, null, null));
+    }
+    public record QuotaError(String code, String resource, Long currentUsage, Integer limit) {}
 }

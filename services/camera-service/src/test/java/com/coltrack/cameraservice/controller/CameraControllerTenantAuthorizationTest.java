@@ -9,6 +9,7 @@ import com.coltrack.identity.model.Role;
 import com.coltrack.identity.model.TenantMembership;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantPermissions;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.data.domain.Page;
@@ -23,6 +24,21 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class CameraControllerTenantAuthorizationTest {
+    @Test
+    void cameraUsageIsMembershipScopedAndNotCacheable() {
+        UUID tenant = UUID.randomUUID(), user = UUID.randomUUID();
+        CameraService cameras = mock(CameraService.class);
+        when(cameras.usage(tenant)).thenReturn(new TenantQuotaGuard.Usage(tenant,
+                TenantQuotaGuard.Resource.CAMERA, 1, 2, 1));
+        CameraController controller = controller(cameras, tenant, user, Role.VIEWER);
+
+        var response = controller.usage(jwt(user), tenant);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("no-store", response.getHeaders().getCacheControl());
+        verify(cameras).usage(tenant);
+    }
+
     @Test
     void tenantCameraListUsesMembershipScopedRepositoryPath() {
         UUID tenant = UUID.randomUUID(), user = UUID.randomUUID();
@@ -59,6 +75,8 @@ class CameraControllerTenantAuthorizationTest {
                 () -> controller.heartbeat(cameraId, jwt(user), tenant)).getStatusCode().value());
         assertEquals(404, assertThrows(ResponseStatusException.class,
                 () -> controller.checkStream(cameraId, jwt(user), tenant)).getStatusCode().value());
+        assertEquals(404, assertThrows(ResponseStatusException.class,
+                () -> controller.usage(jwt(user), tenant)).getStatusCode().value());
 
         verifyNoInteractions(cameras, monitoring);
     }
@@ -102,15 +120,15 @@ class CameraControllerTenantAuthorizationTest {
         UUID tenant = UUID.randomUUID(), user = UUID.randomUUID(), cameraId = UUID.randomUUID();
         CameraService cameras = mock(CameraService.class);
         when(cameras.create(eq("camera"), isNull(), eq("rtsp://nvr/live"), isNull(), isNull(),
-                isNull(), isNull(), eq(false), eq(tenant))).thenReturn(CameraEntity.builder()
+                isNull(), isNull(), eq(false), eq(tenant), eq("request-key-1234567890123456"))).thenReturn(CameraEntity.builder()
                 .id(cameraId).name("camera").status(CameraStatus.OFFLINE).createdAt(Instant.now()).build());
         CameraController controller = controller(cameras, tenant, user, Role.OPERATOR);
 
         controller.create(new CreateCameraRequest("camera", null, null, "rtsp://nvr/live", null, null,
-                null, null, false), jwt(user), tenant);
+                null, null, false), jwt(user), tenant, "request-key-1234567890123456");
 
         verify(cameras).create(eq("camera"), isNull(), eq("rtsp://nvr/live"), isNull(), isNull(),
-                isNull(), isNull(), eq(false), eq(tenant));
+                isNull(), isNull(), eq(false), eq(tenant), eq("request-key-1234567890123456"));
     }
 
     @Test

@@ -139,6 +139,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
       SPRING_DATASOURCE_USERNAME: streaming
       SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+      IDENTITY_QUOTAS_DEFAULT_PLAN: ${IDENTITY_QUOTAS_DEFAULT_PLAN:-FREE}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:?Set a base64 encoded 32-byte key}
       APP_SECURITY_MODE: oidc
@@ -169,6 +170,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://streaming-postgres:5432/streaming
       SPRING_DATASOURCE_USERNAME: streaming
       SPRING_DATASOURCE_PASSWORD: ${STREAMING_DB_PASSWORD:?Set a dedicated Streaming database password}
+      IDENTITY_QUOTAS_DEFAULT_PLAN: ${IDENTITY_QUOTAS_DEFAULT_PLAN:-FREE}
       APP_SECURITY_MODE: oidc
       APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
       APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
@@ -224,6 +226,9 @@ services:
       APP_SECURITY_OIDC_ISSUER_URI: ${STREAMING_OIDC_ISSUER_URI:?Set the Keycloak realm issuer URL}
       APP_SECURITY_OIDC_JWK_SET_URI: http://keycloak:8080/realms/streaming/protocol/openid-connect/certs
       APP_SECURITY_OIDC_AUDIENCE: streaming-api
+      IDENTITY_INVITATIONS_DEVELOPMENT_LINK_ENABLED: ${IDENTITY_INVITATIONS_DEVELOPMENT_LINK_ENABLED:-false}
+      IDENTITY_INVITATIONS_PUBLIC_BASE_URL: ${IDENTITY_INVITATIONS_PUBLIC_BASE_URL:-http://localhost:5173}
+      IDENTITY_QUOTAS_DEFAULT_PLAN: ${IDENTITY_QUOTAS_DEFAULT_PLAN:-FREE}
       JAVA_OPTS: ${IDENTITY_JAVA_OPTS:--Xms96m -Xmx256m}
     depends_on:
       streaming-postgres:

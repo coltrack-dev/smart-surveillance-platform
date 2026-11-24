@@ -4,6 +4,7 @@ import com.coltrack.identity.model.Role;
 import com.coltrack.identity.model.TenantMembership;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantPermissions;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
@@ -18,6 +19,21 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class BroadcastControllerTenantAuthorizationTest {
+    @Test
+    void broadcastUsageIsMembershipScopedAndNotCacheable() {
+        UUID tenant = UUID.randomUUID(), user = UUID.randomUUID();
+        BroadcastService service = mock(BroadcastService.class);
+        when(service.usage(tenant)).thenReturn(new TenantQuotaGuard.Usage(tenant,
+                TenantQuotaGuard.Resource.BROADCAST, 1, 1, 0));
+        BroadcastController controller = controller(service, tenant, user, Role.VIEWER);
+
+        var response = controller.usage(null, tenant, jwt(user));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("no-store", response.getHeaders().getCacheControl());
+        verify(service).usage(tenant);
+    }
+
     @Test
     void missingMembershipDeniesBroadcastReadDeleteAndPlaybackInfoBeforeServiceCalls() {
         UUID tenant = UUID.randomUUID(), user = UUID.randomUUID(), id = UUID.randomUUID();
@@ -35,6 +51,8 @@ class BroadcastControllerTenantAuthorizationTest {
                 () -> controller.delete(null, tenant, jwt(user), id)).getStatusCode().value());
         assertEquals(404, assertThrows(ResponseStatusException.class,
                 () -> controller.playbackInfo(null, tenant, jwt(user), id)).getStatusCode().value());
+        assertEquals(404, assertThrows(ResponseStatusException.class,
+                () -> controller.usage(null, tenant, jwt(user))).getStatusCode().value());
 
         verifyNoInteractions(service);
     }

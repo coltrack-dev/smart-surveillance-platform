@@ -633,4 +633,78 @@ Tests deliberately not repeated: existing Java regression, Broadcast E2E, MediaM
 
 ### Closure and known limits
 
-All five Phase 3.3B.2 scenario groups passed. The signed-out direct PRIVATE watch route does not show an in-player login control; viewers sign in through `/app` before reopening that permanent link. This is deferred UX and remains fail-closed. Full Surveillance backend/media runtime was not started; only its frontend configuration/routing was verified. Public ingress remains disabled. Phase 3.3C has not started.
+All five Phase 3.3B.2 scenario groups passed. The signed-out direct PRIVATE watch route does not show an in-player login control; viewers sign in through `/app` before reopening that permanent link. This is deferred UX and remains fail-closed. Full Surveillance backend/media runtime was not started; only its frontend configuration/routing was verified. Public ingress remains disabled. At this 2026-11-24 checkpoint, Phase 3.3C had not started.
+## Phase 3.3C.1 — Usage and quota foundation
+
+New focused tests added:
+
+- `OrganizationQuotaServiceTest.returnsEffectivePlanAndOverridesOnlyForActiveMember` — verifies tenant-scoped effective plan/override resolution.
+- `OrganizationQuotaServiceTest.doesNotRevealQuotaForNonMember` — verifies inaccessible organizations return 404 without querying quota data.
+- `OrganizationQuotaServiceTest.rejectsMissingAuthenticatedPrincipal` — verifies absent identity is rejected.
+- `OrganizationQuotaServiceTest.failsClosedWhenTheConfiguredPlanCannotBeResolved` — verifies unavailable plan configuration returns 503.
+- `OrganizationQuotaControllerSecurityTest.rejectsAnonymousQuotaRead` — verifies the quota endpoint is authenticated.
+- `OrganizationQuotaControllerSecurityTest.returnsNoStoreEffectiveQuotasForAuthenticatedMember` — verifies response fields, no-store policy and validated principal delegation.
+- `OrganizationCreationQuotaAssignmentTest.assignsConfiguredDefaultPlanDuringOrganizationCreation` — verifies the configured default plan is assigned during the organization creation service transaction.
+
+Focused execution results (current run):
+
+| Module task | Test methods executed | Result |
+|---|---:|---|
+| `:services:identity-service:test --tests 'com.coltrack.identityservice.service.OrganizationQuotaServiceTest'` | 3 | **3 PASSED**, 0 failed, 0 skipped; verified from the matching JUnit XML report. |
+| `:services:identity-service:test --tests 'com.coltrack.identityservice.controller.OrganizationQuotaControllerSecurityTest'` | 2 | **2 PASSED**, 0 failed, 0 skipped; verified from the matching JUnit XML report. |
+| `:services:identity-service:test --tests 'com.coltrack.identityservice.service.OrganizationCreationQuotaAssignmentTest.assignsConfiguredDefaultPlanDuringOrganizationCreation'` | 1 distinct method | **PASS on corrected run**; initial run failed in test-only Mockito vararg capture, then the fixture was corrected and this one method passed. Final matching JUnit XML: 1 test, 0 failures/errors/skips. |
+| Repeat `OrganizationQuotaServiceTest` after adding fail-closed 503 behavior | 4 | **4 PASSED**, 0 failed, 0 skipped; this class was rerun because its service behavior changed. |
+
+Source methods: 7. Distinct methods with a final passing result: 7. Test attempts: 11 (the service class ran once for 3 methods and again for 4 after its behavior changed; the controller class ran once for 2 methods; the default-assignment method ran twice because its first test fixture failed and was corrected). Ten attempts passed and one initial test-fixture attempt failed; no product-code test remains failing. No parameterized invocations or assertion counts are included. At this initial implementation checkpoint, Identity Flyway V3 had not yet been applied; the later Phase 3.3C.1B database acceptance follows. No previous OIDC, HLS, Broadcast, Kafka/STOMP, load, or Surveillance tests were selected or repeated. Usage aggregation and quota enforcement remain NOT RUN.
+
+## Phase 3.3C.1B — Identity quota PostgreSQL acceptance (2026-11-25)
+
+Test executed: `IdentityQuotaPersistenceAcceptanceTest` in `:services:identity-service:test`, filtered to that class and run with `--no-daemon --no-parallel --max-workers=1` against a new isolated PostgreSQL 16.13 cluster. The exact acceptance database and role were checked in every test setup. Flyway V1, V2 and V3 were applied sequentially to the fresh schema. A second fresh database was migrated to V2, seeded with a synthetic tenant, user and OWNER membership, then upgraded to V3.
+
+| Test method | Result | Evidence |
+|---|---|---|
+| `freshFlywayAppliesV1ThroughV3AndSeedsConstrainedPlanCatalog` | **PASS** | SQL migration history V1/V2/V3 successful; catalog values FREE 2/1/3, PRO 10/5/25, BUSINESS 50/25/200; 8 quota check constraints; existing deferred active-OWNER triggers remain. |
+| `organizationCreationAssignsDefaultAndLegacyOrganizationFallsBackWithoutBackfill` | **PASS** | New organization assigned FREE with one ACTIVE OWNER; removing the explicit assignment resolved the configured default without recreating/backfilling it. |
+| `effectiveQuotaUsesPlanAndNullablePerMetricOverrides` | **PASS** | PRO limits resolved and only `max_cameras` override changed the effective limit; other override fields remained SQL NULL. |
+| `organizationRollbackLeavesNoQuotaAssignmentAndOwnerInvariantIntact` | **PASS** | Synthetic OWNER insert trigger forced rollback; tenant and quota assignment were both absent afterward. |
+| `unknownPlanAndMissingConfiguredDefaultFailClosedAndMembershipIsRequired` | **PASS** | Unknown plan rejected by FK; invalid configured fallback returned 503; non-member received 404. |
+| `quotaHttpResponseIsAuthenticatedMemberScopedAndNotCacheable` | **PASS** | Anonymous request 401; active member received 200, `Cache-Control: no-store`, and effective limits; unknown subject received 404. |
+| `v2SchemaUpgradeToV3PreservesSyntheticTenantAndDoesNotAssignPlan` | **PASS** | Flyway V2→V3 successful; synthetic tenant and OWNER membership preserved; no plan assignment or overrides backfilled. |
+
+JUnit XML: 7 tests, 0 failures, 0 errors, 0 skipped. Two earlier clean-scratch attempts found the missing SQL bind parameter and exposed test assumptions about Flyway's schema-creation history row and read-only user discovery; fixes were made and the final run used a third, fresh cluster. Those initial attempts are not counted as passing results. Previously passing quota unit/controller tests and unrelated OIDC/HLS/Broadcast/Kafka/STOMP/browser/load suites were not repeated.
+
+**Phase 3.3C.1 is closed for its foundation and PostgreSQL persistence acceptance.** Camera/Broadcast quota enforcement, authoritative usage aggregation, viewer sessions, and production rollout are not part of this closure.
+
+## Phase 3.3C.2 — Camera and Broadcast quota enforcement (2026-11-25)
+
+This phase adds 16 Java source test methods: 2 in `common-security`, 11 in Camera Service (2 admission unit tests, 7 PostgreSQL quota acceptance tests, 1 Flyway test, 1 usage controller test), and 3 Stream Service tests (2 lifecycle tests and 1 usage controller test). Three existing controller methods were directly updated for tenant-scoped usage and Camera idempotency handling. Exact method results follow; these are method counts, not assertions or parameterized invocations.
+
+| Full test method | Status | Evidence |
+|---|---|---|
+| `com.coltrack.identity.quota.TenantQuotaGuardTest.rejectsAtLimitAfterAcquiringOrganizationLock` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; verifies machine-readable rejection after the tenant-scoped transaction lock. |
+| `com.coltrack.identity.quota.TenantQuotaGuardTest.databaseLookupFailureFailsClosed` | **PASS** | Matching JUnit XML; simulated Identity/quota-schema JDBC failure returns the fail-closed exception before resource count. |
+| `com.coltrack.cameraservice.service.CameraQuotaAdmissionTest.repeatedCreateWithSameKeyAndPayloadReturnsTheSameCameraWithoutSecondAdmission` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; same logical create returns prior Camera and makes one quota admission/write. Final Gradle result was restored from cache for this unchanged exact input. |
+| `com.coltrack.cameraservice.service.CameraQuotaAdmissionTest.atLimitCameraCreationDoesNotPersist` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; checks that quota denial precedes Camera persistence. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.createAssignsTenantFromMembershipContext` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; validated tenant and idempotency key are delegated to Camera Service. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.cameraUsageIsMembershipScopedAndNotCacheable` | **PASS** | Matching JUnit XML; active tenant Viewer receives usage with `Cache-Control: no-store`. |
+| `com.coltrack.cameraservice.controller.CameraControllerTenantAuthorizationTest.absentMembershipDeniesListAndCameraMutationsBeforeAnyLookup` | **PASS** | Directly updated and rerun; usage request is denied with 404 before service access. |
+| `com.coltrack.streamservice.controller.BroadcastControllerTenantAuthorizationTest.broadcastUsageIsMembershipScopedAndNotCacheable` | **PASS** | Matching JUnit XML; active tenant Viewer receives usage with `Cache-Control: no-store`. |
+| `com.coltrack.streamservice.controller.BroadcastControllerTenantAuthorizationTest.missingMembershipDeniesBroadcastReadDeleteAndPlaybackInfoBeforeServiceCalls` | **PASS** | Directly updated and rerun; usage request is denied with 404 before service access. |
+| `com.coltrack.streamservice.service.BroadcastQuotaLifecycleTest.activationReservesBeforePersistingEnabledState` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; capacity check precedes desired-state write. |
+| `com.coltrack.streamservice.service.BroadcastQuotaLifecycleTest.quotaDenialLeavesBroadcastDisabled` | **PASS** | Matching JUnit XML: 1 test, 0 failures/errors/skips; quota refusal performs no enabled-state update. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.concurrentCameraCreatesSerializeAtOneRemainingSlot` | **PASS** | Isolated PostgreSQL 16.13; exactly 1 of 2 concurrent admissions succeeded; tenant Camera count ended at 3. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.concurrentBroadcastActivationsSerializeAtOneRemainingSlot` | **PASS** | Isolated PostgreSQL 16.13; exactly 1 of 2 concurrent admissions succeeded; exactly 1 Broadcast ended enabled. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.rollbackDoesNotConsumeCameraCapacityAndDeletionReleasesIt` | **PASS** | Isolated PostgreSQL 16.13; rolled-back create left count unchanged and physical deletion freed capacity. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.loweringQuotaBelowUsagePreservesRowsAndRejectsOnlyFurtherCreation` | **PASS** | Isolated PostgreSQL 16.13; existing two Cameras remained when override was lowered to one; additional create rejected. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.disablingBroadcastReleasesItsActiveSlot` | **PASS** | Isolated PostgreSQL 16.13; disabled Broadcast released the count and the same Broadcast could then be admitted again. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.concurrentCameraCreateAndDeleteNeverExceedLimit` | **PASS** | Isolated PostgreSQL 16.13, two transactions; either ordering ended at or below the one-Camera limit. |
+| `com.coltrack.cameraservice.service.TenantQuotaPostgresAcceptanceTest.concurrentBroadcastEnableAndDisableNeverExceedLimit` | **PASS** | Isolated PostgreSQL 16.13, two transactions; enabling while another Broadcast disables never exceeded one active row. |
+| `com.coltrack.cameraservice.service.CameraQuotaMigrationPostgresAcceptanceTest.cameraV1ThroughV4ApplyAdditivelyAndPreserveLegacyCameraRow` | **PASS** | Flyway V1–V4 plus baseline 0 succeeded in a separate fresh PostgreSQL 16.13 database; synthetic legacy Camera stayed unassigned and V4 idempotency schema existed. |
+
+Database environment: new local PostgreSQL 16.13 cluster under `/tmp`, loopback port 56439; test databases `quota_acceptance_phase33c2` and `quota_acceptance_migrations`. The opt-in acceptance fixtures require a loopback URL and `quota_acceptance_*` DB name. No Docker containers, production/Surveillance/preview databases, volumes or data were used. No Docker service was started.
+
+During implementation, an initial live lock attempt exposed an incorrect `JdbcTemplate` callback assumption (the tenant row was falsely treated as missing). That implementation defect was fixed by switching to an explicit `ResultSetExtractor`; the Camera race then passed. Other initial failed attempts were limited to a test fixture expectation (Mockito assertion), an omitted Flyway baseline version 0 in the expected list, and a compilation error before a test ran. Each directly affected method was corrected and its final passing result is shown above; no final failure remains.
+
+The final test evidence verifies the quota guard transaction pattern, but not concurrent HTTP requests through multiple live service instances, process-crash recovery between Broadcast DB commit and media lease side effect, deployed least-privilege DB role grants, or coordination with out-of-band plan/override edits. Usage is a direct owner-table snapshot, not a reconciled ledger. Cross-tenant API authorization behavior was unchanged and existing historical controller IDOR tests were not repeated. OIDC/HLS, Kafka/STOMP, browser, load/stress and broad regression suites were deliberately NOT RUN.
+
+**Status:** focused implementation and PostgreSQL transaction/migration acceptance **PASS**. Production rollout remains gated on role-grant review, multi-instance HTTP acceptance and crash/reconciliation checks. `MAX_CONCURRENT_VIEWERS` remains **NOT IMPLEMENTED**.

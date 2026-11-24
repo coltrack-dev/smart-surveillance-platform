@@ -92,6 +92,10 @@ app:
       jwk-set-uri: ${APP_SECURITY_OIDC_JWK_SET_URI:}
       audience: ${APP_SECURITY_OIDC_AUDIENCE:}
 
+identity:
+  quotas:
+    default-plan: ${IDENTITY_QUOTAS_DEFAULT_PLAN:FREE}
+
 streaming:
   internal:
     workload-secret: ${STREAMING_INTERNAL_JWT_SECRET:}

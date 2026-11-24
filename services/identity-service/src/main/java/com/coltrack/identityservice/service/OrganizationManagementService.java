@@ -5,6 +5,8 @@ import com.coltrack.identity.model.User;
 import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identityservice.model.OrganizationDtos.*;
 import com.coltrack.identityservice.repository.IdentityRepository;
+import com.coltrack.identityservice.repository.QuotaPlanRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,17 @@ public class OrganizationManagementService {
     private final IdentityRepository identities;
     private final boolean devLinkEnabled;
     private final String publicBaseUrl;
+    private final String defaultQuotaPlan;
+
+    private QuotaPlanRepository quotaPlans;
+
+    @Autowired
+    public OrganizationManagementService(JdbcTemplate jdbc, IdentityRepository identities,
+                                         org.springframework.core.env.Environment environment,
+                                         QuotaPlanRepository quotaPlans) {
+        this(jdbc, identities, environment);
+        this.quotaPlans = quotaPlans;
+    }
 
     public OrganizationManagementService(JdbcTemplate jdbc, IdentityRepository identities,
                                          org.springframework.core.env.Environment environment) {
@@ -39,6 +52,8 @@ public class OrganizationManagementService {
         this.identities = identities;
         this.devLinkEnabled = environment.getProperty("identity.invitations.development-link-enabled", Boolean.class, false);
         this.publicBaseUrl = environment.getProperty("identity.invitations.public-base-url", "http://localhost:5173");
+        this.defaultQuotaPlan = environment.getProperty("identity.quotas.default-plan", "FREE")
+                .trim().toUpperCase(Locale.ROOT);
         if (devLinkEnabled && !isLoopbackDevelopmentUrl(publicBaseUrl)) {
             throw new IllegalStateException("Development invitation links must use a loopback HTTP origin");
         }
@@ -53,6 +68,7 @@ public class OrganizationManagementService {
         UUID tenantId = UUID.randomUUID();
         try {
             jdbc.update("INSERT INTO identity.tenants(id,slug,display_name) VALUES (?,?,?)", tenantId, slug, name);
+            if (quotaPlans != null) quotaPlans.assignDefault(tenantId, defaultQuotaPlan);
             jdbc.update("INSERT INTO identity.tenant_memberships(tenant_id,user_id,role_code,status) VALUES (?,?, 'OWNER','ACTIVE')",
                     tenantId, user.id());
         } catch (DuplicateKeyException ex) {

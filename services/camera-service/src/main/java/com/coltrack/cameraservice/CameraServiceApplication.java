@@ -1,6 +1,7 @@
 package com.coltrack.cameraservice;
 
 import com.coltrack.kafka.KafkaErrorHandlerConfig;
+import com.coltrack.identity.quota.TenantQuotaConfiguration;
 //import com.coltrack.kafka.KafkaProducerConfig;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -11,7 +12,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @Import({
         //KafkaProducerConfig.class,
-        KafkaErrorHandlerConfig.class
+        KafkaErrorHandlerConfig.class,
+        TenantQuotaConfiguration.class
 })
 public class CameraServiceApplication {
 

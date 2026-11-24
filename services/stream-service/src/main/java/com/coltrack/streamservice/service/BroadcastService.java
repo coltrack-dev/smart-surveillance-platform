@@ -9,6 +9,7 @@ import com.coltrack.streamservice.service.StreamManager;
 import com.coltrack.identity.model.TenantMembership;
 import com.coltrack.identity.security.JdbcTenantMembershipResolver;
 import com.coltrack.identity.security.TenantContext;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -26,23 +27,32 @@ public class BroadcastService {
     private final PlaybackTokenService tokens;
     private final BroadcastProperties properties;
     private final JdbcTenantMembershipResolver membershipResolver;
+    private final BroadcastQuotaLifecycle quotaLifecycle;
 
     @Autowired
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
-                            BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver) {
+                            BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver,
+                            BroadcastQuotaLifecycle quotaLifecycle) {
         this.repository = repository;
         this.cameraClient = cameraClient;
         this.streamManager = streamManager;
         this.tokens = tokens;
         this.properties = properties;
         this.membershipResolver = membershipResolver;
+        this.quotaLifecycle = quotaLifecycle;
+    }
+
+    public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
+                            StreamManager streamManager, PlaybackTokenService tokens,
+                            BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver) {
+        this(repository, cameraClient, streamManager, tokens, properties, membershipResolver, null);
     }
 
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
                             BroadcastProperties properties) {
-        this(repository, cameraClient, streamManager, tokens, properties, null);
+        this(repository, cameraClient, streamManager, tokens, properties, null, null);
     }
 
     public synchronized Broadcast create(UUID cameraId) {
@@ -117,6 +127,14 @@ public class BroadcastService {
     }
 
     public synchronized Broadcast setEnabled(UUID id, UUID tenantId, boolean enabled) {
+        if (tenantId != null && membershipResolver != null && quotaLifecycle == null)
+            throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(new IllegalStateException("Broadcast quota lifecycle is not configured"));
+        if (quotaLifecycle != null) {
+            BroadcastQuotaLifecycle.Transition transition = quotaLifecycle.setEnabled(id, tenantId, enabled);
+            if (enabled) acquireBroadcastLease(transition.after());
+            else if (transition.before().enabled()) streamManager.release(transition.before().cameraId(), tenantId, broadcastConsumerId(id));
+            return transition.after();
+        }
         Broadcast current = get(id, tenantId);
         if (current.enabled() == enabled) {
             if (enabled) acquireBroadcastLease(current);
@@ -150,10 +168,23 @@ public class BroadcastService {
     }
 
     public synchronized void delete(UUID id, UUID tenantId) {
+        if (membershipResolver != null && quotaLifecycle == null)
+            throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(new IllegalStateException("Broadcast quota lifecycle is not configured"));
+        if (quotaLifecycle != null) {
+            Broadcast current = quotaLifecycle.delete(id, tenantId);
+            streamManager.release(current.cameraId(), tenantId, broadcastConsumerId(id));
+            return;
+        }
         Broadcast current = repository.find(id, tenantId).orElse(null);
         if (current == null) throw new BroadcastNotFoundException(id);
         repository.delete(id, tenantId);
         streamManager.release(current.cameraId(), tenantId, broadcastConsumerId(id));
+    }
+
+    public TenantQuotaGuard.Usage usage(UUID tenantId) {
+        if (quotaLifecycle == null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(
+                new IllegalStateException("Quota authority is not configured"));
+        return quotaLifecycle.usage(tenantId);
     }
 
     public synchronized void deleteForCamera(UUID cameraId) {

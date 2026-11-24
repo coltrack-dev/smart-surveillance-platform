@@ -53,6 +53,40 @@ This is usability filtering only. Backend authorization remains authoritative. L
 
 Streaming Compose builds the same frontend with `VITE_AUTH_MODE=oidc`, `VITE_API_URL` (default `http://localhost:8081/api`), required `VITE_OIDC_ISSUER_URI`, `VITE_OIDC_CLIENT_ID=streaming-vue`, `VITE_OIDC_REALM=streaming` and `VITE_OIDC_REDIRECT_URI` (default `http://localhost:5173/`). Configure the values with matching Keycloak callback/origin and a browser-reachable Gateway/issuer URL. Do not add a client secret. A production/runtime config change requires rebuilding the static SPA image. For local Vite development, export the same values and allow the Vite origin/callback in the development realm. See [deployment modes](../deployment-modes.md) for the isolated Streaming Compose setup.
 
+### Local Streaming Compose setup
+
+The repository's local `.env` is for the existing Surveillance/demo environment. Keep it unchanged. Use the ignored, mode-0600 `.env.streaming.local` for this isolated local SaaS setup. Its Keycloak, PostgreSQL, MediaMTX, ingest, JWT and playback secrets are separate from Surveillance; the existing valid `CAMERA_CREDENTIALS_KEY` is reused so stored encrypted camera credentials remain readable if this local Streaming database already exists. Do not copy this file to a server or share it. Local invitation-link return is enabled only for this loopback setup.
+
+The prepared local configuration binds the Dashboard to `http://localhost:5174/app`, Gateway to `http://localhost:18082`, and Keycloak to `http://localhost:18181`. These ports were checked against the running `phase33b1-saas-acceptance` project; its Keycloak, PostgreSQL and Kafka ports remain untouched. The OIDC realm import allows localhost:5174 for the public PKCE client.
+
+From the repository root, validate and start the isolated project:
+
+```bash
+docker compose --env-file .env.streaming.local -p streaming-local \
+  -f docker-compose.streaming.yml config -q
+docker compose --env-file .env.streaming.local -p streaming-local \
+  -f docker-compose.streaming.yml up -d --build
+```
+
+Open `http://localhost:5174/app`. Keycloak's local admin console is at `http://localhost:18181/admin`; use the bootstrap admin username/password stored in `.env.streaming.local` without placing them in shell history. Select the `streaming` realm, open **Users → Add user**, and create synthetic accounts such as `owner@example.test` and `viewer@example.test`. Mark each email verified and set a local password under **Credentials** (temporary password off). No email delivery is configured. Log in as the first user and create an organization; that user becomes OWNER. Use the Members page to invite the second account and copy the one-time link, then sign in as the invited user to accept it. Membership and role data remains application-owned in the isolated Streaming PostgreSQL database.
+
+The compose project name `streaming-local` gives its named volumes a separate namespace. To stop only this project while preserving its data, use:
+
+```bash
+docker compose --env-file .env.streaming.local -p streaming-local \
+  -f docker-compose.streaming.yml stop
+```
+
+Do not use `down -v` or point this configuration at Surveillance volumes/databases. Invitation-link return must remain disabled outside local development. Do not expose the ports publicly.
+
+### Environment-variable ownership
+
+The root `.env` remains the Surveillance/demo environment and does not provide the Streaming secrets. Compose interpolation inputs for Streaming are supplied by `.env.streaming.local`; every `${...}` name in `docker-compose.streaming.yml` is present in `.env.example` and the local file. The example intentionally leaves credential values blank.
+
+Compose derives Keycloak's `KC_DB_*`, bootstrap admin and hostname values from those inputs. It injects Spring runtime settings for datasource, Kafka, OIDC issuer/JWKS/audience, internal workload signing, service URLs and invitation-link policy. MediaMTX receives its two `MTX_AUTHINTERNALUSERS_*` accounts and path/action permissions from the publish/read credentials. The Rust agent receives `AGENT_*` settings from `VIDEO_INGEST_AGENT_*`. The Vue image receives compile-time `VITE_API_URL`, `VITE_AUTH_MODE`, OIDC issuer/client/realm/callback values from the browser URL settings. `VITE_HLS_URL` and `VITE_WS_URL` remain optional frontend settings for manual/non-Streaming builds; the Streaming Dashboard uses Gateway API playback and does not require those host values.
+
+`BROADCAST_MANAGEMENT_TOKEN` is retained in `.env.example` for the legacy Stream management-token path. OIDC Streaming management does not use it as browser authentication. `IDENTITY_INVITATIONS_DEVELOPMENT_LINK_ENABLED` is false by default in Compose and is true only in the ignored loopback development file.
+
 Development invitation URL retrieval remains disabled unless the Identity Service's local-only setting is enabled. The UI shows a returned one-time invitation URL only at creation time; it does not persist or log the token. No email provider is configured.
 
 ## Known limitations
@@ -62,7 +96,7 @@ Development invitation URL retrieval remains disabled unless the Identity Servic
 - Browser acceptance results and remaining checks are recorded in the Phase 3.3B.1 section below. Session-expiration UI, explicit viewport/responsive acceptance, and the behavior of a PRIVATE watch URL opened before any OIDC sign-in remain unverified.
 - PRIVATE permanent links include the tenant UUID only as a selector, never as proof or a credential. Keep `Referrer-Policy: no-referrer`, redact media token query parameters at ingress, and keep Streaming private until browser checks pass.
 - No dashboard pagination/search, camera connection test/control UI, profile editor, audit log or email delivery.
-- Usage metering, quotas, billing and tenant suspension are not included; plan them in Phase 3.3C/production work.
+- Camera and active Broadcast usage/limits are displayed from their tenant-authorized owner-service APIs. Backend quota admission is authoritative. Plan/override administration, viewer concurrency quotas, tenant suspension and billing remain out of scope.
 
 ## Phase 3.3B.1 browser acceptance — initial blocked preflight (2026-11-24)
 
@@ -187,7 +221,15 @@ The Members view uses inline role selectors and the browser-native `window.confi
 - Native browser confirmation dialogs are not styled/responsive dashboard dialogs.
 - Public ingress, production Keycloak configuration and production data were not touched.
 
-All five remaining Phase 3.3B.2 scenario groups passed: OIDC expiration/session handling, playback grant renewal/expiry, the requested responsive viewports, copy actions, and legacy frontend compatibility. **Phase 3.3B is closed for this acceptance scope.** Phase 3.3C is not implemented, and public ingress remains disabled.
+All five remaining Phase 3.3B.2 scenario groups passed: OIDC expiration/session handling, playback grant renewal/expiry, the requested responsive viewports, copy actions, and legacy frontend compatibility. **Phase 3.3B is closed for this acceptance scope.** Phase 3.3C.2 has since added Camera/Broadcast usage display and server-side admission; its focused PostgreSQL evidence is recorded in `USAGE_QUOTAS.md`. Public ingress remains disabled.
+
+## Phase 3.3C.2 — Usage and quota indicators
+
+The Dashboard overview, Cameras section and Broadcasts section show current Camera usage and enabled Broadcast usage against their effective limits. When a limit is reached, the page states which action is blocked. The UI does not disable every possible action based on cached usage; backend admission returns stable 409 errors (`CAMERA_QUOTA_EXCEEDED`, `ACTIVE_BROADCAST_QUOTA_EXCEEDED`) and the API client displays the corresponding message. Usage requests use the selected tenant header as a selector and rely on Camera/Stream service membership authorization. They return `Cache-Control: no-store` and do not report viewer counts.
+
+The UI reads `GET /api/v1/cameras/usage` and `GET /api/v1/broadcasts/usage` through the existing Gateway. Tenant changes clear usage values together with Camera/Broadcast data. Camera creation keeps one browser-generated idempotency key for retries until a successful response; the backend binds it to a tenant and keyed request fingerprint. No token or RTSP credential is placed in that key or in quota responses.
+
+Frontend production build and the focused service/database tests are recorded in `docs/TEST_INVENTORY.md`. No browser quota UI acceptance was run in Phase 3.3C.2. Plan/override write controls, viewer usage, quotas for Recording/Analytics and split-database coordination remain future work. Public ingress remains disabled.
 
 ## Authenticated RTSP demo source (2026-11-25)
 
