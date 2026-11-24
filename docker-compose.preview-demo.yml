@@ -1,0 +1,33 @@
+# Optional synthetic RTSP camera for the isolated Streaming preview project.
+# Use together with docker-compose.streaming.yml and that project's env file.
+services:
+  mediamtx:
+    environment:
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_0_PATH: "~^([0-9a-f-]{36}|demo-people)$"
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_PATH: "~^([0-9a-f-]{36}|demo-people)$"
+
+  demo-people-publisher:
+    image: linuxserver/ffmpeg:7.1.1
+    profiles: [demo-publisher]
+    entrypoint: ["/bin/sh", "/opt/demo/preview-demo-people-publisher.sh"]
+    command: ["publish"]
+    volumes:
+      - ./data/analytics/input/people.mp4:/demo/people.mp4:ro
+      - ./scripts/preview-demo-people-publisher.sh:/opt/demo/preview-demo-people-publisher.sh:ro
+      - ./.secrets/preview-demo-people/publish-user:/run/secrets/media_publish_user:ro
+      - ./.secrets/preview-demo-people/publish-password:/run/secrets/media_publish_password:ro
+    networks: [default]
+    cpus: "0.50"
+    restart: "no"
+
+  demo-people-probe:
+    image: linuxserver/ffmpeg:7.1.1
+    profiles: [demo-publisher]
+    entrypoint: ["/bin/sh", "/opt/demo/preview-demo-people-publisher.sh"]
+    command: ["probe"]
+    volumes:
+      - ./scripts/preview-demo-people-publisher.sh:/opt/demo/preview-demo-people-publisher.sh:ro
+      - ./.secrets/preview-demo-people/read-user:/run/secrets/media_read_user:ro
+      - ./.secrets/preview-demo-people/read-password:/run/secrets/media_read_password:ro
+    networks: [default]
+    cpus: "0.50"

@@ -80,6 +80,7 @@ application-dev.yaml
 .env
 .env.*
 !.env.example
+.secrets/
 
 # ==========================================================
 # Docker
