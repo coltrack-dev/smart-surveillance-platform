@@ -188,3 +188,11 @@ The Members view uses inline role selectors and the browser-native `window.confi
 - Public ingress, production Keycloak configuration and production data were not touched.
 
 All five remaining Phase 3.3B.2 scenario groups passed: OIDC expiration/session handling, playback grant renewal/expiry, the requested responsive viewports, copy actions, and legacy frontend compatibility. **Phase 3.3B is closed for this acceptance scope.** Phase 3.3C is not implemented, and public ingress remains disabled.
+
+## Authenticated RTSP demo source (2026-11-25)
+
+**Status: Camera → Broadcast → HLS demonstration passed.** In the isolated `surveillance-streaming-preview` Compose project, the optional `demo-people-publisher` published the existing `data/analytics/input/people.mp4` to the authenticated MediaMTX path `demo-people` using the separate publish account. It reused `linuxserver/ffmpeg:7.1.1`, copied the H.264 video without transcoding, looped the source in real time, and remained running. The source and secret mounts were read-only; no host media port was published.
+
+An authenticated `ffprobe` read confirmed H.264 at 1920×1080 and 30 fps. A separate 25-second authenticated RTSP read completed across multiple source loops. A filtered MediaMTX log scan found no checked 401, 403 or authentication-failure entries. Camera creation, Broadcast creation and HLS playback through the Dashboard were also confirmed working. Credentials and authenticated RTSP URLs were not included in command output or this report. Reproduction steps and the Dashboard Camera fields are documented in [the isolated demo camera guide](../streaming-demo-camera.md).
+
+The Dashboard integration result is recorded from the operator's confirmation; this documentation update did not rerun browser checks. Exact browser instrumentation and permanent watch/iframe link checks are not recorded here. Public ingress remains disabled.
