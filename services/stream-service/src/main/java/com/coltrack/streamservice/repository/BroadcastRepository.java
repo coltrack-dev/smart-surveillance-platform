@@ -91,6 +91,11 @@ public class BroadcastRepository {
         jdbc.update("DELETE FROM broadcasts WHERE id = ? AND tenant_id = ?", id, tenantId);
     }
 
+    public void revokeViewerSessions(UUID broadcastId, Instant now) {
+        jdbc.update("UPDATE viewer_sessions SET revoked_at = ? WHERE broadcast_id = ? AND revoked_at IS NULL",
+                Timestamp.from(now), broadcastId);
+    }
+
     private static Broadcast map(ResultSet rs, int row) throws SQLException {
         return new Broadcast(
                 rs.getObject("id", UUID.class),

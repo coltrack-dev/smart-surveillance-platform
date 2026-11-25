@@ -63,6 +63,7 @@ broadcast:
   management-token: ${BROADCAST_MANAGEMENT_TOKEN:local-demo-broadcast-management-token}
   playback-secret: ${BROADCAST_PLAYBACK_SECRET:local-demo-broadcast-playback-secret-change-me}
   playback-ttl: ${BROADCAST_PLAYBACK_TTL:PT10M}
+  viewer-session-ttl: ${BROADCAST_VIEWER_SESSION_TTL:PT90S}
   player-base-url: ${BROADCAST_PLAYER_BASE_URL:http://localhost:5173/watch}
   media-read-username: ${STREAMING_MEDIA_READ_USER:stream-reader}
   media-read-password: ${STREAMING_MEDIA_READ_PASSWORD:local-demo-media-read-password}

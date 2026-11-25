@@ -6,7 +6,7 @@ export interface Member { userId: string; email: string | null; displayName: str
 export interface Invitation { id: string; tenantId: string; email: string; role: Role; status: string; expiresAt: string; createdAt: string; invitationUrl: string | null }
 export interface Camera { id: string; cameraNumber?: number; name: string; status: string; createdAt?: string; lastHeartbeat?: string | null; autoStart?: boolean; lastError?: string | null }
 export interface Broadcast { id: string; cameraId: string; publicId: string; visibility: 'PUBLIC' | 'PRIVATE'; enabled: boolean; createdAt?: string }
-export interface ResourceUsage { tenantId: string; resource: 'CAMERA' | 'BROADCAST'; used: number; limit: number; remaining: number }
+export interface ResourceUsage { tenantId: string; resource: 'CAMERA' | 'BROADCAST' | 'VIEWER'; used: number; limit: number; remaining: number }
 export type Role = 'OWNER' | 'ADMIN' | 'OPERATOR' | 'VIEWER'
 
 export const saasApi = {
@@ -34,6 +34,7 @@ export const saasApi = {
   updateCamera: (id: string, body: Record<string, unknown>) => http.put<Camera>(`/v1/cameras/${id}`, body).then(r => r.data),
   broadcasts: () => http.get<Broadcast[]>('/v1/broadcasts').then(r => r.data),
   broadcastUsage: () => http.get<ResourceUsage>('/v1/broadcasts/usage').then(r => r.data),
+  viewerUsage: () => http.get<ResourceUsage>('/v1/broadcasts/viewer-usage').then(r => r.data),
   createBroadcast: (cameraId: string, visibility: Broadcast['visibility']) => http.post<Broadcast>('/v1/broadcasts', { cameraId, visibility }).then(r => r.data),
   setBroadcastEnabled: (id: string, enabled: boolean) => http.put<Broadcast>(`/v1/broadcasts/${id}/enabled`, { enabled }).then(r => r.data),
   setBroadcastVisibility: (id: string, visibility: Broadcast['visibility']) => http.put<Broadcast>(`/v1/broadcasts/${id}/visibility`, { visibility }).then(r => r.data),

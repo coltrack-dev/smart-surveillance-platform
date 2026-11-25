@@ -9,10 +9,12 @@ import com.coltrack.streamservice.service.StreamManager;
 import com.coltrack.identity.model.TenantMembership;
 import com.coltrack.identity.security.JdbcTenantMembershipResolver;
 import com.coltrack.identity.security.TenantContext;
+import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identity.quota.TenantQuotaGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,12 +30,13 @@ public class BroadcastService {
     private final BroadcastProperties properties;
     private final JdbcTenantMembershipResolver membershipResolver;
     private final BroadcastQuotaLifecycle quotaLifecycle;
+    private final ViewerSessionService viewerSessions;
 
     @Autowired
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
                             BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver,
-                            BroadcastQuotaLifecycle quotaLifecycle) {
+                            BroadcastQuotaLifecycle quotaLifecycle, ViewerSessionService viewerSessions) {
         this.repository = repository;
         this.cameraClient = cameraClient;
         this.streamManager = streamManager;
@@ -41,18 +44,19 @@ public class BroadcastService {
         this.properties = properties;
         this.membershipResolver = membershipResolver;
         this.quotaLifecycle = quotaLifecycle;
+        this.viewerSessions = viewerSessions;
     }
 
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
                             BroadcastProperties properties, JdbcTenantMembershipResolver membershipResolver) {
-        this(repository, cameraClient, streamManager, tokens, properties, membershipResolver, null);
+        this(repository, cameraClient, streamManager, tokens, properties, membershipResolver, null, null);
     }
 
     public BroadcastService(BroadcastRepository repository, CameraClient cameraClient,
                             StreamManager streamManager, PlaybackTokenService tokens,
                             BroadcastProperties properties) {
-        this(repository, cameraClient, streamManager, tokens, properties, null, null);
+        this(repository, cameraClient, streamManager, tokens, properties, null, null, null);
     }
 
     public synchronized Broadcast create(UUID cameraId) {
@@ -122,6 +126,7 @@ public class BroadcastService {
         }
 
         repository.setEnabled(id, false, Instant.now());
+        repository.revokeViewerSessions(id, Instant.now());
         streamManager.release(current.cameraId(), broadcastConsumerId(id));
         return get(id);
     }
@@ -150,19 +155,30 @@ public class BroadcastService {
         return get(id, tenantId);
     }
 
+    @Transactional
     public synchronized Broadcast setVisibility(UUID id, BroadcastVisibility visibility) {
-        get(id);
-        return repository.setVisibility(id, visibility, Instant.now());
+        Broadcast current = get(id);
+        Broadcast updated = repository.setVisibility(id, visibility, Instant.now());
+        if (current.visibility() != updated.visibility()) repository.revokeViewerSessions(id, Instant.now());
+        return updated;
     }
 
+    @Transactional
     public synchronized Broadcast setVisibility(UUID id, UUID tenantId, BroadcastVisibility visibility) {
-        get(id, tenantId);
-        return repository.setVisibility(id, tenantId, visibility, Instant.now());
+        if (membershipResolver != null && quotaLifecycle == null)
+            throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(new IllegalStateException("Broadcast quota lifecycle is not configured"));
+        if (quotaLifecycle != null) return quotaLifecycle.setVisibility(id, tenantId, visibility);
+        Broadcast current = get(id, tenantId);
+        Broadcast updated = repository.setVisibility(id, tenantId, visibility, Instant.now());
+        if (current.visibility() != visibility) repository.revokeViewerSessions(id, Instant.now());
+        return updated;
     }
 
+    @Transactional
     public synchronized void delete(UUID id) {
         Broadcast current = repository.find(id).orElse(null);
         if (current == null) return;
+        repository.revokeViewerSessions(id, Instant.now());
         repository.delete(id); // invalidate playback before stopping media
         streamManager.release(current.cameraId(), broadcastConsumerId(id));
     }
@@ -185,6 +201,23 @@ public class BroadcastService {
         if (quotaLifecycle == null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(
                 new IllegalStateException("Quota authority is not configured"));
         return quotaLifecycle.usage(tenantId);
+    }
+
+    public TenantQuotaGuard.Usage viewerUsage(UUID tenantId) {
+        if (viewerSessions == null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(
+                new IllegalStateException("Viewer quota authority is not configured"));
+        return viewerSessions.usage(tenantId);
+    }
+
+    public ViewerSessionService.Admission playbackSession(UUID publicId, String credential,
+                                                          AuthenticatedPrincipal principal, UUID selectedTenant) {
+        if (viewerSessions == null) throw new TenantQuotaGuard.QuotaAuthorityUnavailableException(
+                new IllegalStateException("Viewer session authority is not configured"));
+        return viewerSessions.admitOrRenew(publicId, credential, principal, selectedTenant, Instant.now());
+    }
+
+    public void releasePlaybackSession(UUID publicId, String credential) {
+        if (viewerSessions != null) viewerSessions.release(publicId, credential, Instant.now());
     }
 
     public synchronized void deleteForCamera(UUID cameraId) {
@@ -244,6 +277,11 @@ public class BroadcastService {
         var grant = tokens.verify(token, now).orElseThrow(PrivateBroadcastException::new);
         if (!broadcast.enabled() || !grant.broadcastId().equals(broadcast.id())
                 || grant.playbackVersion() != broadcast.playbackVersion()) {
+            throw new PrivateBroadcastException();
+        }
+        if (membershipResolver != null && (broadcast.tenantId() == null || grant.sessionId() == null
+                || viewerSessions == null || !viewerSessions.isActive(grant.sessionId(), broadcast.tenantId(),
+                broadcast.id(), grant.userId(), now))) {
             throw new PrivateBroadcastException();
         }
         if (broadcast.visibility() == BroadcastVisibility.PUBLIC) {

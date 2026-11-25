@@ -27,6 +27,7 @@ public class BroadcastQuotaLifecycle {
         Broadcast current = repository.find(id, tenantId).orElseThrow(() -> new BroadcastService.BroadcastNotFoundException(id));
         if (enabled && !current.enabled()) quotas.requireCapacity(tenantId, TenantQuotaGuard.Resource.BROADCAST);
         if (current.enabled() != enabled) repository.setEnabled(id, tenantId, enabled, Instant.now());
+        if (current.enabled() && !enabled) repository.revokeViewerSessions(id, Instant.now());
         return new Transition(current, repository.find(id, tenantId).orElseThrow(), current.enabled() != enabled);
     }
 
@@ -34,8 +35,19 @@ public class BroadcastQuotaLifecycle {
     public Broadcast delete(UUID id, UUID tenantId) {
         quotas.lock(tenantId);
         Broadcast current = repository.find(id, tenantId).orElseThrow(() -> new BroadcastService.BroadcastNotFoundException(id));
+        repository.revokeViewerSessions(id, Instant.now());
         repository.delete(id, tenantId);
         return current;
+    }
+
+    @Transactional
+    public Broadcast setVisibility(UUID id, UUID tenantId, com.coltrack.streamservice.model.BroadcastVisibility visibility) {
+        quotas.lock(tenantId);
+        Broadcast current = repository.find(id, tenantId)
+                .orElseThrow(() -> new BroadcastService.BroadcastNotFoundException(id));
+        Broadcast updated = repository.setVisibility(id, tenantId, visibility, Instant.now());
+        if (current.visibility() != visibility) repository.revokeViewerSessions(id, Instant.now());
+        return updated;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)

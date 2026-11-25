@@ -6,6 +6,7 @@ import com.coltrack.streamservice.model.BroadcastVisibility;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
 import com.coltrack.identity.security.TenantAuthorization;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,22 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class BroadcastPlaybackControllerTest {
+    @Test
+    void viewerQuotaErrorIncludesStableCodeMetricUsageAndLimit() {
+        BroadcastPlaybackController controller = new BroadcastPlaybackController(
+                mock(BroadcastService.class), new BroadcastProperties(), new BroadcastRateLimiter(),
+                mock(RestClient.Builder.class),
+                new TenantAuthorization((principal, tenant) -> java.util.Optional.empty(),
+                        (principal, tenant, permission) -> false));
+
+        var response = controller.viewerQuotaExceeded(
+                new TenantQuotaGuard.QuotaExceededException(TenantQuotaGuard.Resource.VIEWER, 4, 4));
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+        assertEquals(new BroadcastPlaybackController.ViewerQuotaError(
+                "VIEWER_QUOTA_EXCEEDED", "MAX_CONCURRENT_VIEWERS", 4L, 4), response.getBody());
+    }
+
     @Test
     void rewritesPlaylistSegmentsAndEncryptionKeyToProtectedUrls() {
         UUID id = UUID.randomUUID();

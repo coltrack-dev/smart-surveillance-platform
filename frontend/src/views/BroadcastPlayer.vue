@@ -16,6 +16,35 @@ let hls: Hls | null = null
 let retryCount = 0
 let cachedAuthorization: { token: string; expiresAt: number; playlistUrl: string } | null = null
 let nativeRenewalTimer: number | undefined
+let viewerCredential: string | null = null
+let viewerRenewalTimer: number | undefined
+
+function createViewerCredential() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let binary = ''
+  bytes.forEach(value => binary += String.fromCharCode(value))
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function sessionCredential() {
+  if (viewerCredential) return viewerCredential
+  const storageKey = `streaming-viewer-session:${publicId.value}`
+  const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+  if (navigation?.type === 'reload') {
+    try { viewerCredential = sessionStorage.getItem(storageKey) } catch { /* use an in-memory session */ }
+  }
+  if (!viewerCredential) {
+    viewerCredential = createViewerCredential()
+    try { sessionStorage.setItem(storageKey, viewerCredential) } catch { /* use an in-memory session */ }
+  }
+  return viewerCredential
+}
+
+function rotateViewerCredential() {
+  viewerCredential = null
+  cachedAuthorization = null
+  try { sessionStorage.removeItem(`streaming-viewer-session:${publicId.value}`) } catch { /* no persistent session storage */ }
+}
 
 const publicId = computed(() => String(route.params.publicId ?? ''))
 const playerUrl = computed(() => window.location.href)
@@ -25,22 +54,41 @@ const embedCode = computed(() => {
   return `<iframe src="${url}" title="Live broadcast" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen loading="lazy"></iframe>`
 })
 
-async function playbackAuthorization() {
-  if (cachedAuthorization && cachedAuthorization.expiresAt > Date.now() + 60_000) return cachedAuthorization
+async function playbackAuthorization(forceRenewal = false) {
+  if (!forceRenewal && cachedAuthorization && cachedAuthorization.expiresAt > Date.now() + 60_000) return cachedAuthorization
   const apiRoot = API_URL.replace(/\/$/, '')
-  const tokenUrl = `${apiRoot}/playback/${encodeURIComponent(publicId.value)}/token`
-  let response = await fetch(tokenUrl, { cache: 'no-store' })
-  // PUBLIC playback stays anonymous. Retry a 401 with a user token only when
-  // this browser already has an authenticated Streaming session and tenant.
+  const sessionUrl = `${apiRoot}/playback/${encodeURIComponent(publicId.value)}/session`
+  const requestInit: RequestInit = {
+    method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential: sessionCredential() })
+  }
+  let response = await fetch(sessionUrl, requestInit)
+  // PUBLIC playback stays anonymous. Retry with user identity only for a private
+  // Broadcast after the anonymous request is denied.
   if (response.status === 401) {
     const [accessToken, storedTenantId] = await Promise.all([getAccessToken(), Promise.resolve(getSelectedTenant())])
     const tenantId = storedTenantId || (typeof route.query.tenant === 'string' ? route.query.tenant : null)
-    if (accessToken && tenantId) response = await fetch(tokenUrl, {
-      cache: 'no-store',
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Tenant-ID': tenantId }
+    if (accessToken && tenantId) response = await fetch(sessionUrl, {
+      ...requestInit,
+      headers: { ...requestInit.headers, Authorization: `Bearer ${accessToken}`, 'X-Tenant-ID': tenantId }
     })
   }
-  if (!response.ok) throw new Error(response.status === 401 ? 'This broadcast is private.' : 'The broadcast is offline or unavailable.')
+  if (!response.ok) {
+    if (response.status === 429) {
+      const error = await response.json().catch(() => null) as { code?: string } | null
+      if (error?.code === 'VIEWER_QUOTA_EXCEEDED') throw new Error('The organization viewer limit is full. Close an active player or wait for an inactive session to expire.')
+      throw new Error('Too many playback attempts. Try again shortly.')
+    }
+    if (response.status === 409) {
+      const error = await response.json().catch(() => null) as { code?: string } | null
+      if (error?.code === 'PLAYBACK_SESSION_INVALID') {
+        rotateViewerCredential()
+        throw new Error('This playback session expired. Try again to start a new session.')
+      }
+    }
+    if (response.status === 503) throw new Error('Playback capacity is temporarily unavailable. Try again shortly.')
+    throw new Error(response.status === 401 ? 'This broadcast is private or your membership is no longer active.' : 'The broadcast is offline or unavailable.')
+  }
   const result = await response.json() as { token: string; expiresAt: string; playlistUrl: string }
   // The API returns a path-only URL. Resolve it against the gateway origin,
   // never the player origin, which would serve the SPA fallback instead of HLS.
@@ -95,6 +143,14 @@ async function attachPlayer() {
   offline.value = false
   loading.value = true
   message.value = retryCount ? 'Reconnecting to the live stream…' : 'Connecting to the live stream…'
+  if (viewerRenewalTimer === undefined) {
+    viewerRenewalTimer = window.setInterval(() => {
+      void playbackAuthorization(true).catch(error => {
+        offline.value = true
+        message.value = error instanceof Error ? error.message : 'Playback authorization renewal failed.'
+      })
+    }, 30_000)
+  }
   if (Hls.isSupported()) {
     hls?.destroy()
     hls = new Hls({ enableWorker: true, lowLatencyMode: false, maxBufferLength: 20, loader: RenewingHlsLoader })
@@ -171,7 +227,18 @@ async function copyEmbed() {
 }
 
 onMounted(attachPlayer)
-onBeforeUnmount(() => { hls?.destroy(); window.clearTimeout(nativeRenewalTimer) })
+onBeforeUnmount(() => {
+  hls?.destroy()
+  window.clearTimeout(nativeRenewalTimer)
+  window.clearInterval(viewerRenewalTimer)
+  if (viewerCredential) {
+    const apiRoot = API_URL.replace(/\/$/, '')
+    void fetch(`${apiRoot}/playback/${encodeURIComponent(publicId.value)}/session`, {
+      method: 'DELETE', keepalive: true, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: viewerCredential })
+    }).catch(() => undefined)
+  }
+})
 </script>
 
 <template>

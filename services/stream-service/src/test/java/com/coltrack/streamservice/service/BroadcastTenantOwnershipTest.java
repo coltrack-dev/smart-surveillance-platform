@@ -1,8 +1,6 @@
 package com.coltrack.streamservice.service;
 
-import com.coltrack.identity.model.Role;
 import com.coltrack.identity.security.JdbcTenantMembershipResolver;
-import com.coltrack.identity.security.TenantContext;
 import com.coltrack.streamservice.client.CameraClient;
 import com.coltrack.streamservice.client.dto.CameraConnectionDto;
 import com.coltrack.streamservice.config.BroadcastProperties;
@@ -49,14 +47,20 @@ class BroadcastTenantOwnershipTest {
         Broadcast privateBroadcast = new Broadcast(id, cameraId, publicId, BroadcastVisibility.PRIVATE,
                 true, 5, Instant.now(), Instant.now(), tenantId);
         when(repository.findByPublicId(publicId)).thenReturn(Optional.of(privateBroadcast));
-        when(memberships.hasPermission(userId, tenantId, "playback.view")).thenReturn(true, false);
-        BroadcastService service = service(repository, mock(CameraClient.class), memberships);
-        TenantContext viewer = new TenantContext(tenantId, userId, Role.VIEWER);
+        when(memberships.hasPermission(userId, tenantId, "playback.view")).thenReturn(false);
+        BroadcastProperties properties = new BroadcastProperties();
+        properties.setPlaybackSecret("a sufficiently long isolated test playback signing secret");
+        PlaybackTokenService tokens = new PlaybackTokenService(properties);
+        ViewerSessionService viewerSessions = mock(ViewerSessionService.class);
+        UUID sessionId = UUID.randomUUID();
+        when(viewerSessions.isActive(eq(sessionId), eq(tenantId), eq(id), eq(userId), any())).thenReturn(true);
+        BroadcastService service = new BroadcastService(repository, mock(CameraClient.class), mock(StreamManager.class),
+                tokens, properties, memberships, null, viewerSessions);
+        String grant = tokens.issue(id, 5, Instant.now().plusSeconds(60), tenantId, userId, sessionId);
 
-        BroadcastService.PlaybackToken grant = service.playbackToken(publicId, viewer);
         assertThrows(BroadcastService.PrivateBroadcastException.class,
-                () -> service.authorizePlayback(publicId, grant.token(), Instant.now()));
-        verify(memberships, times(2)).hasPermission(userId, tenantId, "playback.view");
+                () -> service.authorizePlayback(publicId, grant, Instant.now()));
+        verify(memberships).hasPermission(userId, tenantId, "playback.view");
     }
 
     @Test
@@ -115,7 +119,7 @@ class BroadcastTenantOwnershipTest {
         PlaybackTokenService tokens = new PlaybackTokenService(properties);
         BroadcastService service = new BroadcastService(repository, mock(CameraClient.class), mock(StreamManager.class),
                 tokens, properties, memberships);
-        String tenantAGrant = tokens.issue(broadcastId, 2, Instant.now().plusSeconds(60), tenantA, userA);
+        String tenantAGrant = tokens.issue(broadcastId, 2, Instant.now().plusSeconds(60), tenantA, userA, UUID.randomUUID());
 
         assertThrows(BroadcastService.PrivateBroadcastException.class,
                 () -> service.authorizePlayback(publicId, tenantAGrant, Instant.now()));

@@ -69,6 +69,16 @@ public class BroadcastController {
         return ResponseEntity.ok().header("Cache-Control", "no-store").body(service.usage(context.tenantId()));
     }
 
+    @GetMapping("/viewer-usage")
+    public ResponseEntity<?> viewerUsage(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                         @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant,
+                                         @AuthenticationPrincipal Jwt jwt) {
+        TenantContext context = authorize(authorization, jwt, selectedTenant, "broadcast.read");
+        if (context == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok().header("Cache-Control", "no-store")
+                .body(service.viewerUsage(context.tenantId()));
+    }
+
     @GetMapping("/{id}")
     public Broadcast get(@RequestHeader(value = "Authorization", required = false) String authorization,
                          @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant,

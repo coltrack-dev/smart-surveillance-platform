@@ -35,6 +35,21 @@ class BroadcastControllerTenantAuthorizationTest {
     }
 
     @Test
+    void viewerUsageIsMembershipScopedAndNotCacheable() {
+        UUID tenant = UUID.randomUUID(), user = UUID.randomUUID();
+        BroadcastService service = mock(BroadcastService.class);
+        when(service.viewerUsage(tenant)).thenReturn(new TenantQuotaGuard.Usage(tenant,
+                TenantQuotaGuard.Resource.VIEWER, 2, 4, 2));
+        BroadcastController controller = controller(service, tenant, user, Role.VIEWER);
+
+        var response = controller.viewerUsage(null, tenant, jwt(user));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("no-store", response.getHeaders().getCacheControl());
+        verify(service).viewerUsage(tenant);
+    }
+
+    @Test
     void missingMembershipDeniesBroadcastReadDeleteAndPlaybackInfoBeforeServiceCalls() {
         UUID tenant = UUID.randomUUID(), user = UUID.randomUUID(), id = UUID.randomUUID();
         BroadcastService service = mock(BroadcastService.class);
@@ -53,6 +68,8 @@ class BroadcastControllerTenantAuthorizationTest {
                 () -> controller.playbackInfo(null, tenant, jwt(user), id)).getStatusCode().value());
         assertEquals(404, assertThrows(ResponseStatusException.class,
                 () -> controller.usage(null, tenant, jwt(user))).getStatusCode().value());
+        assertEquals(404, assertThrows(ResponseStatusException.class,
+                () -> controller.viewerUsage(null, tenant, jwt(user))).getStatusCode().value());
 
         verifyNoInteractions(service);
     }

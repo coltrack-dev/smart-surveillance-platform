@@ -26,7 +26,19 @@ public class PlaybackTokenService {
 
     public String issue(UUID broadcastId, long playbackVersion, Instant expiresAt, UUID tenantId, UUID userId) {
         String payload = broadcastId + "." + playbackVersion + "." + expiresAt.getEpochSecond() + "."
-                + (tenantId == null ? "" : tenantId) + "." + (userId == null ? "" : userId);
+                + (tenantId == null ? "" : tenantId) + "." + (userId == null ? "" : userId) + ".";
+        return issuePayload(payload);
+    }
+
+    public String issue(UUID broadcastId, long playbackVersion, Instant expiresAt,
+                        UUID tenantId, UUID userId, UUID sessionId) {
+        String payload = broadcastId + "." + playbackVersion + "." + expiresAt.getEpochSecond() + "."
+                + (tenantId == null ? "" : tenantId) + "." + (userId == null ? "" : userId) + "."
+                + (sessionId == null ? "" : sessionId);
+        return issuePayload(payload);
+    }
+
+    private String issuePayload(String payload) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8))
                 + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(sign(payload));
     }
@@ -43,15 +55,20 @@ public class PlaybackTokenService {
             if (parts.length != 2) return Optional.empty();
             String payload = new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8);
             String[] fields = payload.split("\\.", -1);
-            if (fields.length != 5 && fields.length != 3) return Optional.empty();
+            if (fields.length != 3 && fields.length != 5 && fields.length != 6) return Optional.empty();
             long expiresAt = Long.parseLong(fields[2]);
             if (expiresAt <= now.getEpochSecond()) return Optional.empty();
             byte[] signature = Base64.getUrlDecoder().decode(parts[1]);
             if (!MessageDigest.isEqual(sign(payload), signature)) return Optional.empty();
             UUID tenantId = fields.length == 5 && !fields[3].isBlank() ? UUID.fromString(fields[3]) : null;
             UUID userId = fields.length == 5 && !fields[4].isBlank() ? UUID.fromString(fields[4]) : null;
+            if (fields.length == 6) {
+                tenantId = fields[3].isBlank() ? null : UUID.fromString(fields[3]);
+                userId = fields[4].isBlank() ? null : UUID.fromString(fields[4]);
+            }
+            UUID sessionId = fields.length == 6 && !fields[5].isBlank() ? UUID.fromString(fields[5]) : null;
             return Optional.of(new Grant(UUID.fromString(fields[0]), Long.parseLong(fields[1]),
-                    Instant.ofEpochSecond(expiresAt), tenantId, userId));
+                    Instant.ofEpochSecond(expiresAt), tenantId, userId, sessionId));
         } catch (IllegalArgumentException error) {
             return Optional.empty();
         }
@@ -67,5 +84,6 @@ public class PlaybackTokenService {
         }
     }
 
-    public record Grant(UUID broadcastId, long playbackVersion, Instant expiresAt, UUID tenantId, UUID userId) {}
+    public record Grant(UUID broadcastId, long playbackVersion, Instant expiresAt, UUID tenantId, UUID userId,
+                        UUID sessionId) {}
 }

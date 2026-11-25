@@ -90,11 +90,11 @@ class IdentityQuotaPersistenceAcceptanceTest {
 
     @Test
     @Order(1)
-    void freshFlywayAppliesV1ThroughV5AndSeedsConstrainedPlanCatalog() {
-        assertEquals(List.of("1", "2", "3", "4", "5"), jdbc.query(
+    void freshFlywayAppliesV1ThroughV6AndSeedsConstrainedPlanCatalog() {
+        assertEquals(List.of("1", "2", "3", "4", "5", "6"), jdbc.query(
                 "SELECT version FROM identity.flyway_identity_schema_history WHERE success AND type='SQL' ORDER BY installed_rank",
                 (rs, row) -> rs.getString(1)));
-        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM pg_proc WHERE pronamespace='identity'::regnamespace AND proname IN ('is_active_tenant','effective_tenant_quota','resolve_tenant_membership','resolve_active_role')", Integer.class));
+        assertEquals(5, jdbc.queryForObject("SELECT count(*) FROM pg_proc WHERE pronamespace='identity'::regnamespace AND proname IN ('is_active_tenant','effective_tenant_quota','effective_viewer_quota','resolve_tenant_membership','resolve_active_role')", Integer.class));
         assertEquals(List.of("BUSINESS:50:25:200", "FREE:2:1:3", "PRO:10:5:25"), jdbc.query("""
                 SELECT plan_code || ':' || max_cameras || ':' || max_active_broadcasts || ':' || max_concurrent_viewers
                 FROM identity.quota_plans ORDER BY plan_code
@@ -203,7 +203,7 @@ class IdentityQuotaPersistenceAcceptanceTest {
 
     @Test
     @Order(7)
-    void v2SchemaUpgradeToV5PreservesSyntheticTenantAndDoesNotAssignPlan() {
+    void v2SchemaUpgradeToV6PreservesSyntheticTenantAndDoesNotAssignPlan() {
         String url = System.getenv("IDENTITY_QUOTA_ACCEPTANCE_JDBC_URL")
                 .replace("identity_quota_acceptance_db", "identity_quota_v2_db");
         DriverManagerDataSource v2DataSource = new DriverManagerDataSource(url, DATABASE_USER, "");
@@ -228,7 +228,7 @@ class IdentityQuotaPersistenceAcceptanceTest {
                 .schemas("identity").defaultSchema("identity").table("flyway_identity_schema_history")
                 .load().migrate();
 
-        assertEquals(List.of("1", "2", "3", "4", "5"), v2.query(
+        assertEquals(List.of("1", "2", "3", "4", "5", "6"), v2.query(
                 "SELECT version FROM identity.flyway_identity_schema_history WHERE success AND type='SQL' ORDER BY installed_rank",
                 (rs, row) -> rs.getString(1)));
         assertEquals(1, v2.queryForObject("SELECT count(*) FROM identity.tenants WHERE id=?", Integer.class, tenantId));

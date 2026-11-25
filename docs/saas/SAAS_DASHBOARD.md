@@ -229,7 +229,15 @@ The Dashboard overview, Cameras section and Broadcasts section show current Came
 
 The UI reads `GET /api/v1/cameras/usage` and `GET /api/v1/broadcasts/usage` through the existing Gateway. Tenant changes clear usage values together with Camera/Broadcast data. Camera creation keeps one browser-generated idempotency key for retries until a successful response; the backend binds it to a tenant and keyed request fingerprint. No token or RTSP credential is placed in that key or in quota responses.
 
-Frontend production build and the focused service/database tests are recorded in `docs/TEST_INVENTORY.md`. No browser quota UI acceptance was run in Phase 3.3C.2. Plan/override write controls, viewer usage, quotas for Recording/Analytics and split-database coordination remain future work. Public ingress remains disabled.
+Frontend production build and the focused service/database tests are recorded in `docs/TEST_INVENTORY.md`. No browser quota UI acceptance was run in Phase 3.3C.2. Plan/override write controls, quotas for Recording/Analytics and split-database coordination remain future work. Public ingress remains disabled.
+
+## Phase 3.3C.3 — Concurrent viewer quota
+
+The Overview now displays tenant-scoped active viewer usage against `MAX_CONCURRENT_VIEWERS`. The value comes from `GET /api/v1/broadcasts/viewer-usage`, which requires membership in the selected tenant and returns `Cache-Control: no-store`; the response contains only that tenant's aggregate, never session rows or credentials. At capacity, new playback admission shows a useful viewer-limit message. The server returns `429 VIEWER_QUOTA_EXCEEDED`; frontend usage is informational and does not replace admission enforcement.
+
+Playback creates one persisted logical session per player tab. A 256-bit browser-generated credential stays in tab `sessionStorage` for same-tab reload and is sent only in the session API body. It is absent from permanent `/watch/{publicId}` links, iframe HTML and the admission response. Session grants renew while HLS.js continues using the latest grant; playlist and segment requests do not consume additional quota. Anonymous PUBLIC playback is supported. PRIVATE playback binds the session to the authenticated member and rechecks membership. Session TTL expiry releases abandoned tabs; page close sends a best-effort release.
+
+Dashboard/browser build and runtime evidence, including isolated two-instance last-slot admission and HLS renewal, are recorded in `docs/TEST_INVENTORY.md`. The session schema and lifecycle details are in `USAGE_QUOTAS.md`. Public ingress remains disabled.
 
 ## Authenticated RTSP demo source (2026-11-25)
 

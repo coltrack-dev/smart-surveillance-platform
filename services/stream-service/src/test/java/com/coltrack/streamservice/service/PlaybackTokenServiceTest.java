@@ -29,4 +29,17 @@ class PlaybackTokenServiceTest {
         assertFalse(service.isValid(token, id, 3, expires));
         assertFalse(service.isValid(token + "x", id, 3, Instant.now()));
     }
+
+    @Test
+    void sessionGrantBindsTenantUserAndSession() {
+        UUID broadcast = UUID.randomUUID(), tenant = UUID.randomUUID(), user = UUID.randomUUID(), session = UUID.randomUUID();
+        Instant expires = Instant.now().plusSeconds(120);
+        String token = service.issue(broadcast, 8, expires, tenant, user, session);
+
+        PlaybackTokenService.Grant grant = service.verify(token, Instant.now()).orElseThrow();
+        assertEquals(broadcast, grant.broadcastId());
+        assertEquals(tenant, grant.tenantId());
+        assertEquals(user, grant.userId());
+        assertEquals(session, grant.sessionId());
+    }
 }

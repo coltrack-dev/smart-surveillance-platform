@@ -17,6 +17,7 @@ public class BroadcastProperties {
     private String securityMode = "legacy";
     private String playbackSecret;
     private Duration playbackTtl = Duration.ofMinutes(10);
+    private Duration viewerSessionTtl = Duration.ofSeconds(90);
     private String playerBaseUrl;
     private String mediaReadUsername;
     private String mediaReadPassword;
@@ -35,6 +36,10 @@ public class BroadcastProperties {
         if (playbackTtl == null || playbackTtl.isNegative() || playbackTtl.isZero()
                 || playbackTtl.compareTo(Duration.ofMinutes(30)) > 0) {
             throw new IllegalStateException("BROADCAST_PLAYBACK_TTL must be between 1 second and 30 minutes");
+        }
+        if (viewerSessionTtl == null || viewerSessionTtl.compareTo(Duration.ofSeconds(30)) < 0
+                || viewerSessionTtl.compareTo(Duration.ofMinutes(10)) > 0) {
+            throw new IllegalStateException("BROADCAST_VIEWER_SESSION_TTL must be between 30 seconds and 10 minutes");
         }
         if (rateLimitPerMinute < 1) {
             throw new IllegalStateException("BROADCAST_RATE_LIMIT_PER_MINUTE must be positive");

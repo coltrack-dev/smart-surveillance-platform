@@ -17,6 +17,7 @@ const cameras = ref<Camera[]>([])
 const broadcasts = ref<Broadcast[]>([])
 const cameraUsage = ref<ResourceUsage | null>(null)
 const broadcastUsage = ref<ResourceUsage | null>(null)
+const viewerUsage = ref<ResourceUsage | null>(null)
 const selectedTenant = ref(getSelectedTenant() ?? '')
 const loading = ref(true)
 const busy = ref(false)
@@ -54,6 +55,7 @@ function messageFor(err: unknown): string {
     ? (err as { response?: { data?: { code?: string } } }).response?.data?.code : undefined
   if (code === 'CAMERA_QUOTA_EXCEEDED') return 'Camera limit reached. Delete a camera or change the organization plan.'
   if (code === 'ACTIVE_BROADCAST_QUOTA_EXCEEDED') return 'Active broadcast limit reached. Disable a broadcast or change the organization plan.'
+  if (code === 'VIEWER_QUOTA_EXCEEDED') return 'The organization viewer limit is full. Close an active player or wait for an inactive session to expire.'
   if (code === 'QUOTA_AUTHORITY_UNAVAILABLE') return 'Quota information is temporarily unavailable. Try again shortly.'
   if (code === 'IDEMPOTENCY_KEY_REUSED') return 'This camera request key was already used with different details. Submit the request again.'
   if (status === 401) return 'Your session expired. Sign in again to continue.'
@@ -80,7 +82,7 @@ async function loadBase() {
 
 async function loadTenantData() {
   const generation = ++tenantLoadGeneration
-  if (!selectedTenant.value) { organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null; return }
+  if (!selectedTenant.value) { organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null; viewerUsage.value = null; return }
   error.value = ''
   try {
     const currentRole = memberships.value.find(m => m.tenantId === selectedTenant.value)?.role
@@ -90,18 +92,19 @@ async function loadTenantData() {
       saasApi.broadcasts(),
       saasApi.cameraUsage(),
       saasApi.broadcastUsage(),
+      saasApi.viewerUsage(),
       saasApi.members(selectedTenant.value),
       currentRole === 'OWNER' || currentRole === 'ADMIN' ? saasApi.invitations(selectedTenant.value) : Promise.resolve([])
     ])
     if (generation !== tenantLoadGeneration) return
-    organization.value = results[0]; cameras.value = results[1]; broadcasts.value = results[2]; cameraUsage.value = results[3]; broadcastUsage.value = results[4]; members.value = results[5]; invitations.value = results[6]
+    organization.value = results[0]; cameras.value = results[1]; broadcasts.value = results[2]; cameraUsage.value = results[3]; broadcastUsage.value = results[4]; viewerUsage.value = results[5]; members.value = results[6]; invitations.value = results[7]
   } catch (e) { if (generation === tenantLoadGeneration) error.value = messageFor(e) }
 }
 
 async function selectOrganization(id: string) {
   selectedTenant.value = id; setSelectedTenant(id || null)
   // Remove all organization-scoped data before requesting the new tenant.
-  organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null
+  organization.value = null; members.value = []; invitations.value = []; cameras.value = []; broadcasts.value = []; cameraUsage.value = null; broadcastUsage.value = null; viewerUsage.value = null
   invitationUrl.value = ''
   await loadTenantData()
 }
@@ -264,7 +267,8 @@ onUnmounted(() => { window.removeEventListener('streaming:access-changed', clear
         <template v-else>
           <section v-if="section === 'overview'" class="content-grid">
             <div class="welcome panel"><div><span class="eyebrow">WORKSPACE OVERVIEW</span><h2>Good to see you, {{ identity?.username ?? 'there' }}.</h2><p>Manage your live camera sources and share broadcasts from {{ organization?.name }}.</p><button v-if="role === 'OWNER'" class="link-button rename-action" @click="renameOrganization">Rename organization</button></div><RouterLink class="primary-link" to="/app/cameras">Add a camera <span>→</span></RouterLink></div>
-            <div class="stat-card panel"><span>CAMERAS</span><strong>{{ cameraUsage ? `${cameraUsage.used} / ${cameraUsage.limit}` : cameras.length }}</strong><small>{{ cameraUsage?.used != null && cameraUsage.used >= cameraUsage.limit ? 'Camera limit reached' : 'Registered cameras' }}</small></div><div class="stat-card panel"><span>ACTIVE BROADCASTS</span><strong>{{ broadcastUsage ? `${broadcastUsage.used} / ${broadcastUsage.limit}` : broadcasts.filter(b => b.enabled).length }}</strong><small>{{ broadcastUsage?.used != null && broadcastUsage.used >= broadcastUsage.limit ? 'Active broadcast limit reached' : 'Enabled broadcasts' }}</small></div><div class="stat-card panel"><span>MEMBERS</span><strong>{{ members.length }}</strong><small>{{ role }} access</small></div>
+            <div class="stat-card panel"><span>CAMERAS</span><strong>{{ cameraUsage ? `${cameraUsage.used} / ${cameraUsage.limit}` : cameras.length }}</strong><small>{{ cameraUsage?.used != null && cameraUsage.used >= cameraUsage.limit ? 'Camera limit reached' : 'Registered cameras' }}</small></div><div class="stat-card panel"><span>ACTIVE BROADCASTS</span><strong>{{ broadcastUsage ? `${broadcastUsage.used} / ${broadcastUsage.limit}` : broadcasts.filter(b => b.enabled).length }}</strong><small>{{ broadcastUsage?.used != null && broadcastUsage.used >= broadcastUsage.limit ? 'Active broadcast limit reached' : 'Enabled broadcasts' }}</small></div><div class="stat-card panel"><span>VIEWERS</span><strong>{{ viewerUsage ? `${viewerUsage.used} / ${viewerUsage.limit}` : 'unavailable' }}</strong><small>Active playback sessions</small></div><div class="stat-card panel"><span>MEMBERS</span><strong>{{ members.length }}</strong><small>{{ role }} access</small></div>
+            <p v-if="viewerUsage && viewerUsage.remaining === 0" class="alert error wide">Viewer limit reached. New players cannot start until an active player closes or expires.</p>
             <div class="panel wide"><div class="panel-heading"><div><h3>Recent broadcasts</h3><p>Share stable watch links; media authorization renews separately.</p></div><RouterLink to="/app/broadcasts">View all</RouterLink></div><p v-if="!broadcasts.length" class="empty-copy">No broadcasts yet. Create one from an owned camera.</p><div v-else class="compact-list"><div v-for="b in broadcasts.slice(0, 4)" :key="b.id"><span class="live-indicator" :class="{ muted: !b.enabled }"></span><strong>{{ cameras.find(c => c.id === b.cameraId)?.name ?? 'Camera' }}</strong><span>{{ b.enabled ? 'Enabled' : 'Offline' }} · {{ b.visibility }}</span><RouterLink :to="`/app/broadcasts`">Manage</RouterLink></div></div></div>
           </section>
           <section v-else-if="section === 'cameras'" class="stack">

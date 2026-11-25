@@ -3,9 +3,11 @@ package com.coltrack.streamservice.controller;
 import com.coltrack.streamservice.config.BroadcastProperties;
 import com.coltrack.streamservice.security.BroadcastRateLimiter;
 import com.coltrack.streamservice.service.BroadcastService;
+import com.coltrack.streamservice.service.ViewerSessionService;
 import com.coltrack.identity.security.AuthenticatedPrincipal;
 import com.coltrack.identity.security.TenantAuthorization;
 import com.coltrack.identity.security.TenantContext;
+import com.coltrack.identity.quota.TenantQuotaGuard;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.CacheControl;
@@ -17,6 +19,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.beans.factory.annotation.Value;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +40,8 @@ public class BroadcastPlaybackController {
     private final BroadcastRateLimiter rateLimiter;
     private final RestClient.Builder restClientBuilder;
     private final TenantAuthorization tenantAuthorization;
+    @Value("${app.security.mode:legacy}")
+    private String securityMode;
 
     public BroadcastPlaybackController(BroadcastService broadcastService, BroadcastProperties properties,
                                        BroadcastRateLimiter rateLimiter,
@@ -54,6 +59,8 @@ public class BroadcastPlaybackController {
                                                      @AuthenticationPrincipal Jwt jwt,
                                                      @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant) {
         checkRateLimit("token:", request);
+        if ("oidc".equalsIgnoreCase(securityMode))
+            throw new ResponseStatusException(HttpStatus.GONE, "Use persistent viewer session admission");
         if (jwt == null || selectedTenant == null) return broadcastService.playbackToken(publicId);
         try {
             TenantContext context = tenantAuthorization.require(principal(jwt), selectedTenant, "playback.view");
@@ -61,6 +68,30 @@ public class BroadcastPlaybackController {
         } catch (TenantAuthorization.TenantMembershipRequiredException | TenantAuthorization.TenantPermissionDeniedException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
+    }
+
+    @PostMapping("/api/playback/{publicId}/session")
+    public Object admitSession(@PathVariable UUID publicId, @RequestBody(required = false) SessionRequest body,
+                               HttpServletRequest request, @AuthenticationPrincipal Jwt jwt,
+                               @RequestHeader(value = "X-Tenant-ID", required = false) UUID selectedTenant) {
+        checkRateLimit("session:", request);
+        if (!"oidc".equalsIgnoreCase(securityMode)) {
+            BroadcastService.PlaybackToken token = broadcastService.playbackToken(publicId);
+            return new LegacySession(token.expiresAt(), token.token(), token.playlistUrl());
+        }
+        if (body == null || body.credential() == null)
+            throw new ViewerSessionService.InvalidSessionCredentialException();
+        AuthenticatedPrincipal viewer = jwt == null ? null : principal(jwt);
+        return broadcastService.playbackSession(publicId, body.credential(), viewer, selectedTenant);
+    }
+
+    @DeleteMapping("/api/playback/{publicId}/session")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void releaseSession(@PathVariable UUID publicId, @RequestBody(required = false) SessionRequest body,
+                               HttpServletRequest request) {
+        checkRateLimit("session-release:", request);
+        if (body != null && body.credential() != null)
+            broadcastService.releasePlaybackSession(publicId, body.credential());
     }
 
     @GetMapping("/broadcast-play/{publicId}/{fileName}")
@@ -184,4 +215,31 @@ public class BroadcastPlaybackController {
     public ResponseEntity<String> notFound() {
         return ResponseEntity.notFound().build();
     }
+
+    @ExceptionHandler(TenantQuotaGuard.QuotaExceededException.class)
+    public ResponseEntity<ViewerQuotaError> viewerQuotaExceeded(TenantQuotaGuard.QuotaExceededException error) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new ViewerQuotaError(
+                error.code(), "MAX_CONCURRENT_VIEWERS", error.used(), error.limit()));
+    }
+
+    @ExceptionHandler(TenantQuotaGuard.QuotaAuthorityUnavailableException.class)
+    public ResponseEntity<ViewerQuotaError> viewerQuotaUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ViewerQuotaError("QUOTA_AUTHORITY_UNAVAILABLE", "MAX_CONCURRENT_VIEWERS", null, null));
+    }
+
+    @ExceptionHandler(ViewerSessionService.InvalidSessionCredentialException.class)
+    public ResponseEntity<String> invalidViewerSession() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Playback session is invalid");
+    }
+
+    @ExceptionHandler(ViewerSessionService.SessionCredentialConflictException.class)
+    public ResponseEntity<ViewerQuotaError> viewerSessionConflict() {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ViewerQuotaError("PLAYBACK_SESSION_INVALID", null, null, null));
+    }
+
+    public record SessionRequest(String credential) {}
+    public record LegacySession(Instant expiresAt, String token, String playlistUrl) {}
+    public record ViewerQuotaError(String code, String resource, Long currentUsage, Integer limit) {}
 }
