@@ -5,6 +5,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    url: ${SPRING_FLYWAY_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://${POSTGRES_HOST:192.168.13.128}:${POSTGRES_PORT:5432}/${POSTGRES_DB:surveillance_db}}}
+    user: ${SPRING_FLYWAY_USER:${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:surveillance_user}}}
+    password: ${SPRING_FLYWAY_PASSWORD:${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:surveillance_password}}}
     table: flyway_camera_schema_history
     baseline-on-migrate: true
     baseline-version: 0

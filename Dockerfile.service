@@ -16,6 +16,8 @@ ARG MODULE_DIR
 
 RUN ./gradlew ":${GRADLE_MODULE}:bootJar" \
     --no-daemon \
+    --no-parallel \
+    --max-workers=1 \
     --stacktrace
 
 RUN JAR_FILE="$(find "/workspace/${MODULE_DIR}/build/libs" \

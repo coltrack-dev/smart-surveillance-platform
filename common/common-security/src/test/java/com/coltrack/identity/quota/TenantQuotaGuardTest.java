@@ -23,8 +23,8 @@ class TenantQuotaGuardTest {
             when(rs.next()).thenReturn(true);
             return invocation.<ResultSetExtractor<Object>>getArgument(1).extractData(rs);
         });
-        when(jdbc.queryForObject(contains("identity.tenants"), eq(Boolean.class), eq(tenantId))).thenReturn(true);
-        when(jdbc.query(contains("quota_plans"), any(ResultSetExtractor.class), eq("FREE"), eq(tenantId)))
+        when(jdbc.queryForObject(contains("identity.is_active_tenant"), eq(Boolean.class), eq(tenantId))).thenReturn(true);
+        when(jdbc.query(contains("effective_tenant_quota"), any(ResultSetExtractor.class), eq(tenantId), eq("FREE")))
                 .thenAnswer(invocation -> {
                     ResultSet rs = mock(ResultSet.class);
                     when(rs.next()).thenReturn(true);

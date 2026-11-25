@@ -57,7 +57,7 @@ public final class TenantQuotaGuard {
     }
 
     private void requireActiveTenant(UUID tenantId) {
-        Boolean active = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM identity.tenants WHERE id = ? AND status = 'ACTIVE')",
+        Boolean active = jdbc.queryForObject("SELECT identity.is_active_tenant(?)",
                 Boolean.class, tenantId);
         if (!Boolean.TRUE.equals(active)) throw new IllegalStateException("Organization unavailable");
     }
@@ -77,18 +77,12 @@ public final class TenantQuotaGuard {
 
     private Limits limits(UUID tenantId) {
         return jdbc.query("""
-                SELECT COALESCE(o.max_cameras, p.max_cameras),
-                       COALESCE(o.max_active_broadcasts, p.max_active_broadcasts)
-                FROM identity.tenants t
-                LEFT JOIN identity.tenant_quota_assignments a ON a.tenant_id = t.id
-                JOIN identity.quota_plans p ON p.plan_code = COALESCE(a.plan_code, ?)
-                                           AND p.enabled = TRUE
-                LEFT JOIN identity.tenant_quota_overrides o ON o.tenant_id = t.id
-                WHERE t.id = ? AND t.status = 'ACTIVE'
+                SELECT max_cameras, max_active_broadcasts
+                FROM identity.effective_tenant_quota(?, ?)
                 """, rs -> {
             if (!rs.next()) throw new IllegalStateException("Effective quota unavailable");
             return new Limits(rs.getInt(1), rs.getInt(2));
-        }, defaultPlan, tenantId);
+        }, tenantId, defaultPlan);
     }
 
     private long count(UUID tenantId, Resource resource) {

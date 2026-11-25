@@ -2,11 +2,14 @@ spring:
   application:
     name: identity-service
   datasource:
-    url: jdbc:postgresql://streaming-postgres:5432/streaming
-    username: streaming
-    password: ""
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://streaming-postgres:5432/streaming}
+    username: ${SPRING_DATASOURCE_USERNAME:streaming}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   flyway:
     enabled: true
+    url: ${SPRING_FLYWAY_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://streaming-postgres:5432/streaming}}
+    user: ${SPRING_FLYWAY_USER:${SPRING_DATASOURCE_USERNAME:streaming}}
+    password: ${SPRING_FLYWAY_PASSWORD:${SPRING_DATASOURCE_PASSWORD:}}
     schemas: identity
     default-schema: identity
     table: flyway_identity_schema_history
